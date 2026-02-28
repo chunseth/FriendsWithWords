@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import {
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -10,12 +11,11 @@ import {
 } from "react-native";
 import Clipboard from "@react-native-clipboard/clipboard";
 
-const MenuScreen = ({
+const PlayGameMenu = ({
   visible,
   canDismiss,
   currentSeed,
   dailySeed,
-  overallHighScore,
   dailyHighScore,
   onClose,
   onDailyGame,
@@ -77,79 +77,81 @@ const MenuScreen = ({
         onPress={handleBackdropPress}
       >
         <View style={styles.modal} onStartShouldSetResponder={() => true}>
-          <Text style={styles.eyebrow}>Words With Real Friends</Text>
-          <Text style={styles.title}>Main Menu</Text>
-          <Text style={styles.subtitle}>Choose a game mode to start.</Text>
-
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={handleDailyGame}
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.primaryButtonText}>Daily Game</Text>
-            <Text style={styles.buttonMeta}>Seed {dailySeed}</Text>
-            <Text style={styles.buttonMeta}>
-              Best score {dailyHighScore ?? "-"}
-            </Text>
-          </TouchableOpacity>
+            <Text style={styles.eyebrow}>Friends With Words</Text>
+            <Text style={styles.title}>Play Game</Text>
+            <Text style={styles.subtitle}>Choose a board and start playing.</Text>
 
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={handleNewGameRandom}
-          >
-            <Text style={styles.secondaryButtonText}>New Game</Text>
-            <Text style={styles.secondaryButtonMeta}>Random seed</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={handleDailyGame}
+            >
+              <View style={styles.buttonRow}>
+                <Text style={styles.primaryButtonText}>Daily Game</Text>
+                {dailyHighScore != null && (
+                  <Text style={styles.primaryButtonScore}>{dailyHighScore}</Text>
+                )}
+              </View>
+            </TouchableOpacity>
 
-          <View style={styles.seedSection}>
-            <Text style={styles.seedSectionLabel}>Play a specific seed</Text>
-            <View style={styles.seedRow}>
-              <TextInput
-                style={styles.seedInput}
-                value={seedInput}
-                onChangeText={setSeedInput}
-                placeholder="000000"
-                placeholderTextColor="#95a5a6"
-                keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="go"
-                onSubmitEditing={handlePlayWithSeed}
-              />
-              <TouchableOpacity
-                style={[
-                  styles.playButton,
-                  !canPlayCustomSeed && styles.disabledButton,
-                ]}
-                onPress={handlePlayWithSeed}
-                disabled={!canPlayCustomSeed}
-              >
-                <Text style={styles.playButtonText}>Play</Text>
-              </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={handleNewGameRandom}
+            >
+              <View style={styles.buttonRow}>
+                <Text style={styles.secondaryButtonText}>New Game</Text>
+                <Text style={styles.secondaryButtonMeta}>Random seed</Text>
+              </View>
+            </TouchableOpacity>
+
+            <View style={styles.seedSection}>
+              <Text style={styles.seedSectionLabel}>Seeded run</Text>
+              <View style={styles.seedRow}>
+                <TextInput
+                  style={styles.seedInput}
+                  value={seedInput}
+                  onChangeText={setSeedInput}
+                  placeholder="000000"
+                  placeholderTextColor="#95a5a6"
+                  keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="go"
+                  onSubmitEditing={handlePlayWithSeed}
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.playButton,
+                    !canPlayCustomSeed && styles.disabledButton,
+                  ]}
+                  onPress={handlePlayWithSeed}
+                  disabled={!canPlayCustomSeed}
+                >
+                  <Text style={styles.playButtonText}>Play</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
 
-          {currentSeed != null && currentSeed !== "" && (
-            <View style={styles.seedDisplayRow}>
-              <Text style={styles.seedLabel}>Current seed</Text>
-              <Text style={styles.seedValue} numberOfLines={1}>
-                {String(currentSeed)}
-              </Text>
-              <TouchableOpacity
-                style={styles.copyButton}
-                onPress={handleCopySeed}
-              >
-                <Text style={styles.copyButtonText}>Copy</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+            {currentSeed != null && currentSeed !== "" && (
+              <View style={styles.seedDisplayRow}>
+                <Text style={styles.seedLabel}>Current seed</Text>
+                <Text style={styles.seedValue} numberOfLines={1}>
+                  {String(currentSeed)}
+                </Text>
+                <TouchableOpacity
+                  style={styles.copyButton}
+                  onPress={handleCopySeed}
+                >
+                  <Text style={styles.copyButtonText}>Copy</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
-          <View style={styles.highScoreRow}>
-            <Text style={styles.highScoreLabel}>Overall high score</Text>
-            <Text style={styles.highScoreValue}>{overallHighScore ?? "-"}</Text>
-          </View>
-
-          {canDismiss && (
-            <>
+            {canDismiss && (
               <TouchableOpacity
                 style={styles.tertiaryButton}
                 onPress={handleResetSeed}
@@ -158,12 +160,16 @@ const MenuScreen = ({
                   Reset Current Seed
                 </Text>
               </TouchableOpacity>
+            )}
 
-              <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-                <Text style={styles.closeButtonText}>Close</Text>
-              </TouchableOpacity>
-            </>
-          )}
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={onClose}
+              hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
+            >
+              <Text style={styles.closeButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </TouchableOpacity>
     </Modal>
@@ -181,6 +187,7 @@ const styles = StyleSheet.create({
   modal: {
     width: "100%",
     maxWidth: 360,
+    maxHeight: "88%",
     backgroundColor: "#fffaf2",
     borderRadius: 20,
     padding: 22,
@@ -191,6 +198,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.18,
     shadowRadius: 18,
     elevation: 10,
+  },
+  scrollView: {
+    width: "100%",
+  },
+  scrollContent: {
+    paddingBottom: 4,
   },
   eyebrow: {
     fontSize: 12,
@@ -219,15 +232,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 10,
   },
+  buttonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   primaryButtonText: {
     color: "#fff",
     fontSize: 18,
     fontWeight: "800",
   },
-  buttonMeta: {
-    color: "rgba(255,255,255,0.9)",
-    fontSize: 13,
-    marginTop: 3,
+  primaryButtonScore: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "800",
   },
   secondaryButton: {
     backgroundColor: "#fff",
@@ -245,8 +264,8 @@ const styles = StyleSheet.create({
   },
   secondaryButtonMeta: {
     color: "#7f8c8d",
-    fontSize: 13,
-    marginTop: 3,
+    fontSize: 16,
+    fontWeight: "700",
   },
   seedSection: {
     backgroundColor: "#fff",
@@ -278,7 +297,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fffdf8",
   },
   playButton: {
-    backgroundColor: "#2f6f4f",
+    backgroundColor: "#d97706",
     borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 18,
@@ -324,26 +343,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 13,
   },
-  highScoreRow: {
-    marginTop: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    backgroundColor: "#f5f1e8",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  highScoreLabel: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#7f8c8d",
-  },
-  highScoreValue: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#2c3e50",
-  },
   tertiaryButton: {
     marginTop: 14,
     backgroundColor: "#fff",
@@ -360,7 +359,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   closeButton: {
-    paddingVertical: 12,
+    marginTop: 30,
     alignItems: "center",
   },
   closeButtonText: {
@@ -370,4 +369,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default MenuScreen;
+export default PlayGameMenu;

@@ -25,7 +25,12 @@ import { dictionary } from "./utils/dictionary";
 import GameBoard from "./components/GameBoard";
 import TileRack, { SLOT_WIDTH as RACK_SLOT_WIDTH } from "./components/TileRack";
 import GameInfo from "./components/GameInfo";
-import MenuScreen from "./components/MenuScreen";
+import PlayGameMenu from "./components/PlayGameMenu";
+import InGameMenu from "./components/InGameMenu";
+import MainMenuScreen from "./components/MainMenuScreen";
+import LeaderboardScreen from "./components/LeaderboardScreen";
+import StatsScreen from "./components/StatsScreen";
+import ConfirmLeaveGameModal from "./components/ConfirmLeaveGameModal";
 import MessageOverlay from "./components/MessageOverlay";
 import LetterPickerModal from "./components/LetterPickerModal";
 import EndGameModal from "./components/EndGameModal";
@@ -35,6 +40,23 @@ import {
   loadScoreRecords,
   saveScoreRecords,
 } from "./utils/scoreStorage";
+import {
+  buildUpdatedStats,
+  getDefaultStats,
+  loadStats,
+  saveStats,
+} from "./utils/statsStorage";
+import {
+  fetchGlobalLeaderboard,
+  fetchPlayerHighScorePosition,
+  fetchSeedLeaderboard,
+  submitCompletedScore,
+} from "./services/leaderboardService";
+import { isBackendConfigured } from "./config/backend";
+import {
+  loadOrCreatePlayerProfile,
+  savePlayerDisplayName,
+} from "./utils/playerProfile";
 
 const CONTROL_ICON_SIZE = 22;
 const RACK_DROP_EXPANSION_TOP = 270;
@@ -77,12 +99,30 @@ const getMillisecondsUntilNextLocalMidnight = (date = new Date()) => {
 
 function App() {
   const [dictionaryLoaded, setDictionaryLoaded] = useState(false);
-  const [menuVisible, setMenuVisible] = useState(true);
+  const [playMenuVisible, setPlayMenuVisible] = useState(false);
+  const [inGameMenuVisible, setInGameMenuVisible] = useState(false);
+  const [confirmLeaveGameVisible, setConfirmLeaveGameVisible] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
+  const [homeScreen, setHomeScreen] = useState("main");
   const [dailySeed, setDailySeed] = useState(() => getDailySeed());
   const [scoreRecords, setScoreRecords] = useState(getDefaultScoreRecords);
+  const [playerStats, setPlayerStats] = useState(getDefaultStats);
   const [activeDailySeed, setActiveDailySeed] = useState(null);
   const [endGameSummary, setEndGameSummary] = useState(null);
+  const [playerProfile, setPlayerProfile] = useState(null);
+  const [leaderboardEntries, setLeaderboardEntries] = useState([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [leaderboardError, setLeaderboardError] = useState(null);
+  const [dailyLeaderboardEntries, setDailyLeaderboardEntries] = useState([]);
+  const [dailyLeaderboardLoading, setDailyLeaderboardLoading] = useState(false);
+  const [dailyLeaderboardError, setDailyLeaderboardError] = useState(null);
+  const [leaderboardPosition, setLeaderboardPosition] = useState(null);
+  const [leaderboardPositionLoading, setLeaderboardPositionLoading] =
+    useState(false);
+  const [leaderboardPositionError, setLeaderboardPositionError] =
+    useState(null);
+  const [leaderboardSelectedDailySeed, setLeaderboardSelectedDailySeed] =
+    useState(null);
   const [draggingTile, setDraggingTile] = useState(null);
   const [settlingTile, setSettlingTile] = useState(null);
   const [dropTargetRackIndex, setDropTargetRackIndex] = useState(null);
@@ -95,6 +135,8 @@ function App() {
   const [swapDisplayRack, setSwapDisplayRack] = useState(null);
   const [rackTileAnimationStates, setRackTileAnimationStates] = useState({});
   const [showScrabbleBanner, setShowScrabbleBanner] = useState(false);
+  const [gameInfoFlavor, setGameInfoFlavor] = useState(null);
+  const [pendingGameInfoFlavor, setPendingGameInfoFlavor] = useState(null);
   const game = useGame();
   const spinValue = useRef(new Animated.Value(0)).current;
   const scrabbleBannerOpacity = useRef(new Animated.Value(0)).current;
@@ -102,6 +144,7 @@ function App() {
   const scrabbleBannerTimeoutRef = useRef(null);
   const dailySeedRefreshTimeoutRef = useRef(null);
   const persistedGameRef = useRef(null);
+  const backendSubmitRef = useRef(null);
   const boardLayoutRef = useRef(null);
   const safeAreaRef = useRef(null);
   const containerWindowRef = useRef({ x: 0, y: 0 });
@@ -145,6 +188,13 @@ function App() {
     ? game.finalScore
     : game.totalScore - swapAnimatedPenalty;
   const currentDailyHighScore = scoreRecords.dailySeedScores[dailySeed] ?? null;
+  const dailySeeds = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - index);
+    return getDailySeed(date);
+  });
+  const selectedDailyLeaderboardSeed =
+    leaderboardSelectedDailySeed ?? dailySeed;
   const rackDropExpansionTop =
     Platform.OS === "ios" && Platform.isPad
       ? RACK_DROP_EXPANSION_TOP + IPAD_RACK_DROP_EXPANSION_TOP_EXTRA
@@ -487,9 +537,7 @@ function App() {
       containerScreenX +
       (rackWidth - slotCount * RACK_SLOT_WIDTH) / 2;
     const tileTop =
-      rackScreenY -
-      containerScreenY +
-      Math.max(0, (rackHeight - tileSize) / 2);
+      rackScreenY - containerScreenY + Math.max(0, (rackHeight - tileSize) / 2);
     return {
       x:
         rackLeft +
@@ -527,9 +575,7 @@ function App() {
       containerScreenX +
       (rackWidth - slotCount * RACK_SLOT_WIDTH) / 2;
     const tileTop =
-      rackScreenY -
-      containerScreenY +
-      Math.max(0, (rackHeight - tileSize) / 2);
+      rackScreenY - containerScreenY + Math.max(0, (rackHeight - tileSize) / 2);
 
     return {
       x:
@@ -770,20 +816,23 @@ function App() {
   );
 
   // Math-based index from finger X: rackLeft + slotWidth * index. Only used for hover; no measure per frame.
-  const computeRackIndex = useCallback((screenX, screenY, rackLength) => {
-    const r = rackLayoutRef.current;
-    if (r.width <= 0 || r.height <= 0 || rackLength <= 0) return null;
-    if (screenY < r.y - rackDropExpansionTop || screenY > r.y + r.height)
-      return null;
-    const rackLeft = r.x + (r.width - rackLength * RACK_SLOT_WIDTH) / 2;
-    const rackRight = rackLeft + rackLength * RACK_SLOT_WIDTH;
-    if (screenX <= rackLeft) return 0;
-    if (screenX >= rackRight) return rackLength - 1;
-    const index = Math.floor(
-      (screenX - rackLeft + RACK_SLOT_WIDTH / 2) / RACK_SLOT_WIDTH
-    );
-    return Math.min(rackLength - 1, Math.max(0, index));
-  }, [rackDropExpansionTop]);
+  const computeRackIndex = useCallback(
+    (screenX, screenY, rackLength) => {
+      const r = rackLayoutRef.current;
+      if (r.width <= 0 || r.height <= 0 || rackLength <= 0) return null;
+      if (screenY < r.y - rackDropExpansionTop || screenY > r.y + r.height)
+        return null;
+      const rackLeft = r.x + (r.width - rackLength * RACK_SLOT_WIDTH) / 2;
+      const rackRight = rackLeft + rackLength * RACK_SLOT_WIDTH;
+      if (screenX <= rackLeft) return 0;
+      if (screenX >= rackRight) return rackLength - 1;
+      const index = Math.floor(
+        (screenX - rackLeft + RACK_SLOT_WIDTH / 2) / RACK_SLOT_WIDTH
+      );
+      return Math.min(rackLength - 1, Math.max(0, index));
+    },
+    [rackDropExpansionTop]
+  );
 
   // Convert screen coords to board cell using measured grid bounds (scale-aware, no transform math).
   const screenToBoardCell = useCallback((screenX, screenY) => {
@@ -1498,6 +1547,23 @@ function App() {
     const preparedSubmit = game.prepareSubmitWord();
     if (!preparedSubmit) return;
 
+    const nextFlavor = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      previousWordCount: game.wordCount,
+      wordDelta: preparedSubmit.newWords.length,
+      previousTurnCount: game.turnCount,
+      turnDelta: 1,
+      previousTilesRemaining: game.tilesRemaining,
+      tilesDelta: preparedSubmit.drawnTiles.length,
+    };
+
+    if (preparedSubmit.earnedScrabbleBonus) {
+      setGameInfoFlavor(nextFlavor);
+      setPendingGameInfoFlavor(null);
+    } else {
+      setPendingGameInfoFlavor(nextFlavor);
+    }
+
     game.commitPreparedSubmitWord(preparedSubmit);
     if (preparedSubmit.earnedScrabbleBonus) {
       triggerScrabbleBanner();
@@ -1567,6 +1633,142 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const loadPersistedStats = async () => {
+      const storedStats = await loadStats();
+      setPlayerStats(storedStats);
+    };
+
+    loadPersistedStats();
+  }, []);
+
+  useEffect(() => {
+    const loadPlayerProfile = async () => {
+      const storedProfile = await loadOrCreatePlayerProfile();
+      setPlayerProfile(storedProfile);
+    };
+
+    loadPlayerProfile();
+  }, []);
+
+  const loadLeaderboardPosition = useCallback(async () => {
+    if (!isBackendConfigured() || !playerProfile?.playerId) {
+      setLeaderboardPosition(null);
+      setLeaderboardPositionError(null);
+      setLeaderboardPositionLoading(false);
+      return;
+    }
+
+    setLeaderboardPositionLoading(true);
+    setLeaderboardPositionError(null);
+
+    const result = await fetchPlayerHighScorePosition(playerProfile.playerId);
+    if (!result.ok) {
+      setLeaderboardPosition(null);
+      setLeaderboardPositionError(
+        result.reason === "backend_not_configured"
+          ? null
+          : "Unable to load leaderboard rank"
+      );
+      setLeaderboardPositionLoading(false);
+      return;
+    }
+
+    setLeaderboardPosition(result.position);
+    setLeaderboardPositionLoading(false);
+  }, [playerProfile]);
+
+  const loadGlobalLeaderboard = useCallback(async () => {
+    setLeaderboardEntries([]);
+    setLeaderboardError(null);
+    if (!isBackendConfigured()) {
+      setLeaderboardLoading(false);
+      return;
+    }
+
+    setLeaderboardLoading(true);
+    setLeaderboardError(null);
+
+    const result = await fetchGlobalLeaderboard();
+    if (!result.ok) {
+      setLeaderboardEntries([]);
+      setLeaderboardError(
+        result.reason === "backend_not_configured"
+          ? null
+          : "Unable to load leaderboard"
+      );
+      setLeaderboardLoading(false);
+      return;
+    }
+
+    setLeaderboardEntries(result.leaderboard);
+    setLeaderboardLoading(false);
+  }, []);
+
+  const loadDailyLeaderboard = useCallback(
+    async (seed = selectedDailyLeaderboardSeed) => {
+      if (!seed) {
+        setDailyLeaderboardEntries([]);
+        setDailyLeaderboardError(null);
+        return;
+      }
+
+      if (!isBackendConfigured()) {
+        setDailyLeaderboardEntries([]);
+        setDailyLeaderboardError(null);
+        return;
+      }
+
+      setDailyLeaderboardLoading(true);
+      setDailyLeaderboardError(null);
+
+      const result = await fetchSeedLeaderboard(seed);
+      if (!result.ok) {
+        setDailyLeaderboardEntries([]);
+        setDailyLeaderboardError(
+          result.reason === "backend_not_configured"
+            ? null
+            : "Unable to load daily leaderboard"
+        );
+        setDailyLeaderboardLoading(false);
+        return;
+      }
+
+      setDailyLeaderboardEntries(result.leaderboard);
+      setDailyLeaderboardLoading(false);
+    },
+    [selectedDailyLeaderboardSeed]
+  );
+
+  useEffect(() => {
+    if (gameStarted) {
+      return;
+    }
+
+    loadGlobalLeaderboard();
+    loadDailyLeaderboard();
+  }, [
+    gameStarted,
+    homeScreen,
+    loadDailyLeaderboard,
+    loadGlobalLeaderboard,
+    selectedDailyLeaderboardSeed,
+  ]);
+
+  useEffect(() => {
+    if (!leaderboardSelectedDailySeed) {
+      setLeaderboardSelectedDailySeed(dailySeed);
+    }
+  }, [dailySeed, leaderboardSelectedDailySeed]);
+
+  useEffect(() => {
+    if (gameStarted || homeScreen !== "stats") {
+      return;
+    }
+
+    loadLeaderboardPosition();
+  }, [gameStarted, homeScreen, loadLeaderboardPosition]);
+
+  useEffect(() => {
     if (
       !game.gameOver ||
       typeof game.finalScore !== "number" ||
@@ -1598,14 +1800,95 @@ function App() {
     );
     setScoreRecords(nextRecords);
     saveScoreRecords(nextRecords);
+
+    const nextStats = buildUpdatedStats(playerStats, {
+      finalScore: game.finalScore,
+      wordCount: game.wordCount,
+    });
+    setPlayerStats(nextStats);
+    saveStats(nextStats);
+
+    const backendSubmitKey = `${persistedGameKey}:backend`;
+    if (backendSubmitRef.current === backendSubmitKey) {
+      return;
+    }
+    backendSubmitRef.current = backendSubmitKey;
+
+    submitCompletedScore({
+      seed: game.currentSeed,
+      finalScore: game.finalScore,
+      finalScoreBreakdown: game.finalScoreBreakdown,
+      isDailySeed: activeDailySeed === game.currentSeed,
+    }).then((result) => {
+      if (!result.ok && result.reason !== "backend_not_configured") {
+        console.warn("Failed to submit score", result);
+        setLeaderboardError("Failed to submit latest score");
+        return;
+      }
+
+      if (result.ok) {
+        loadGlobalLeaderboard();
+        loadLeaderboardPosition();
+        if (
+          (activeDailySeed ?? game.currentSeed) === selectedDailyLeaderboardSeed
+        ) {
+          loadDailyLeaderboard(activeDailySeed ?? game.currentSeed);
+        }
+      }
+    });
   }, [
     activeDailySeed,
     game.finalScore,
     game.finalScoreBreakdown,
     game.gameOver,
     game.currentSeed,
+    game.wordCount,
+    loadDailyLeaderboard,
+    loadGlobalLeaderboard,
+    loadLeaderboardPosition,
+    playerStats,
     scoreRecords,
+    selectedDailyLeaderboardSeed,
   ]);
+
+  const handleSavePlayerName = useCallback(async (displayName) => {
+    const nextProfile = await savePlayerDisplayName(displayName);
+    setPlayerProfile(nextProfile);
+  }, []);
+
+  const handleOpenLeaderboard = useCallback(() => {
+    setLeaderboardSelectedDailySeed(dailySeed);
+    setHomeScreen("leaderboard");
+  }, [dailySeed]);
+
+  const handleBackToMainMenu = useCallback(() => {
+    setHomeScreen("main");
+  }, []);
+
+  const selectedDailyLeaderboardIndex = dailySeeds.indexOf(
+    selectedDailyLeaderboardSeed
+  );
+
+  const handlePreviousDailyLeaderboardSeed = useCallback(() => {
+    if (
+      selectedDailyLeaderboardIndex < 0 ||
+      selectedDailyLeaderboardIndex >= dailySeeds.length - 1
+    ) {
+      return;
+    }
+    setLeaderboardSelectedDailySeed(
+      dailySeeds[selectedDailyLeaderboardIndex + 1]
+    );
+  }, [dailySeeds, selectedDailyLeaderboardIndex]);
+
+  const handleNextDailyLeaderboardSeed = useCallback(() => {
+    if (selectedDailyLeaderboardIndex <= 0) {
+      return;
+    }
+    setLeaderboardSelectedDailySeed(
+      dailySeeds[selectedDailyLeaderboardIndex - 1]
+    );
+  }, [dailySeeds, selectedDailyLeaderboardIndex]);
 
   useEffect(() => {
     const scheduleDailySeedRefresh = () => {
@@ -1648,9 +1931,13 @@ function App() {
       game.startNewGame(seed);
       setActiveDailySeed(options.isDaily ? seed : null);
       setEndGameSummary(null);
+      setGameInfoFlavor(null);
+      setPendingGameInfoFlavor(null);
+      backendSubmitRef.current = null;
       persistedGameRef.current = null;
       setGameStarted(true);
-      setMenuVisible(false);
+      setPlayMenuVisible(false);
+      setInGameMenuVisible(false);
     },
     [game]
   );
@@ -1663,17 +1950,55 @@ function App() {
     game.startNewGame();
     setActiveDailySeed(null);
     setEndGameSummary(null);
+    setGameInfoFlavor(null);
+    setPendingGameInfoFlavor(null);
+    backendSubmitRef.current = null;
     persistedGameRef.current = null;
     setGameStarted(true);
-    setMenuVisible(false);
+    setPlayMenuVisible(false);
+    setInGameMenuVisible(false);
   }, [game]);
 
   const handleResetSeed = useCallback(() => {
     game.resetGame();
     setEndGameSummary(null);
+    setGameInfoFlavor(null);
+    setPendingGameInfoFlavor(null);
+    backendSubmitRef.current = null;
     persistedGameRef.current = null;
     setGameStarted(true);
+    setPlayMenuVisible(false);
+    setInGameMenuVisible(false);
   }, [game]);
+
+  const handleReturnToMainMenu = useCallback(() => {
+    setInGameMenuVisible(false);
+    setConfirmLeaveGameVisible(false);
+    setPlayMenuVisible(false);
+    setEndGameSummary(null);
+    setGameInfoFlavor(null);
+    setPendingGameInfoFlavor(null);
+    setGameStarted(false);
+    setHomeScreen("main");
+  }, []);
+
+  const handleCloseMessage = useCallback(() => {
+    const closedMessage = game.message;
+    game.setMessage(null);
+
+    if (
+      closedMessage?.title === "Word Accepted!" &&
+      pendingGameInfoFlavor != null
+    ) {
+      setGameInfoFlavor(pendingGameInfoFlavor);
+      setPendingGameInfoFlavor(null);
+    }
+  }, [game, pendingGameInfoFlavor]);
+
+  const handleRequestReturnToMainMenu = useCallback(() => {
+    setInGameMenuVisible(false);
+    setConfirmLeaveGameVisible(true);
+  }, []);
 
   if (!dictionaryLoaded) {
     return (
@@ -1693,7 +2018,10 @@ function App() {
     <GestureHandlerRootView style={styles.container}>
       <SafeAreaView
         ref={safeAreaRef}
-        style={styles.container}
+        style={[
+          styles.container,
+          !gameStarted && styles.fullScreenMenuContainer,
+        ]}
         onLayout={refreshContainerWindowPosition}
       >
         <StatusBar barStyle="dark-content" />
@@ -1703,7 +2031,7 @@ function App() {
             <View style={styles.topPanel}>
               <TouchableOpacity
                 style={styles.menuButton}
-                onPress={() => setMenuVisible(true)}
+                onPress={() => setInGameMenuVisible(true)}
                 accessibilityLabel="Open menu"
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               >
@@ -1725,7 +2053,8 @@ function App() {
                 turnCount={game.turnCount}
                 tilesRemaining={game.tilesRemaining}
                 overallHighScore={scoreRecords.overallHighScore}
-                currentDailyHighScore={currentDailyHighScore}
+                turnFlavor={gameInfoFlavor}
+                pendingTurnFlavor={pendingGameInfoFlavor}
               />
             </View>
 
@@ -1938,22 +2267,75 @@ function App() {
             </View>
           </View>
         ) : (
-          <View style={styles.launchContainer}>
-            <Text style={styles.launchTitle}>Words With Real Friends</Text>
-            <Text style={styles.launchSubtitle}>
-              Start a daily run, a random board, or jump into a specific seed.
-            </Text>
-          </View>
+          <>
+            {homeScreen === "leaderboard" ? (
+              <LeaderboardScreen
+                globalLeaderboardEntries={leaderboardEntries}
+                globalLeaderboardLoading={leaderboardLoading}
+                globalLeaderboardError={leaderboardError}
+                selectedDailySeed={selectedDailyLeaderboardSeed ?? dailySeed}
+                dailyLeaderboardEntries={dailyLeaderboardEntries}
+                dailyLeaderboardLoading={dailyLeaderboardLoading}
+                dailyLeaderboardError={dailyLeaderboardError}
+                backendConfigured={isBackendConfigured()}
+                canGoPreviousDailySeed={
+                  selectedDailyLeaderboardIndex >= 0 &&
+                  selectedDailyLeaderboardIndex < dailySeeds.length - 1
+                }
+                canGoNextDailySeed={selectedDailyLeaderboardIndex > 0}
+                onPreviousDailySeed={handlePreviousDailyLeaderboardSeed}
+                onNextDailySeed={handleNextDailyLeaderboardSeed}
+                onBack={handleBackToMainMenu}
+                onRefresh={() => {
+                  loadGlobalLeaderboard();
+                  loadDailyLeaderboard(
+                    selectedDailyLeaderboardSeed ?? dailySeed
+                  );
+                }}
+              />
+            ) : homeScreen === "stats" ? (
+              <StatsScreen
+                stats={playerStats}
+                leaderboardPosition={leaderboardPosition}
+                leaderboardPositionLoading={leaderboardPositionLoading}
+                leaderboardPositionError={leaderboardPositionError}
+                backendConfigured={isBackendConfigured()}
+                onBack={handleBackToMainMenu}
+              />
+            ) : (
+              <MainMenuScreen
+                playerName={playerProfile?.displayName ?? "Player"}
+                onSavePlayerName={handleSavePlayerName}
+                onOpenPlay={() => setPlayMenuVisible(true)}
+                onOpenLeaderboard={handleOpenLeaderboard}
+                onStatsPress={() => setHomeScreen("stats")}
+              />
+            )}
+          </>
         )}
 
-        <MenuScreen
-          visible={menuVisible}
+        <InGameMenu
+          visible={inGameMenuVisible}
+          onClose={() => setInGameMenuVisible(false)}
+          onOpenPlayMenu={() => {
+            setInGameMenuVisible(false);
+            setPlayMenuVisible(true);
+          }}
+          onReturnToMainMenu={handleRequestReturnToMainMenu}
+        />
+        <ConfirmLeaveGameModal
+          visible={confirmLeaveGameVisible}
+          onCancel={() => setConfirmLeaveGameVisible(false)}
+          onConfirm={handleReturnToMainMenu}
+        />
+        <PlayGameMenu
+          visible={playMenuVisible}
           canDismiss={gameStarted}
           currentSeed={game.currentSeed}
           dailySeed={dailySeed}
           overallHighScore={scoreRecords.overallHighScore}
           dailyHighScore={currentDailyHighScore}
-          onClose={() => setMenuVisible(false)}
+          onClose={() => setPlayMenuVisible(false)}
           onDailyGame={handleDailyGameStart}
           onNewGameRandom={handleRandomGameStart}
           onNewGameWithSeed={(seed) =>
@@ -1961,10 +2343,7 @@ function App() {
           }
           onResetSeed={handleResetSeed}
         />
-        <MessageOverlay
-          message={game.message}
-          onClose={() => game.setMessage(null)}
-        />
+        <MessageOverlay message={game.message} onClose={handleCloseMessage} />
         <LetterPickerModal
           visible={pendingBlankPlacement != null}
           onChooseLetter={(letter) => {
@@ -2068,6 +2447,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
   },
+  fullScreenMenuContainer: {
+    backgroundColor: "#f8f4ed",
+  },
   loadingContainer: {
     flex: 1,
     backgroundColor: "#fff",
@@ -2094,28 +2476,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
     padding: 10,
-  },
-  launchContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 32,
-    backgroundColor: "#f8f4ed",
-  },
-  launchTitle: {
-    fontSize: 34,
-    lineHeight: 38,
-    fontWeight: "900",
-    color: "#2c3e50",
-    textAlign: "center",
-  },
-  launchSubtitle: {
-    marginTop: 10,
-    fontSize: 16,
-    lineHeight: 24,
-    color: "#6b7280",
-    textAlign: "center",
-    maxWidth: 320,
   },
   /** Top: full-width panel with grey background, menu button + game info */
   topPanel: {

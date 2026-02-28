@@ -85,3 +85,10 @@ export const buildUpdatedScoreRecords = (
 
   return nextRecords;
 };
+
+export const getSavedDailySeeds = (records) => {
+  const normalizedRecords = sanitizeScoreRecords(records);
+  return Object.keys(normalizedRecords.dailySeedScores).sort((a, b) =>
+    b.localeCompare(a)
+  );
+};
