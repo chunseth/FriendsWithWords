@@ -145,7 +145,7 @@ const getPremiumSquares = () => {
 };
 
 // Seeded random number generator
-const createSeededRandom = (seed) => {
+const createSeededRandom = (seed, initialState = null) => {
   const hashSeed = (seed) => {
     let hash = 0;
     for (let i = 0; i < seed.length; i++) {
@@ -156,10 +156,17 @@ const createSeededRandom = (seed) => {
     return Math.abs(hash);
   };
 
-  let s = hashSeed(seed);
-  return () => {
-    s = (s * 1664525 + 1013904223) % Math.pow(2, 32);
-    return s / Math.pow(2, 32);
+  let s =
+    typeof initialState === "number" && Number.isFinite(initialState)
+      ? initialState
+      : hashSeed(seed);
+
+  return {
+    next: () => {
+      s = (s * 1664525 + 1013904223) % Math.pow(2, 32);
+      return s / Math.pow(2, 32);
+    },
+    getState: () => s,
   };
 };
 
@@ -249,6 +256,7 @@ export const useGame = () => {
     (seed = null) => {
       const gameSeed = seed || Math.floor(Math.random() * 1000000).toString();
       randomRef.current = createSeededRandom(gameSeed);
+      nextTileIdRef.current = 0;
       setCurrentSeed(gameSeed);
       setTotalScore(0);
       setWordPointsTotal(0);
@@ -280,7 +288,10 @@ export const useGame = () => {
       );
 
       // Initialize and shuffle tile bag
-      tileBagRef.current = shuffleArray(initializeTileBag(), randomRef.current);
+      tileBagRef.current = shuffleArray(
+        initializeTileBag(),
+        randomRef.current.next
+      );
 
       // Draw initial 7 tiles (or fewer if bag has fewer)
       const initialRack = [];
@@ -304,6 +315,7 @@ export const useGame = () => {
     } else {
       randomRef.current = createSeededRandom(currentSeed);
     }
+    nextTileIdRef.current = 0;
 
     setTotalScore(0);
     setWordPointsTotal(0);
@@ -333,7 +345,10 @@ export const useGame = () => {
         .map(() => Array(BOARD_SIZE).fill(null))
     );
 
-    tileBagRef.current = shuffleArray(initializeTileBag(), randomRef.current);
+    tileBagRef.current = shuffleArray(
+      initializeTileBag(),
+      randomRef.current.next
+    );
 
     const initialRack = [];
     let tilesDrawn = 0;
@@ -499,7 +514,7 @@ export const useGame = () => {
 
   const shuffleRack = useCallback(() => {
     if (randomRef.current) {
-      setTileRack((prev) => shuffleArray(prev, randomRef.current));
+      setTileRack((prev) => shuffleArray(prev, randomRef.current.next));
     }
   }, []);
 
@@ -579,7 +594,7 @@ export const useGame = () => {
     }));
     const nextBag = shuffleArray(
       [...tileBagRef.current, ...returnedTiles],
-      randomRef.current
+      randomRef.current.next
     );
     const drawnTiles = [];
     let nextTileId = nextTileIdRef.current;
@@ -1056,7 +1071,111 @@ export const useGame = () => {
     }
 
     finishGame();
-  }, [finishGame, gameOver, selectedCells.length, tileRack.length, tilesRemaining]);
+  }, [
+    finishGame,
+    gameOver,
+    selectedCells.length,
+    tileRack.length,
+    tilesRemaining,
+  ]);
+
+  const getStableSnapshot = useCallback(() => {
+    if (!currentSeed) {
+      return null;
+    }
+
+    return {
+      board,
+      tileRack,
+      selectedTiles: [],
+      selectedCells: [],
+      totalScore,
+      wordPointsTotal,
+      swapPenaltyTotal,
+      scrabbleBonusTotal,
+      wordCount,
+      turnCount,
+      tilesRemaining,
+      wordHistory,
+      isFirstTurn,
+      currentSeed,
+      gameOver,
+      finalScore,
+      finalScoreBreakdown,
+      isSwapMode: false,
+      swapCount,
+      premiumSquares: premiumSquaresRef.current,
+      tileBag: tileBagRef.current,
+      nextTileId: nextTileIdRef.current,
+      boardAtTurnStart: boardAtTurnStartRef.current,
+      randomState: randomRef.current?.getState?.() ?? null,
+    };
+  }, [
+    board,
+    currentSeed,
+    finalScore,
+    finalScoreBreakdown,
+    gameOver,
+    isFirstTurn,
+    scrabbleBonusTotal,
+    swapCount,
+    swapPenaltyTotal,
+    tileRack,
+    tilesRemaining,
+    totalScore,
+    turnCount,
+    wordCount,
+    wordHistory,
+    wordPointsTotal,
+  ]);
+
+  const resumeSavedGame = useCallback((snapshot) => {
+    if (!snapshot || typeof snapshot !== "object" || !snapshot.currentSeed) {
+      return false;
+    }
+
+    randomRef.current = createSeededRandom(
+      snapshot.currentSeed,
+      snapshot.randomState
+    );
+    tileBagRef.current = Array.isArray(snapshot.tileBag)
+      ? snapshot.tileBag
+      : [];
+    nextTileIdRef.current =
+      typeof snapshot.nextTileId === "number" ? snapshot.nextTileId : 0;
+    pendingSwapRef.current = null;
+    pendingSubmitRef.current = null;
+    tilesUsedThisTurnRef.current = new Set();
+    boardAtTurnStartRef.current = Array.isArray(snapshot.boardAtTurnStart)
+      ? snapshot.boardAtTurnStart
+      : null;
+    premiumSquaresRef.current =
+      snapshot.premiumSquares && typeof snapshot.premiumSquares === "object"
+        ? snapshot.premiumSquares
+        : getPremiumSquares();
+
+    setBoard(snapshot.board);
+    setTileRack(snapshot.tileRack ?? []);
+    setSelectedTiles([]);
+    setSelectedCells([]);
+    setTotalScore(snapshot.totalScore ?? 0);
+    setWordPointsTotal(snapshot.wordPointsTotal ?? 0);
+    setSwapPenaltyTotal(snapshot.swapPenaltyTotal ?? 0);
+    setScrabbleBonusTotal(snapshot.scrabbleBonusTotal ?? 0);
+    setWordCount(snapshot.wordCount ?? 0);
+    setTurnCount(snapshot.turnCount ?? 0);
+    setTilesRemaining(snapshot.tilesRemaining ?? 0);
+    setWordHistory(snapshot.wordHistory ?? []);
+    setIsFirstTurn(Boolean(snapshot.isFirstTurn));
+    setCurrentSeed(snapshot.currentSeed);
+    setMessage(null);
+    setGameOver(Boolean(snapshot.gameOver));
+    setFinalScore(snapshot.finalScore ?? null);
+    setFinalScoreBreakdown(snapshot.finalScoreBreakdown ?? null);
+    setIsSwapMode(false);
+    setSwapCount(snapshot.swapCount ?? 0);
+    return true;
+  }, []);
 
   return {
     board,
@@ -1080,6 +1199,8 @@ export const useGame = () => {
     isSwapMode,
     swapCount,
     premiumSquares: premiumSquaresRef.current,
+    getStableSnapshot,
+    resumeSavedGame,
     startNewGame,
     resetGame,
     selectTile,

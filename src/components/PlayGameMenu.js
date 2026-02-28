@@ -17,8 +17,11 @@ const PlayGameMenu = ({
   currentSeed,
   dailySeed,
   dailyHighScore,
+  hasSavedGame,
+  savedGameSeed,
   onClose,
   onDailyGame,
+  onResumeSavedGame,
   onNewGameRandom,
   onNewGameWithSeed,
   onResetSeed,
@@ -35,6 +38,11 @@ const PlayGameMenu = ({
 
   const handleNewGameRandom = () => {
     onNewGameRandom();
+    setSeedInput("");
+  };
+
+  const handleResumeSavedGame = () => {
+    onResumeSavedGame?.();
     setSeedInput("");
   };
 
@@ -84,7 +92,9 @@ const PlayGameMenu = ({
           >
             <Text style={styles.eyebrow}>Friends With Words</Text>
             <Text style={styles.title}>Play Game</Text>
-            <Text style={styles.subtitle}>Choose a board and start playing.</Text>
+            <Text style={styles.subtitle}>
+              Choose a board and start playing.
+            </Text>
 
             <TouchableOpacity
               style={styles.primaryButton}
@@ -93,10 +103,26 @@ const PlayGameMenu = ({
               <View style={styles.buttonRow}>
                 <Text style={styles.primaryButtonText}>Daily Game</Text>
                 {dailyHighScore != null && (
-                  <Text style={styles.primaryButtonScore}>{dailyHighScore}</Text>
+                  <Text style={styles.primaryButtonScore}>
+                    {dailyHighScore}
+                  </Text>
                 )}
               </View>
             </TouchableOpacity>
+
+            {hasSavedGame && (
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={handleResumeSavedGame}
+              >
+                <View style={styles.buttonRow}>
+                  <Text style={styles.secondaryButtonText}>Resume Game</Text>
+                  <Text style={styles.secondaryButtonMeta}>
+                    {savedGameSeed ? `Seed ${savedGameSeed}` : "Saved board"}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={styles.secondaryButton}
@@ -117,7 +143,9 @@ const PlayGameMenu = ({
                   onChangeText={setSeedInput}
                   placeholder="000000"
                   placeholderTextColor="#95a5a6"
-                  keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
+                  keyboardType={
+                    Platform.OS === "ios" ? "number-pad" : "numeric"
+                  }
                   autoCapitalize="none"
                   autoCorrect={false}
                   returnKeyType="go"
@@ -136,7 +164,7 @@ const PlayGameMenu = ({
               </View>
             </View>
 
-            {currentSeed != null && currentSeed !== "" && (
+            {canDismiss && currentSeed != null && currentSeed !== "" && (
               <View style={styles.seedDisplayRow}>
                 <Text style={styles.seedLabel}>Current seed</Text>
                 <Text style={styles.seedValue} numberOfLines={1}>
@@ -253,7 +281,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 16,
-    marginBottom: 18,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: "#e2d3bb",
   },

@@ -31,15 +31,28 @@ create policy "scores_read_all"
   for select
   using (true);
 
+drop policy if exists "scores_insert_authenticated_self" on public.scores;
 drop policy if exists "scores_insert_all" on public.scores;
-create policy "scores_insert_all"
+create policy "scores_insert_authenticated_self"
   on public.scores
   for insert
-  with check (true);
+  to authenticated
+  with check (
+    auth.uid() is not null
+    and player_id = auth.uid()::text
+  );
 
+drop policy if exists "scores_update_authenticated_self" on public.scores;
 drop policy if exists "scores_update_same_player_seed" on public.scores;
-create policy "scores_update_same_player_seed"
+create policy "scores_update_authenticated_self"
   on public.scores
   for update
-  using (true)
-  with check (true);
+  to authenticated
+  using (
+    auth.uid() is not null
+    and player_id = auth.uid()::text
+  )
+  with check (
+    auth.uid() is not null
+    and player_id = auth.uid()::text
+  );

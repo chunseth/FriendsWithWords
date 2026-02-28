@@ -47,6 +47,11 @@ import {
   saveStats,
 } from "./utils/statsStorage";
 import {
+  clearGameSnapshotPayload,
+  loadGameSnapshotPayload,
+  saveGameSnapshotPayload,
+} from "./utils/gameSnapshotStorage";
+import {
   fetchGlobalLeaderboard,
   fetchPlayerHighScorePosition,
   fetchSeedLeaderboard,
@@ -103,6 +108,7 @@ function App() {
   const [inGameMenuVisible, setInGameMenuVisible] = useState(false);
   const [confirmLeaveGameVisible, setConfirmLeaveGameVisible] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
+  const [savedGamePayload, setSavedGamePayload] = useState(null);
   const [homeScreen, setHomeScreen] = useState("main");
   const [dailySeed, setDailySeed] = useState(() => getDailySeed());
   const [scoreRecords, setScoreRecords] = useState(getDefaultScoreRecords);
@@ -145,6 +151,7 @@ function App() {
   const dailySeedRefreshTimeoutRef = useRef(null);
   const persistedGameRef = useRef(null);
   const backendSubmitRef = useRef(null);
+  const pendingGameReplacementActionRef = useRef(null);
   const boardLayoutRef = useRef(null);
   const safeAreaRef = useRef(null);
   const containerWindowRef = useRef({ x: 0, y: 0 });
@@ -1633,6 +1640,15 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const loadSavedGame = async () => {
+      const storedPayload = await loadGameSnapshotPayload();
+      setSavedGamePayload(storedPayload);
+    };
+
+    loadSavedGame();
+  }, []);
+
+  useEffect(() => {
     const loadPersistedStats = async () => {
       const storedStats = await loadStats();
       setPlayerStats(storedStats);
@@ -1767,6 +1783,61 @@ function App() {
 
     loadLeaderboardPosition();
   }, [gameStarted, homeScreen, loadLeaderboardPosition]);
+
+  useEffect(() => {
+    if (!gameStarted || game.gameOver) {
+      return;
+    }
+
+    if (
+      swapAnimating ||
+      draggingTile != null ||
+      settlingTile != null ||
+      pendingBlankPlacement != null ||
+      game.selectedCells.length > 0 ||
+      game.isSwapMode ||
+      playMenuVisible ||
+      inGameMenuVisible
+    ) {
+      return;
+    }
+
+    const snapshot = game.getStableSnapshot();
+    if (!snapshot) {
+      return;
+    }
+
+    const payload = {
+      snapshot,
+      activeDailySeed,
+      savedAt: Date.now(),
+    };
+
+    setSavedGamePayload(payload);
+    saveGameSnapshotPayload(payload);
+  }, [
+    activeDailySeed,
+    draggingTile,
+    game.getStableSnapshot,
+    game.gameOver,
+    game.isSwapMode,
+    game.selectedCells.length,
+    gameStarted,
+    inGameMenuVisible,
+    pendingBlankPlacement,
+    playMenuVisible,
+    settlingTile,
+    swapAnimating,
+  ]);
+
+  useEffect(() => {
+    if (!game.gameOver) {
+      return;
+    }
+
+    setSavedGamePayload(null);
+    clearGameSnapshotPayload();
+  }, [game.gameOver]);
 
   useEffect(() => {
     if (
@@ -1928,6 +1999,8 @@ function App() {
 
   const startGameWithSeed = useCallback(
     (seed, options = {}) => {
+      setSavedGamePayload(null);
+      clearGameSnapshotPayload();
       game.startNewGame(seed);
       setActiveDailySeed(options.isDaily ? seed : null);
       setEndGameSummary(null);
@@ -1947,6 +2020,8 @@ function App() {
   }, [dailySeed, startGameWithSeed]);
 
   const handleRandomGameStart = useCallback(() => {
+    setSavedGamePayload(null);
+    clearGameSnapshotPayload();
     game.startNewGame();
     setActiveDailySeed(null);
     setEndGameSummary(null);
@@ -1960,6 +2035,8 @@ function App() {
   }, [game]);
 
   const handleResetSeed = useCallback(() => {
+    setSavedGamePayload(null);
+    clearGameSnapshotPayload();
     game.resetGame();
     setEndGameSummary(null);
     setGameInfoFlavor(null);
@@ -1972,15 +2049,48 @@ function App() {
   }, [game]);
 
   const handleReturnToMainMenu = useCallback(() => {
+    const snapshot = game.getStableSnapshot();
+    if (snapshot && !game.gameOver) {
+      const payload = {
+        snapshot,
+        activeDailySeed,
+        savedAt: Date.now(),
+      };
+      setSavedGamePayload(payload);
+      saveGameSnapshotPayload(payload);
+    }
+
     setInGameMenuVisible(false);
-    setConfirmLeaveGameVisible(false);
     setPlayMenuVisible(false);
     setEndGameSummary(null);
     setGameInfoFlavor(null);
     setPendingGameInfoFlavor(null);
     setGameStarted(false);
     setHomeScreen("main");
-  }, []);
+  }, [activeDailySeed, game, game.gameOver]);
+
+  const handleResumeSavedGame = useCallback(() => {
+    if (!savedGamePayload?.snapshot) {
+      return;
+    }
+
+    const resumed = game.resumeSavedGame(savedGamePayload.snapshot);
+    if (!resumed) {
+      return;
+    }
+
+    setActiveDailySeed(savedGamePayload.activeDailySeed ?? null);
+    setEndGameSummary(null);
+    setGameInfoFlavor(null);
+    setPendingGameInfoFlavor(null);
+    setPendingBlankPlacement(null);
+    setConfirmLeaveGameVisible(false);
+    backendSubmitRef.current = null;
+    persistedGameRef.current = null;
+    setGameStarted(true);
+    setPlayMenuVisible(false);
+    setInGameMenuVisible(false);
+  }, [game, savedGamePayload]);
 
   const handleCloseMessage = useCallback(() => {
     const closedMessage = game.message;
@@ -1995,9 +2105,31 @@ function App() {
     }
   }, [game, pendingGameInfoFlavor]);
 
-  const handleRequestReturnToMainMenu = useCallback(() => {
-    setInGameMenuVisible(false);
-    setConfirmLeaveGameVisible(true);
+  const requestGameReplacement = useCallback(
+    (action) => {
+      if (!gameStarted && !savedGamePayload?.snapshot) {
+        action();
+        return;
+      }
+
+      pendingGameReplacementActionRef.current = action;
+      setPlayMenuVisible(false);
+      setConfirmLeaveGameVisible(true);
+    },
+    [gameStarted, savedGamePayload]
+  );
+
+  const handleConfirmGameReplacement = useCallback(() => {
+    const pendingAction = pendingGameReplacementActionRef.current;
+    pendingGameReplacementActionRef.current = null;
+    setConfirmLeaveGameVisible(false);
+    pendingAction?.();
+  }, []);
+
+  const handleCancelGameReplacement = useCallback(() => {
+    pendingGameReplacementActionRef.current = null;
+    setConfirmLeaveGameVisible(false);
+    setPlayMenuVisible(true);
   }, []);
 
   if (!dictionaryLoaded) {
@@ -2321,12 +2453,7 @@ function App() {
             setInGameMenuVisible(false);
             setPlayMenuVisible(true);
           }}
-          onReturnToMainMenu={handleRequestReturnToMainMenu}
-        />
-        <ConfirmLeaveGameModal
-          visible={confirmLeaveGameVisible}
-          onCancel={() => setConfirmLeaveGameVisible(false)}
-          onConfirm={handleReturnToMainMenu}
+          onReturnToMainMenu={handleReturnToMainMenu}
         />
         <PlayGameMenu
           visible={playMenuVisible}
@@ -2335,13 +2462,23 @@ function App() {
           dailySeed={dailySeed}
           overallHighScore={scoreRecords.overallHighScore}
           dailyHighScore={currentDailyHighScore}
+          hasSavedGame={savedGamePayload?.snapshot != null && !gameStarted}
+          savedGameSeed={savedGamePayload?.snapshot?.currentSeed ?? null}
           onClose={() => setPlayMenuVisible(false)}
-          onDailyGame={handleDailyGameStart}
-          onNewGameRandom={handleRandomGameStart}
+          onDailyGame={() => requestGameReplacement(handleDailyGameStart)}
+          onResumeSavedGame={handleResumeSavedGame}
+          onNewGameRandom={() => requestGameReplacement(handleRandomGameStart)}
           onNewGameWithSeed={(seed) =>
-            startGameWithSeed(seed, { isDaily: false })
+            requestGameReplacement(() =>
+              startGameWithSeed(seed, { isDaily: false })
+            )
           }
-          onResetSeed={handleResetSeed}
+          onResetSeed={() => requestGameReplacement(handleResetSeed)}
+        />
+        <ConfirmLeaveGameModal
+          visible={confirmLeaveGameVisible}
+          onCancel={handleCancelGameReplacement}
+          onConfirm={handleConfirmGameReplacement}
         />
         <MessageOverlay message={game.message} onClose={handleCloseMessage} />
         <LetterPickerModal

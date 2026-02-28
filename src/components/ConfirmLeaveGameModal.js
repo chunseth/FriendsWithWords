@@ -17,13 +17,14 @@ const ConfirmLeaveGameModal = ({ visible, onCancel, onConfirm }) => {
         onPress={onCancel}
       >
         <View style={styles.card} onStartShouldSetResponder={() => true}>
-          <Text style={styles.title}>Leave Game?</Text>
+          <Text style={styles.title}>Start New Game?</Text>
           <Text style={styles.body}>
-            Your current game will not be saved if you return to the main menu.
+            Starting a new game will replace your current game or saved
+            progress.
           </Text>
 
           <TouchableOpacity style={styles.primaryButton} onPress={onConfirm}>
-            <Text style={styles.primaryButtonText}>Leave Game</Text>
+            <Text style={styles.primaryButtonText}>Start New Game</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.secondaryButton} onPress={onCancel}>

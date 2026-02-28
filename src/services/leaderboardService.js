@@ -1,4 +1,4 @@
-import { getSupabaseClient } from "../lib/supabase";
+import { ensureSupabaseSession, getSupabaseClient } from "../lib/supabase";
 import { isBackendConfigured } from "../config/backend";
 import { loadOrCreatePlayerProfile } from "../utils/playerProfile";
 
@@ -28,10 +28,24 @@ export const submitCompletedScore = async ({
     return { ok: false, reason: "backend_not_configured" };
   }
 
+  const sessionResult = await ensureSupabaseSession();
+  if (!sessionResult.ok) {
+    return {
+      ok: false,
+      reason: "auth_failed",
+      error: sessionResult.error ?? null,
+    };
+  }
+
+  const authUserId = sessionResult.session?.user?.id;
+  if (!authUserId) {
+    return { ok: false, reason: "auth_failed" };
+  }
+
   const playerProfile = await loadOrCreatePlayerProfile();
 
   const submission = {
-    player_id: playerProfile.playerId,
+    player_id: authUserId,
     display_name: playerProfile.displayName,
     seed,
     is_daily_seed: isDailySeed,
@@ -47,7 +61,7 @@ export const submitCompletedScore = async ({
   const { data: existingScore, error: existingScoreError } = await supabase
     .from(SCORES_TABLE)
     .select("id, final_score")
-    .eq("player_id", playerProfile.playerId)
+    .eq("player_id", authUserId)
     .eq("seed", seed)
     .maybeSingle();
 
@@ -148,19 +162,30 @@ export const fetchPlayerHighScorePosition = async (playerId) => {
     return { ok: false, reason: "backend_not_configured", position: null };
   }
 
-  if (!playerId) {
-    return { ok: false, reason: "missing_player_id", position: null };
-  }
-
   const supabase = getSupabaseClient();
   if (!supabase) {
     return { ok: false, reason: "backend_not_configured", position: null };
   }
 
+  const sessionResult = await ensureSupabaseSession();
+  if (!sessionResult.ok) {
+    return {
+      ok: false,
+      reason: "auth_failed",
+      error: sessionResult.error ?? null,
+      position: null,
+    };
+  }
+
+  const scopedPlayerId = sessionResult.session?.user?.id ?? playerId;
+  if (!scopedPlayerId) {
+    return { ok: false, reason: "missing_player_id", position: null };
+  }
+
   const { data: bestScore, error: bestScoreError } = await supabase
     .from(SCORES_TABLE)
     .select("final_score, completed_at")
-    .eq("player_id", playerId)
+    .eq("player_id", scopedPlayerId)
     .order("final_score", { ascending: false })
     .order("completed_at", { ascending: true })
     .limit(1)
