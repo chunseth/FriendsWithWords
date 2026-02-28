@@ -15,6 +15,8 @@ const MenuScreen = ({
   canDismiss,
   currentSeed,
   dailySeed,
+  overallHighScore,
+  dailyHighScore,
   onClose,
   onDailyGame,
   onNewGameRandom,
@@ -85,6 +87,9 @@ const MenuScreen = ({
           >
             <Text style={styles.primaryButtonText}>Daily Game</Text>
             <Text style={styles.buttonMeta}>Seed {dailySeed}</Text>
+            <Text style={styles.buttonMeta}>
+              Best score {dailyHighScore ?? "-"}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -137,6 +142,11 @@ const MenuScreen = ({
               </TouchableOpacity>
             </View>
           )}
+
+          <View style={styles.highScoreRow}>
+            <Text style={styles.highScoreLabel}>Overall high score</Text>
+            <Text style={styles.highScoreValue}>{overallHighScore ?? "-"}</Text>
+          </View>
 
           {canDismiss && (
             <>
@@ -313,6 +323,26 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
     fontSize: 13,
+  },
+  highScoreRow: {
+    marginTop: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: "#f5f1e8",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  highScoreLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#7f8c8d",
+  },
+  highScoreValue: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#2c3e50",
   },
   tertiaryButton: {
     marginTop: 14,

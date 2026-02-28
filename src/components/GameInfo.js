@@ -5,6 +5,8 @@ const GameInfo = ({
     wordCount,
     turnCount,
     tilesRemaining,
+    overallHighScore,
+    currentDailyHighScore,
 }) => (
     <View style={styles.container}>
         <View style={styles.row}>
@@ -21,6 +23,16 @@ const GameInfo = ({
                 <Text style={styles.value}>{tilesRemaining}</Text>
             </View>
         </View>
+        <View style={styles.row}>
+            <View style={styles.infoItem}>
+                <Text style={styles.label}>Best</Text>
+                <Text style={styles.value}>{overallHighScore ?? "-"}</Text>
+            </View>
+            <View style={styles.infoItem}>
+                <Text style={styles.label}>Daily Best</Text>
+                <Text style={styles.value}>{currentDailyHighScore ?? "-"}</Text>
+            </View>
+        </View>
     </View>
 );
 
@@ -28,6 +40,7 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         justifyContent: 'center',
+        gap: 8,
     },
     row: {
         flexDirection: 'row',

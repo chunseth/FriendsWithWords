@@ -1,6 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Animated } from 'react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import LinearGradient from 'react-native-linear-gradient';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 1.75;
@@ -19,20 +20,12 @@ const CELL_SIZE = Math.min(
 );
 const TILE_SIZE = CELL_SIZE - 2;
 
-// Simulated gradient: top 50% of tile, black 30% opacity to transparent. Use one strip per
-// pixel so height is an integer and every tile renders the same (avoids % + 60 strips causing
-// sub-pixel rounding and random striping on some tiles).
 const TILE_GRADIENT_HEIGHT_PX = Math.max(1, Math.floor(TILE_SIZE * 0.5));
-const TILE_GRADIENT_STRIPS = TILE_GRADIENT_HEIGHT_PX === 1
-    ? ['rgba(0,0,0,0.15)']
-    : Array.from(
-        { length: TILE_GRADIENT_HEIGHT_PX },
-        (_, i) => `rgba(0,0,0,${((TILE_GRADIENT_HEIGHT_PX - 1 - i) / (TILE_GRADIENT_HEIGHT_PX - 1)) * 0.3})`
-    );
 // Spacing between tiles; board size is then computed from content so it exactly encapsulates
 const CELL_MARGIN = 1.5;
 
 const CELL_SIZE_EFFECTIVE = TILE_SIZE + 2 * CELL_MARGIN;
+const BOARD_INDICES = Array.from({ length: BOARD_SIZE }, (_, index) => index);
 
 const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false }) => {
     const boardViewRef = useRef(null);
@@ -284,6 +277,10 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
     }, [boardLayoutRef, updateGridBounds, panAnim.x, panAnim.y]);
 
     const effectivePadding = zoom > 1 ? BOARD_PADDING / Math.max(1, zoom) : BOARD_PADDING;
+    const selectedCellKeys = useMemo(
+        () => new Set(selectedCells.map(({ row, col }) => `${row},${col}`)),
+        [selectedCells]
+    );
 
     return (
         <View
@@ -309,15 +306,15 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                         },
                     ]}
                 >
-                    {Array(BOARD_SIZE).fill(null).map((_, row) =>
+                    {BOARD_INDICES.map((row) =>
                         <View key={row} style={styles.row}>
-                            {Array(BOARD_SIZE).fill(null).map((_, col) => {
+                            {BOARD_INDICES.map((col) => {
                                 const cellTile = board[row][col];
                                 const isOptimisticSource = optimisticPlacement?.fromRow != null && optimisticPlacement?.fromCol != null && row === optimisticPlacement.fromRow && col === optimisticPlacement.fromCol;
                                 const isOptimisticTarget = optimisticPlacement && optimisticPlacement.row === row && optimisticPlacement.col === col && optimisticPlacement.renderTarget !== false;
                                 const optTile = isOptimisticTarget ? { letter: optimisticPlacement.letter, value: optimisticPlacement.value, isFromRack: true, rackIndex: optimisticPlacement.rackIndex } : null;
                                 const tile = isOptimisticSource ? null : (cellTile ?? optTile);
-                                const defaultSelected = selectedCells.some(c => c.row === row && c.col === col);
+                                const defaultSelected = selectedCellKeys.has(`${row},${col}`);
                                 const isSelected = isOptimisticSource ? false : (isOptimisticTarget ? true : defaultSelected);
                                 return (
                                 <BoardCell
@@ -466,11 +463,7 @@ const styles = StyleSheet.create({
         top: 0,
         height: TILE_GRADIENT_HEIGHT_PX,
         borderRadius: 4,
-        flexDirection: 'column',
         overflow: 'hidden',
-    },
-    tileGradientStrip: {
-        height: 1,
     },
     cellOccupied: {
         backgroundColor: '#f39c12',
@@ -558,11 +551,13 @@ const BoardCell = React.memo(function BoardCell({
                     <Text style={styles.premiumLabel}>{PREMIUM_LABELS[premium] ?? premium}</Text>
                 )
             )}
-            <View style={styles.tileGradient} pointerEvents="none">
-                {TILE_GRADIENT_STRIPS.map((color, i) => (
-                    <View key={i} style={[styles.tileGradientStrip, { backgroundColor: color }]} />
-                ))}
-            </View>
+            <LinearGradient
+                pointerEvents="none"
+                colors={['rgba(0,0,0,0.22)', 'rgba(0,0,0,0.08)', 'rgba(0,0,0,0)']}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={styles.tileGradient}
+            />
         </View>
     );
 

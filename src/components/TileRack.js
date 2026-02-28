@@ -261,6 +261,7 @@ const TileRack = ({
   const displacementAnimRef = useRef({});
   const displacementValueRef = useRef({});
   const rackRootRef = useRef(null);
+  const rackRowRef = useRef(null);
 
   if (!animatedValuesRef.current) {
     animatedValuesRef.current = {};
@@ -388,24 +389,20 @@ const TileRack = ({
   const hasDisplacement =
     draggingVisibleIndex != null && predictedInsertionIndex != null;
 
-  const handleLayout = () => {
-    rackRootRef.current?.measureInWindow?.((x, y, width, height) => {
+  const handleRackLayout = () => {
+    rackRowRef.current?.measureInWindow?.((x, y, width, height) => {
       onMeasureLayout?.({ x, y, width, height });
     });
   };
 
   return (
-    <View
-      ref={rackRootRef}
-      style={[styles.container, isSwapMode && styles.containerSwapMode]}
-      onLayout={handleLayout}
-    >
+    <View ref={rackRootRef} style={[styles.container, isSwapMode && styles.containerSwapMode]}>
       {isSwapMode && !interactionsDisabled && (
         <Text style={styles.swapLabel}>
           {`click tiles to swap! (- ${swapMultiplier.toFixed(1)}x)`}
         </Text>
       )}
-      <View style={styles.rack}>
+      <View ref={rackRowRef} style={styles.rack} onLayout={handleRackLayout}>
         {slotIndices.map((slotIndex) =>
           showPlaceholder && slotIndex === placeholderIndex ? (
             <View key="rack-placeholder" style={styles.rackPlaceholder} />

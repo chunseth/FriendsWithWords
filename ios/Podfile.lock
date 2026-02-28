@@ -1057,6 +1057,8 @@ PODS:
     - React-jsi (= 0.73.11)
     - React-logger (= 0.73.11)
     - React-perflogger (= 0.73.11)
+  - RNCAsyncStorage (2.2.0):
+    - React-Core
   - RNCClipboard (1.16.3):
     - React-Core
   - RNGestureHandler (2.30.0):
@@ -1140,6 +1142,7 @@ DEPENDENCIES:
   - React-runtimescheduler (from `../node_modules/react-native/ReactCommon/react/renderer/runtimescheduler`)
   - React-utils (from `../node_modules/react-native/ReactCommon/react/utils`)
   - ReactCommon/turbomodule/core (from `../node_modules/react-native/ReactCommon`)
+  - "RNCAsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
   - "RNCClipboard (from `../node_modules/@react-native-clipboard/clipboard`)"
   - RNGestureHandler (from `../node_modules/react-native-gesture-handler`)
   - RNReanimated (from `../node_modules/react-native-reanimated`)
@@ -1252,6 +1255,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon/react/utils"
   ReactCommon:
     :path: "../node_modules/react-native/ReactCommon"
+  RNCAsyncStorage:
+    :path: "../node_modules/@react-native-async-storage/async-storage"
   RNCClipboard:
     :path: "../node_modules/@react-native-clipboard/clipboard"
   RNGestureHandler:
@@ -1315,6 +1320,7 @@ SPEC CHECKSUMS:
   React-runtimescheduler: 398069b748d97567cc7585cc9a97284ad19d72fa
   React-utils: e8549669b504c18929b2e9aa4d87657e530a91a4
   ReactCommon: 9c38e8797dc2ac72edf63cd18cf450d918575666
+  RNCAsyncStorage: b44e8a4e798c3e1f56bffccd0f591f674fb9198f
   RNCClipboard: f6679d470d0da2bce2a37b0af7b9e0bf369ecda5
   RNGestureHandler: ad7bdf3340a16d433d58023d4bddde2d633904f9
   RNReanimated: 7fdc3dc5bdf06ce359b54d16e911778c3b0b31b9

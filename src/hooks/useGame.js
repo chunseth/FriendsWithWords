@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { dictionary } from "../utils/dictionary";
 
 // Blank tile sentinel (unplaced blank on rack)
@@ -182,6 +182,9 @@ export const useGame = () => {
   const [selectedTiles, setSelectedTiles] = useState([]);
   const [selectedCells, setSelectedCells] = useState([]);
   const [totalScore, setTotalScore] = useState(0);
+  const [wordPointsTotal, setWordPointsTotal] = useState(0);
+  const [swapPenaltyTotal, setSwapPenaltyTotal] = useState(0);
+  const [scrabbleBonusTotal, setScrabbleBonusTotal] = useState(0);
   const [wordCount, setWordCount] = useState(0);
   const [turnCount, setTurnCount] = useState(0);
   const [tilesRemaining, setTilesRemaining] = useState(100);
@@ -191,6 +194,7 @@ export const useGame = () => {
   const [message, setMessage] = useState(null);
   const [gameOver, setGameOver] = useState(false);
   const [finalScore, setFinalScore] = useState(null);
+  const [finalScoreBreakdown, setFinalScoreBreakdown] = useState(null);
   const [isSwapMode, setIsSwapMode] = useState(false);
   const [swapCount, setSwapCount] = useState(0);
 
@@ -247,6 +251,9 @@ export const useGame = () => {
       randomRef.current = createSeededRandom(gameSeed);
       setCurrentSeed(gameSeed);
       setTotalScore(0);
+      setWordPointsTotal(0);
+      setSwapPenaltyTotal(0);
+      setScrabbleBonusTotal(0);
       setWordCount(0);
       setTurnCount(0);
       setTilesRemaining(100);
@@ -256,6 +263,7 @@ export const useGame = () => {
       setIsFirstTurn(true);
       setGameOver(false);
       setFinalScore(null);
+      setFinalScoreBreakdown(null);
       setIsSwapMode(false);
       setSwapCount(0);
       pendingSwapRef.current = null;
@@ -298,6 +306,9 @@ export const useGame = () => {
     }
 
     setTotalScore(0);
+    setWordPointsTotal(0);
+    setSwapPenaltyTotal(0);
+    setScrabbleBonusTotal(0);
     setWordCount(0);
     setTurnCount(0);
     setTilesRemaining(100);
@@ -307,6 +318,7 @@ export const useGame = () => {
     setIsFirstTurn(true);
     setGameOver(false);
     setFinalScore(null);
+    setFinalScoreBreakdown(null);
     setIsSwapMode(false);
     setSwapCount(0);
     pendingSwapRef.current = null;
@@ -616,6 +628,7 @@ export const useGame = () => {
     setTileRack(payload.resultingRack);
     setTilesRemaining(payload.nextTilesRemaining);
     setTotalScore((prev) => prev - payload.scorePenalty);
+    setSwapPenaltyTotal((prev) => prev + payload.scorePenalty);
     setSwapCount((prev) => prev + 1);
     setTurnCount((prev) => prev + 1);
     setIsSwapMode(false);
@@ -865,12 +878,13 @@ export const useGame = () => {
       return null;
     }
 
-    let turnScore = 0;
+    let baseWordScore = 0;
     newWords.forEach((wordData) => {
-      turnScore += calculateWordScore(wordData);
+      baseWordScore += calculateWordScore(wordData);
     });
 
     const earnedScrabbleBonus = placedCells.length === 7;
+    let turnScore = baseWordScore;
     if (earnedScrabbleBonus) {
       turnScore += SCRABBLE_BONUS;
     }
@@ -917,8 +931,10 @@ export const useGame = () => {
     });
 
     const payload = {
+      baseWordScore,
       turnScore,
       earnedScrabbleBonus,
+      scrabbleBonus: earnedScrabbleBonus ? SCRABBLE_BONUS : 0,
       newWords,
       newHistory,
       placedCells,
@@ -952,6 +968,10 @@ export const useGame = () => {
 
     pendingSubmitRef.current = payload;
     setTotalScore((prev) => prev + payload.turnScore);
+    setWordPointsTotal((prev) => prev + payload.baseWordScore);
+    if (payload.scrabbleBonus > 0) {
+      setScrabbleBonusTotal((prev) => prev + payload.scrabbleBonus);
+    }
     setWordCount((prev) => prev + payload.newWords.length);
     setTurnCount((prev) => prev + 1);
     setIsFirstTurn(false);
@@ -1004,15 +1024,39 @@ export const useGame = () => {
 
   const finishGame = useCallback(() => {
     if (gameOver || tilesRemaining > 0) return; // Only when bag is empty and game not already over
-    const unusedPoints = tileRack.reduce((sum, t) => sum + (t?.value ?? 0), 0);
-    const score = totalScore - turnCount * 2 - unusedPoints;
+    const turnPenalties = turnCount * 2;
+    const score =
+      wordPointsTotal - swapPenaltyTotal - turnPenalties + scrabbleBonusTotal;
+    setFinalScoreBreakdown({
+      pointsEarned: wordPointsTotal,
+      swapPenalties: swapPenaltyTotal,
+      turnPenalties,
+      scrabbleBonus: scrabbleBonusTotal,
+      finalScore: score,
+    });
     setFinalScore(score);
     setGameOver(true);
-    setMessage({
-      title: "Game Over",
-      text: `Final score: ${score}`,
-    });
-  }, [gameOver, tilesRemaining, tileRack, totalScore, turnCount]);
+  }, [
+    gameOver,
+    scrabbleBonusTotal,
+    swapPenaltyTotal,
+    tilesRemaining,
+    turnCount,
+    wordPointsTotal,
+  ]);
+
+  useEffect(() => {
+    if (
+      gameOver ||
+      tilesRemaining !== 0 ||
+      tileRack.length !== 0 ||
+      selectedCells.length > 0
+    ) {
+      return;
+    }
+
+    finishGame();
+  }, [finishGame, gameOver, selectedCells.length, tileRack.length, tilesRemaining]);
 
   return {
     board,
@@ -1020,6 +1064,9 @@ export const useGame = () => {
     selectedTiles,
     selectedCells,
     totalScore,
+    wordPointsTotal,
+    swapPenaltyTotal,
+    scrabbleBonusTotal,
     wordCount,
     turnCount,
     tilesRemaining,
@@ -1029,6 +1076,7 @@ export const useGame = () => {
     message,
     gameOver,
     finalScore,
+    finalScoreBreakdown,
     isSwapMode,
     swapCount,
     premiumSquares: premiumSquaresRef.current,

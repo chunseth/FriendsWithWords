@@ -28,13 +28,21 @@ import GameInfo from "./components/GameInfo";
 import MenuScreen from "./components/MenuScreen";
 import MessageOverlay from "./components/MessageOverlay";
 import LetterPickerModal from "./components/LetterPickerModal";
+import EndGameModal from "./components/EndGameModal";
+import {
+  buildUpdatedScoreRecords,
+  getDefaultScoreRecords,
+  loadScoreRecords,
+  saveScoreRecords,
+} from "./utils/scoreStorage";
 
 const CONTROL_ICON_SIZE = 22;
 const RACK_DROP_EXPANSION_TOP = 270;
+const IPAD_RACK_DROP_EXPANSION_TOP_EXTRA = 1000;
 const DRAG_TILE_HALF_SIZE = 21;
 const DRAG_RACK_SETTLE_DURATION = 30;
 const DRAG_BOARD_SETTLE_DURATION = 30;
-const DRAG_RACK_RETURN_DURATION = 70;
+const DRAG_RACK_RETURN_DURATION = 340;
 const BOARD_TILE_PICKUP_SLOP = 35;
 const DRAG_BOARD_PICKUP_DURATION = 30;
 const DRAG_RACK_PICKUP_DURATION = 30;
@@ -72,6 +80,9 @@ function App() {
   const [menuVisible, setMenuVisible] = useState(true);
   const [gameStarted, setGameStarted] = useState(false);
   const [dailySeed, setDailySeed] = useState(() => getDailySeed());
+  const [scoreRecords, setScoreRecords] = useState(getDefaultScoreRecords);
+  const [activeDailySeed, setActiveDailySeed] = useState(null);
+  const [endGameSummary, setEndGameSummary] = useState(null);
   const [draggingTile, setDraggingTile] = useState(null);
   const [settlingTile, setSettlingTile] = useState(null);
   const [dropTargetRackIndex, setDropTargetRackIndex] = useState(null);
@@ -90,6 +101,7 @@ function App() {
   const scrabbleBannerScale = useRef(new Animated.Value(0.92)).current;
   const scrabbleBannerTimeoutRef = useRef(null);
   const dailySeedRefreshTimeoutRef = useRef(null);
+  const persistedGameRef = useRef(null);
   const boardLayoutRef = useRef(null);
   const safeAreaRef = useRef(null);
   const containerWindowRef = useRef({ x: 0, y: 0 });
@@ -108,7 +120,6 @@ function App() {
   const hoverIndexRef = useRef(null);
   const boardDragPayloadRef = useRef(null);
   const pendingPlacementFrameRef = useRef(null);
-  const rackContainerRef = useRef(null);
   const rackLayoutRef = useRef({ x: 0, y: 0, width: 0, height: 0 });
   const rackTileAnimationsRef = useRef({});
   const rackSourceTiles = swapDisplayRack ?? game.tileRack;
@@ -133,6 +144,11 @@ function App() {
   const displayedScore = game.gameOver
     ? game.finalScore
     : game.totalScore - swapAnimatedPenalty;
+  const currentDailyHighScore = scoreRecords.dailySeedScores[dailySeed] ?? null;
+  const rackDropExpansionTop =
+    Platform.OS === "ios" && Platform.isPad
+      ? RACK_DROP_EXPANSION_TOP + IPAD_RACK_DROP_EXPANSION_TOP_EXTRA
+      : RACK_DROP_EXPANSION_TOP;
 
   const refreshContainerWindowPosition = useCallback(() => {
     safeAreaRef.current?.measureInWindow?.((x, y) => {
@@ -140,10 +156,9 @@ function App() {
     });
   }, []);
 
-  const updateRackLayout = useCallback(() => {
-    rackContainerRef.current?.measureInWindow((x, y, width, height) => {
-      rackLayoutRef.current = { x, y, width, height };
-    });
+  const updateRackLayout = useCallback((layout) => {
+    if (!layout) return;
+    rackLayoutRef.current = layout;
   }, []);
 
   const ensureRackTileAnimationState = useCallback(
@@ -449,6 +464,7 @@ function App() {
       x: rackScreenX,
       y: rackScreenY,
       width: rackWidth,
+      height: rackHeight,
     } = rackLayoutRef.current;
     const { x: containerScreenX, y: containerScreenY } =
       containerWindowRef.current;
@@ -456,6 +472,7 @@ function App() {
       typeof rackScreenX !== "number" ||
       typeof rackScreenY !== "number" ||
       typeof rackWidth !== "number" ||
+      typeof rackHeight !== "number" ||
       typeof containerScreenX !== "number" ||
       typeof containerScreenY !== "number" ||
       slotCount <= 0 ||
@@ -469,7 +486,10 @@ function App() {
       rackScreenX -
       containerScreenX +
       (rackWidth - slotCount * RACK_SLOT_WIDTH) / 2;
-    const tileTop = rackScreenY - containerScreenY - 25;
+    const tileTop =
+      rackScreenY -
+      containerScreenY +
+      Math.max(0, (rackHeight - tileSize) / 2);
     return {
       x:
         rackLeft +
@@ -479,25 +499,44 @@ function App() {
     };
   }, []);
 
-  const clampDragTargetToRackY = useCallback(() => {
-    const { y: rackScreenY, height: rackHeight } = rackLayoutRef.current;
-    const { y: containerScreenY } = containerWindowRef.current;
+  const getRackSlotTarget = useCallback((slotIndex, slotCount) => {
+    const {
+      x: rackScreenX,
+      y: rackScreenY,
+      width: rackWidth,
+      height: rackHeight,
+    } = rackLayoutRef.current;
+    const { x: containerScreenX, y: containerScreenY } =
+      containerWindowRef.current;
     if (
+      typeof rackScreenX !== "number" ||
       typeof rackScreenY !== "number" ||
+      typeof rackWidth !== "number" ||
       typeof rackHeight !== "number" ||
-      typeof containerScreenY !== "number"
-    )
-      return;
-    const rackTopY = rackScreenY - containerScreenY;
-    const rackBottomY =
-      rackTopY + Math.max(0, rackHeight - DRAG_TILE_HALF_SIZE * 2);
-    const clampedTargetY = Math.min(
-      rackBottomY,
-      Math.max(dragTargetRef.current.y, rackTopY)
-    );
-    dragTargetRef.current = {
-      ...dragTargetRef.current,
-      y: clampedTargetY - 50,
+      typeof containerScreenX !== "number" ||
+      typeof containerScreenY !== "number" ||
+      slotCount <= 0 ||
+      slotIndex == null
+    ) {
+      return null;
+    }
+
+    const tileSize = DRAG_TILE_HALF_SIZE * 2;
+    const rackLeft =
+      rackScreenX -
+      containerScreenX +
+      (rackWidth - slotCount * RACK_SLOT_WIDTH) / 2;
+    const tileTop =
+      rackScreenY -
+      containerScreenY +
+      Math.max(0, (rackHeight - tileSize) / 2);
+
+    return {
+      x:
+        rackLeft +
+        slotIndex * RACK_SLOT_WIDTH +
+        (RACK_SLOT_WIDTH - tileSize) / 2,
+      y: tileTop,
     };
   }, []);
 
@@ -641,44 +680,14 @@ function App() {
 
   const completeRackReturn = useCallback(
     (tile, slotIndex, slotCount, commit) => {
-      const {
-        x: rackScreenX,
-        y: rackScreenY,
-        width: rackWidth,
-        height: rackHeight,
-      } = rackLayoutRef.current;
-      const { x: containerScreenX, y: containerScreenY } =
-        containerWindowRef.current;
-      if (
-        typeof rackScreenX !== "number" ||
-        typeof rackScreenY !== "number" ||
-        typeof rackWidth !== "number" ||
-        typeof rackHeight !== "number" ||
-        typeof containerScreenX !== "number" ||
-        typeof containerScreenY !== "number" ||
-        slotCount <= 0 ||
-        slotIndex == null
-      ) {
+      const settleTarget = getRackSlotTarget(slotIndex, slotCount);
+      if (!settleTarget) {
         setDraggingTile(null);
         setDropTargetRackIndex(null);
         resetDragAnimation();
         commit?.();
         return;
       }
-
-      const tileSize = DRAG_TILE_HALF_SIZE * 2;
-      const rackLeft =
-        rackScreenX -
-        containerScreenX +
-        (rackWidth - slotCount * RACK_SLOT_WIDTH) / 2;
-      const tileTop = rackScreenY - containerScreenY - 25;
-      const settleTarget = {
-        x:
-          rackLeft +
-          slotIndex * RACK_SLOT_WIDTH +
-          (RACK_SLOT_WIDTH - tileSize) / 2,
-        y: tileTop,
-      };
       const startPosition = { ...dragTargetRef.current };
 
       dragAnimatingPickupRef.current = false;
@@ -697,44 +706,22 @@ function App() {
         setDropTargetRackIndex(null);
       });
     },
-    [resetDragAnimation, animateSettlingTileToRack, settlePosition, settleScale]
+    [
+      resetDragAnimation,
+      animateSettlingTileToRack,
+      settlePosition,
+      settleScale,
+      getRackSlotTarget,
+    ]
   );
 
   const animateDragIntoRackSlot = useCallback(
     (slotIndex, slotCount, onComplete) => {
-      const {
-        x: rackScreenX,
-        y: rackScreenY,
-        width: rackWidth,
-        height: rackHeight,
-      } = rackLayoutRef.current;
-      const { x: containerScreenX, y: containerScreenY } =
-        containerWindowRef.current;
-      if (
-        typeof rackScreenX !== "number" ||
-        typeof rackScreenY !== "number" ||
-        typeof rackWidth !== "number" ||
-        typeof rackHeight !== "number" ||
-        typeof containerScreenX !== "number" ||
-        typeof containerScreenY !== "number" ||
-        slotCount <= 0
-      ) {
+      const settleTarget = getRackSlotTarget(slotIndex, slotCount);
+      if (!settleTarget) {
         onComplete();
         return;
       }
-      const tileSize = DRAG_TILE_HALF_SIZE * 2;
-      const rackLeft =
-        rackScreenX -
-        containerScreenX +
-        (rackWidth - slotCount * RACK_SLOT_WIDTH) / 2;
-      const tileTop = rackScreenY - containerScreenY - 25;
-      const settleTarget = {
-        x:
-          rackLeft +
-          slotIndex * RACK_SLOT_WIDTH +
-          (RACK_SLOT_WIDTH - tileSize) / 2,
-        y: tileTop,
-      };
       dragTargetRef.current = settleTarget;
       Animated.timing(dragPosition, {
         toValue: settleTarget,
@@ -744,7 +731,7 @@ function App() {
         onComplete();
       });
     },
-    [dragPosition]
+    [dragPosition, getRackSlotTarget]
   );
 
   const finalizeDrag = useCallback(
@@ -786,7 +773,7 @@ function App() {
   const computeRackIndex = useCallback((screenX, screenY, rackLength) => {
     const r = rackLayoutRef.current;
     if (r.width <= 0 || r.height <= 0 || rackLength <= 0) return null;
-    if (screenY < r.y - RACK_DROP_EXPANSION_TOP || screenY > r.y + r.height)
+    if (screenY < r.y - rackDropExpansionTop || screenY > r.y + r.height)
       return null;
     const rackLeft = r.x + (r.width - rackLength * RACK_SLOT_WIDTH) / 2;
     const rackRight = rackLeft + rackLength * RACK_SLOT_WIDTH;
@@ -796,7 +783,7 @@ function App() {
       (screenX - rackLeft + RACK_SLOT_WIDTH / 2) / RACK_SLOT_WIDTH
     );
     return Math.min(rackLength - 1, Math.max(0, index));
-  }, []);
+  }, [rackDropExpansionTop]);
 
   // Convert screen coords to board cell using measured grid bounds (scale-aware, no transform math).
   const screenToBoardCell = useCallback((screenX, screenY) => {
@@ -968,9 +955,6 @@ function App() {
         (draggingTile?.from === "rack" ? draggingTile.visibleIndex : null);
       const shouldAnimateIntoRack =
         placeAt == null && returnRackIndex != null && rackSettleSlotCount > 0;
-      if (shouldAnimateIntoRack) {
-        clampDragTargetToRackY();
-      }
       if (placeAt) {
         const tile = game.tileRack[tileIndex];
         if (tile) {
@@ -1061,7 +1045,6 @@ function App() {
       visibleRackTiles.length,
       draggingTile,
       setDragPositionFromScreen,
-      clampDragTargetToRackY,
       finalizeDrag,
       animateDragIntoRackSlot,
       getBoardTileSettleTarget,
@@ -1144,9 +1127,6 @@ function App() {
         visibleRackTiles.length + 1
       );
       const shouldAnimateIntoRack = target == null && rackTargetIndex != null;
-      if (shouldAnimateIntoRack) {
-        clampDragTargetToRackY();
-      }
       if (target != null) {
         const { tile, row: fromRow, col: fromCol } = payload;
         const rackIndex = tile?.rackIndex;
@@ -1226,7 +1206,6 @@ function App() {
       game.removeTileFromBoard,
       game.reorderRack,
       setDragPositionFromScreen,
-      clampDragTargetToRackY,
       finalizeDrag,
       animateDragIntoRackSlot,
       getBoardTileSettleTarget,
@@ -1579,6 +1558,56 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const loadPersistedScores = async () => {
+      const storedRecords = await loadScoreRecords();
+      setScoreRecords(storedRecords);
+    };
+
+    loadPersistedScores();
+  }, []);
+
+  useEffect(() => {
+    if (
+      !game.gameOver ||
+      typeof game.finalScore !== "number" ||
+      !game.finalScoreBreakdown
+    ) {
+      return;
+    }
+
+    const persistedGameKey = `${game.currentSeed ?? ""}:${game.finalScore}:${
+      activeDailySeed ?? ""
+    }`;
+    if (persistedGameRef.current === persistedGameKey) {
+      return;
+    }
+    persistedGameRef.current = persistedGameKey;
+
+    const isNewHighScore =
+      scoreRecords.overallHighScore == null ||
+      game.finalScore > scoreRecords.overallHighScore;
+    setEndGameSummary({
+      ...game.finalScoreBreakdown,
+      isNewHighScore,
+    });
+
+    const nextRecords = buildUpdatedScoreRecords(
+      scoreRecords,
+      game.finalScore,
+      activeDailySeed
+    );
+    setScoreRecords(nextRecords);
+    saveScoreRecords(nextRecords);
+  }, [
+    activeDailySeed,
+    game.finalScore,
+    game.finalScoreBreakdown,
+    game.gameOver,
+    game.currentSeed,
+    scoreRecords,
+  ]);
+
+  useEffect(() => {
     const scheduleDailySeedRefresh = () => {
       setDailySeed(getDailySeed());
       dailySeedRefreshTimeoutRef.current = setTimeout(() => {
@@ -1615,8 +1644,11 @@ function App() {
   });
 
   const startGameWithSeed = useCallback(
-    (seed) => {
+    (seed, options = {}) => {
       game.startNewGame(seed);
+      setActiveDailySeed(options.isDaily ? seed : null);
+      setEndGameSummary(null);
+      persistedGameRef.current = null;
       setGameStarted(true);
       setMenuVisible(false);
     },
@@ -1624,17 +1656,22 @@ function App() {
   );
 
   const handleDailyGameStart = useCallback(() => {
-    startGameWithSeed(dailySeed);
+    startGameWithSeed(dailySeed, { isDaily: true });
   }, [dailySeed, startGameWithSeed]);
 
   const handleRandomGameStart = useCallback(() => {
     game.startNewGame();
+    setActiveDailySeed(null);
+    setEndGameSummary(null);
+    persistedGameRef.current = null;
     setGameStarted(true);
     setMenuVisible(false);
   }, [game]);
 
   const handleResetSeed = useCallback(() => {
     game.resetGame();
+    setEndGameSummary(null);
+    persistedGameRef.current = null;
     setGameStarted(true);
   }, [game]);
 
@@ -1687,6 +1724,8 @@ function App() {
                 wordCount={game.wordCount}
                 turnCount={game.turnCount}
                 tilesRemaining={game.tilesRemaining}
+                overallHighScore={scoreRecords.overallHighScore}
+                currentDailyHighScore={currentDailyHighScore}
               />
             </View>
 
@@ -1738,16 +1777,13 @@ function App() {
             </View>
 
             <View style={styles.bottomSection}>
-              <View
-                ref={rackContainerRef}
-                style={styles.tilesSection}
-                onLayout={updateRackLayout}
-              >
+              <View style={styles.tilesSection}>
                 <TileRack
                   tiles={visibleRackTiles}
                   isSwapMode={game.isSwapMode}
                   interactionsDisabled={swapAnimating}
                   swapMultiplier={game.swapCount + 1}
+                  onMeasureLayout={updateRackLayout}
                   tileAnimationStates={rackTileAnimationStates}
                   shuffleTrigger={shuffleTrigger}
                   clearedRackIndices={clearedRackIndices}
@@ -1915,10 +1951,14 @@ function App() {
           canDismiss={gameStarted}
           currentSeed={game.currentSeed}
           dailySeed={dailySeed}
+          overallHighScore={scoreRecords.overallHighScore}
+          dailyHighScore={currentDailyHighScore}
           onClose={() => setMenuVisible(false)}
           onDailyGame={handleDailyGameStart}
           onNewGameRandom={handleRandomGameStart}
-          onNewGameWithSeed={startGameWithSeed}
+          onNewGameWithSeed={(seed) =>
+            startGameWithSeed(seed, { isDaily: false })
+          }
           onResetSeed={handleResetSeed}
         />
         <MessageOverlay
@@ -1939,6 +1979,11 @@ function App() {
             }
           }}
           onCancel={() => setPendingBlankPlacement(null)}
+        />
+        <EndGameModal
+          visible={endGameSummary != null}
+          summary={endGameSummary}
+          onClose={() => setEndGameSummary(null)}
         />
         {(draggingTile || settlingTile) && (
           <View style={styles.dragOverlayContainer} pointerEvents="none">
