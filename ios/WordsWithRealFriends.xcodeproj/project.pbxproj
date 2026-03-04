@@ -118,6 +118,7 @@
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
+				A1B2C3D4E5F60718293A4B5C /* [RN] Generate Hermes dSYM */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
@@ -207,6 +208,21 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-WordsWithRealFriends/Pods-WordsWithRealFriends-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
+		A1B2C3D4E5F60718293A4B5C /* [RN] Generate Hermes dSYM */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "[RN] Generate Hermes dSYM";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Generate Hermes dSYM for App Store (fixes \"archive did not include a dSYM for hermes.framework\")\nset -e\nif [ \"${CONFIGURATION}\" != \"Release\" ]; then\n  exit 0\nfi\n\n# Prefer embedded binary; fallback to Pods (hermes vs hermesvm varies by RN version)\nHERMES_BIN=\"\"\nif [ -f \"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/hermes.framework/hermes\" ]; then\n  HERMES_BIN=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/hermes.framework/hermes\"\n  DSYM_NAME=\"hermes.framework.dSYM\"\nelif [ -f \"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/hermesvm.framework/hermesvm\" ]; then\n  HERMES_BIN=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/hermesvm.framework/hermesvm\"\n  DSYM_NAME=\"hermesvm.framework.dSYM\"\nelse\n  for candidate in \"${PODS_ROOT}/hermes-engine/destroot/Library/Frameworks/universal/hermes.xcframework/ios-arm64/hermes.framework/hermes\" \"${PODS_ROOT}/hermes-engine/destroot/Library/Frameworks/universal/hermesvm.xcframework/ios-arm64/hermesvm.framework/hermesvm\"; do\n    if [ -f \"$candidate\" ]; then\n      HERMES_BIN=\"$candidate\"\n      DSYM_NAME=\"$(basename \"$(dirname \"$candidate\")\").dSYM\"\n      break\n    fi\n  done\nfi\n\nif [ -z \"$HERMES_BIN\" ]; then\n  echo \"Hermes binary not found, skipping dSYM\"\n  exit 0\nfi\n\nDSYM_OUTPUT=\"${DWARF_DSYM_FOLDER_PATH}/${DSYM_NAME}\"\nif [ ! -d \"$DSYM_OUTPUT\" ]; then\n  dsymutil \"$HERMES_BIN\" -o \"$DSYM_OUTPUT\"\n  echo \"Generated $DSYM_OUTPUT\"\nfi\n";
+			showEnvVarsInLog = 0;
+		};
 		C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -278,7 +294,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -311,7 +327,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
