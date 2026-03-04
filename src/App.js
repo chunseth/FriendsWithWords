@@ -3,7 +3,6 @@ import React, {
   useState,
   useRef,
   useCallback,
-  startTransition,
 } from "react";
 import {
   View,
@@ -23,17 +22,24 @@ import { SFSymbol } from "react-native-sfsymbols";
 import { useGame } from "./hooks/useGame";
 import { dictionary } from "./utils/dictionary";
 import GameBoard from "./components/GameBoard";
-import TileRack, { SLOT_WIDTH as RACK_SLOT_WIDTH } from "./components/TileRack";
+import TileRack from "./components/TileRack";
 import GameInfo from "./components/GameInfo";
 import PlayGameMenu from "./components/PlayGameMenu";
 import InGameMenu from "./components/InGameMenu";
 import MainMenuScreen from "./components/MainMenuScreen";
 import LeaderboardScreen from "./components/LeaderboardScreen";
 import StatsScreen from "./components/StatsScreen";
+import MultiplayerMenuScreen from "./components/MultiplayerMenuScreen";
+import MultiplayerModeScreen from "./components/MultiplayerModeScreen";
 import ConfirmLeaveGameModal from "./components/ConfirmLeaveGameModal";
 import MessageOverlay from "./components/MessageOverlay";
 import LetterPickerModal from "./components/LetterPickerModal";
 import EndGameModal from "./components/EndGameModal";
+import LeaderboardConsentModal from "./components/LeaderboardConsentModal";
+import PlayModeModal from "./components/PlayModeModal";
+import DeleteAccountModal from "./components/DeleteAccountModal";
+import SettingsModal from "./components/SettingsModal";
+import { useTileDragDropController } from "./hooks/useTileDragDropController";
 import {
   buildUpdatedScoreRecords,
   getDefaultScoreRecords,
@@ -57,14 +63,25 @@ import {
   fetchSeedLeaderboard,
   submitCompletedScore,
 } from "./services/leaderboardService";
+import { saveRemotePlayerProfile } from "./services/profileService";
+import { deleteRemoteAccount } from "./services/accountDeletionService";
 import { isBackendConfigured } from "./config/backend";
 import {
+  clearPlayerProfile,
   loadOrCreatePlayerProfile,
   savePlayerDisplayName,
 } from "./utils/playerProfile";
+import {
+  LEADERBOARD_CONSENT_DENIED,
+  LEADERBOARD_CONSENT_GRANTED,
+  clearLeaderboardConsentStatus,
+  loadLeaderboardConsentStatus,
+  saveLeaderboardConsentStatus,
+} from "./utils/leaderboardConsentStorage";
+import { clearMultiplayerSession } from "./utils/multiplayerSessionStorage";
 
 const CONTROL_ICON_SIZE = 22;
-const RACK_DROP_EXPANSION_TOP = 270;
+const RACK_DROP_EXPANSION_TOP = 200;
 const IPAD_RACK_DROP_EXPANSION_TOP_EXTRA = 1000;
 const DRAG_TILE_HALF_SIZE = 21;
 const DRAG_RACK_SETTLE_DURATION = 30;
@@ -77,7 +94,7 @@ const SWAP_TILE_LIFT = 20;
 const SWAP_TILE_EXIT_LIFT = 40;
 const SWAP_TILE_LIFT_DURATION = 300;
 const SWAP_TILE_EXIT_DURATION = 160;
-const SWAP_TILE_ENTER_DURATION = 180;
+const SWAP_TILE_ENTER_DURATION = 120;
 const SWAP_LAYOUT_DURATION = 180;
 const SWAP_STEP_DELAY = 70;
 const SWAP_MULTIPLIER_POP_DURATION = 300;
@@ -102,20 +119,79 @@ const getMillisecondsUntilNextLocalMidnight = (date = new Date()) => {
   return Math.max(1, nextMidnight.getTime() - date.getTime());
 };
 
+const getLeaderboardSubmitErrorMessage = (result) => {
+  if (!result || result.ok) {
+    return null;
+  }
+
+  const backendMessage =
+    typeof result.error?.message === "string" ? result.error.message : "";
+  const normalizedBackendMessage = backendMessage.toLowerCase();
+
+  if (
+    result.reason === "anonymous_sign_in_failed" ||
+    normalizedBackendMessage.includes("anonymous sign-ins are disabled")
+  ) {
+    return "Score submit failed: enable Anonymous sign-ins in Supabase Auth.";
+  }
+
+  if (result.reason === "session_lookup_failed") {
+    return "Score submit failed: could not establish a Supabase session.";
+  }
+
+  if (
+    result.reason === "lookup_failed" ||
+    result.reason === "write_failed" ||
+    normalizedBackendMessage.includes("row-level security") ||
+    normalizedBackendMessage.includes("permission denied")
+  ) {
+    return "Score submit failed: apply the latest Supabase leaderboard policies and confirm Anonymous sign-ins are enabled.";
+  }
+
+  if (
+    normalizedBackendMessage.includes("network request failed") ||
+    normalizedBackendMessage.includes("failed to fetch")
+  ) {
+    return "Score submit failed: could not reach Supabase.";
+  }
+
+  return "Failed to submit latest score";
+};
+
 function App() {
   const [dictionaryLoaded, setDictionaryLoaded] = useState(false);
   const [playMenuVisible, setPlayMenuVisible] = useState(false);
+  const [playModeModalVisible, setPlayModeModalVisible] = useState(false);
   const [inGameMenuVisible, setInGameMenuVisible] = useState(false);
   const [confirmLeaveGameVisible, setConfirmLeaveGameVisible] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
   const [savedGamePayload, setSavedGamePayload] = useState(null);
   const [homeScreen, setHomeScreen] = useState("main");
+  const [activeMultiplayerSessionId, setActiveMultiplayerSessionId] =
+    useState("local-multiplayer-prototype");
   const [dailySeed, setDailySeed] = useState(() => getDailySeed());
   const [scoreRecords, setScoreRecords] = useState(getDefaultScoreRecords);
   const [playerStats, setPlayerStats] = useState(getDefaultStats);
   const [activeDailySeed, setActiveDailySeed] = useState(null);
   const [endGameSummary, setEndGameSummary] = useState(null);
   const [playerProfile, setPlayerProfile] = useState(null);
+  const [leaderboardConsentStatus, setLeaderboardConsentStatus] =
+    useState(null);
+  const [leaderboardConsentLoaded, setLeaderboardConsentLoaded] =
+    useState(false);
+  const [leaderboardConsentModalVisible, setLeaderboardConsentModalVisible] =
+    useState(false);
+  const [leaderboardConsentModalSource, setLeaderboardConsentModalSource] =
+    useState("gameOver");
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+  const [deleteAccountModalVisible, setDeleteAccountModalVisible] =
+    useState(false);
+  const [deleteAccountLoading, setDeleteAccountLoading] = useState(false);
+  const [accountMessage, setAccountMessage] = useState(null);
+  const [pendingLeaderboardSubmission, setPendingLeaderboardSubmission] =
+    useState(null);
+  const [mainMenuUsernamePromptToken, setMainMenuUsernamePromptToken] =
+    useState(0);
   const [leaderboardEntries, setLeaderboardEntries] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardError, setLeaderboardError] = useState(null);
@@ -129,12 +205,8 @@ function App() {
     useState(null);
   const [leaderboardSelectedDailySeed, setLeaderboardSelectedDailySeed] =
     useState(null);
-  const [draggingTile, setDraggingTile] = useState(null);
-  const [settlingTile, setSettlingTile] = useState(null);
-  const [dropTargetRackIndex, setDropTargetRackIndex] = useState(null);
-  const [optimisticPlacement, setOptimisticPlacement] = useState(null);
   const [shuffleTrigger, setShuffleTrigger] = useState(0);
-  const [clearedRackIndices, setClearedRackIndices] = useState([]);
+  const [clearedRackTileIds, setClearedRackTileIds] = useState([]);
   const [pendingBlankPlacement, setPendingBlankPlacement] = useState(null);
   const [swapAnimating, setSwapAnimating] = useState(false);
   const [swapAnimatedPenalty, setSwapAnimatedPenalty] = useState(0);
@@ -154,43 +226,8 @@ function App() {
   const pendingGameReplacementActionRef = useRef(null);
   const boardLayoutRef = useRef(null);
   const safeAreaRef = useRef(null);
-  const containerWindowRef = useRef({ x: 0, y: 0 });
-  const dragPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
-  const dragScale = useRef(new Animated.Value(1)).current;
-  const settlePosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
-  const settleScale = useRef(new Animated.Value(1)).current;
-  const dragTouchOffsetRef = useRef({
-    x: DRAG_TILE_HALF_SIZE,
-    y: DRAG_TILE_HALF_SIZE,
-  });
-  const dragTargetRef = useRef({ x: 0, y: 0 });
-  const dragAnimatingPickupRef = useRef(false);
-  const dragPendingFinalizeRef = useRef(null);
-  const dragReleasedDuringPickupRef = useRef(false);
-  const hoverIndexRef = useRef(null);
-  const boardDragPayloadRef = useRef(null);
-  const pendingPlacementFrameRef = useRef(null);
-  const rackLayoutRef = useRef({ x: 0, y: 0, width: 0, height: 0 });
   const rackTileAnimationsRef = useRef({});
   const rackSourceTiles = swapDisplayRack ?? game.tileRack;
-  const visibleRackTiles = rackSourceTiles
-    .map((tile, index) => ({
-      ...tile,
-      used:
-        optimisticPlacement?.rackIndex === index ||
-        (settlingTile?.destination === "board" &&
-          settlingTile?.rackIndex === index) ||
-        game.selectedCells.some((c) => {
-          const boardTile = game.board[c.row][c.col];
-          return boardTile && boardTile.rackIndex === index;
-        }),
-      rackIndex: index,
-    }))
-    .filter((t) => !t.used)
-    .map((tile, visibleIndex) => ({
-      ...tile,
-      visibleIndex,
-    }));
   const displayedScore = game.gameOver
     ? game.finalScore
     : game.totalScore - swapAnimatedPenalty;
@@ -207,16 +244,83 @@ function App() {
       ? RACK_DROP_EXPANSION_TOP + IPAD_RACK_DROP_EXPANSION_TOP_EXTRA
       : RACK_DROP_EXPANSION_TOP;
 
-  const refreshContainerWindowPosition = useCallback(() => {
-    safeAreaRef.current?.measureInWindow?.((x, y) => {
-      containerWindowRef.current = { x, y };
-    });
+  const isRackTileUsed = useCallback(
+    (tile, index) =>
+      game.selectedCells.some((cell) => {
+        const boardTile = game.board[cell.row][cell.col];
+        return (
+          boardTile &&
+          (boardTile.id === tile?.id || boardTile.rackIndex === index)
+        );
+      }),
+    [game.board, game.selectedCells]
+  );
+
+  const getRackTileByIndex = useCallback(
+    (index) => game.tileRack[index] ?? null,
+    [game.tileRack]
+  );
+
+  const getRackIndexByTileId = useCallback(
+    (tileId) => game.tileRack.findIndex((tile) => tile?.id === tileId),
+    [game.tileRack]
+  );
+
+  const handlePlaceRackTile = useCallback(
+    (tileIndex, row, col) => game.placeTileOnBoard(tileIndex, row, col),
+    [game]
+  );
+
+  const handleBlankPlacementRequest = useCallback((tileIndex, row, col) => {
+    setPendingBlankPlacement({ tileIndex, row, col });
   }, []);
 
-  const updateRackLayout = useCallback((layout) => {
-    if (!layout) return;
-    rackLayoutRef.current = layout;
-  }, []);
+  const {
+    visibleRackTiles,
+    draggingTile,
+    settlingTile,
+    dropTargetRackIndex,
+    boardHoverRackIndex,
+    rackHoverIndexValue,
+    boardRackPlaceholderIndexValue,
+    rackDraggingVisibleIndexValue,
+    optimisticPlacement,
+    dragPosition,
+    dragScale,
+    settlePosition,
+    settleScale,
+    refreshContainerWindowPosition,
+    updateRackLayout,
+    resetController,
+    getDraggableTileCell,
+    handleRackDragStart,
+    handleRackDragUpdate,
+    handleTileDrop,
+    handleBoardTilePickup,
+    handleBoardDragUpdate,
+    handleBoardTileDrop,
+    handleBoardTap,
+  } = useTileDragDropController({
+    containerRef: safeAreaRef,
+    boardLayoutRef,
+    rackTiles: rackSourceTiles,
+    isRackTileUsed,
+    board: game.board,
+    boardSize: game.BOARD_SIZE,
+    rackDropExpansionTop,
+    canInteract: !game.isSwapMode && !swapAnimating,
+    isBoardTileDraggable: (tile) =>
+      !!(tile && tile.isFromRack && tile.rackIndex !== undefined && !tile.scored),
+    isBlankRackTile: game.isBlankRackTile,
+    getRackTileByIndex,
+    getRackIndexByTileId,
+    onPlaceRackTile: handlePlaceRackTile,
+    onMoveBoardTile: game.moveTileOnBoard,
+    onRemoveBoardTile: game.removeTileFromBoard,
+    onReorderRack: game.reorderRack,
+    onBoardCellTap: game.handleCellClick,
+    onBlankPlacementRequested: handleBlankPlacementRequest,
+  });
 
   const ensureRackTileAnimationState = useCallback(
     (tileId, scoreText = null) => {
@@ -347,1004 +451,9 @@ function App() {
     });
   }, []);
 
-  const runOptimisticPlacement = useCallback((placement, commit) => {
-    if (pendingPlacementFrameRef.current != null) {
-      cancelAnimationFrame(pendingPlacementFrameRef.current);
-      pendingPlacementFrameRef.current = null;
-    }
-    setOptimisticPlacement(placement);
-    pendingPlacementFrameRef.current = requestAnimationFrame(() => {
-      pendingPlacementFrameRef.current = null;
-      startTransition(() => {
-        commit();
-        setOptimisticPlacement(null);
-      });
-    });
-  }, []);
-
-  const animateDragPickup = useCallback(() => {
-    dragAnimatingPickupRef.current = false;
-    dragPendingFinalizeRef.current = null;
-    dragReleasedDuringPickupRef.current = false;
-    dragPosition.stopAnimation();
-    dragScale.stopAnimation();
-    dragPosition.setValue(dragTargetRef.current);
-    dragScale.setValue(1);
-  }, [dragPosition, dragScale]);
-
-  const animateBoardPickupToDragTarget = useCallback(
-    (row, col) => {
-      const sourceTarget = getBoardTileSettleTarget(row, col);
-      if (!sourceTarget) {
-        animateDragPickup();
-        return;
-      }
-      dragAnimatingPickupRef.current = true;
-      dragPendingFinalizeRef.current = null;
-      dragReleasedDuringPickupRef.current = false;
-      dragPosition.stopAnimation();
-      dragScale.stopAnimation();
-      dragPosition.setValue({ x: sourceTarget.x, y: sourceTarget.y });
-      dragScale.setValue(sourceTarget.scale);
-      Animated.parallel([
-        Animated.timing(dragPosition, {
-          toValue: dragTargetRef.current,
-          duration: DRAG_BOARD_PICKUP_DURATION,
-          useNativeDriver: true,
-        }),
-        Animated.timing(dragScale, {
-          toValue: 1,
-          duration: DRAG_BOARD_PICKUP_DURATION,
-          useNativeDriver: true,
-        }),
-      ]).start(({ finished }) => {
-        dragAnimatingPickupRef.current = false;
-        dragPosition.setValue(dragTargetRef.current);
-        dragScale.setValue(1);
-        if (!finished) return;
-        const pendingFinalize = dragPendingFinalizeRef.current;
-        if (pendingFinalize) {
-          dragPendingFinalizeRef.current = null;
-          pendingFinalize();
-        }
-      });
-    },
-    [animateDragPickup, dragPosition, dragScale, getBoardTileSettleTarget]
-  );
-
-  const animateRackPickupToDragTarget = useCallback(
-    (sourceX, sourceY) => {
-      dragAnimatingPickupRef.current = true;
-      dragPendingFinalizeRef.current = null;
-      dragReleasedDuringPickupRef.current = false;
-      dragPosition.stopAnimation();
-      dragScale.stopAnimation();
-      dragPosition.setValue({ x: sourceX, y: sourceY });
-      dragScale.setValue(1);
-      Animated.parallel([
-        Animated.timing(dragPosition, {
-          toValue: dragTargetRef.current,
-          duration: DRAG_RACK_PICKUP_DURATION,
-          useNativeDriver: true,
-        }),
-        Animated.timing(dragScale, {
-          toValue: 1,
-          duration: DRAG_RACK_PICKUP_DURATION,
-          useNativeDriver: true,
-        }),
-      ]).start(({ finished }) => {
-        dragAnimatingPickupRef.current = false;
-        dragPosition.setValue(dragTargetRef.current);
-        dragScale.setValue(1);
-        if (!finished) return;
-        const pendingFinalize = dragPendingFinalizeRef.current;
-        if (pendingFinalize) {
-          dragPendingFinalizeRef.current = null;
-          pendingFinalize();
-        }
-      });
-    },
-    [dragPosition, dragScale]
-  );
-
-  const resetDragAnimation = useCallback(() => {
-    dragAnimatingPickupRef.current = false;
-    dragPendingFinalizeRef.current = null;
-    dragReleasedDuringPickupRef.current = false;
-    dragPosition.stopAnimation();
-    dragScale.stopAnimation();
-    dragPosition.setValue(dragTargetRef.current);
-    dragScale.setValue(1);
-  }, [dragPosition, dragScale]);
-
-  const animateSettlingTileToBoard = useCallback(
-    (startPosition, startScaleValue, settleTarget, onComplete) => {
-      settlePosition.setValue(startPosition);
-      settleScale.setValue(startScaleValue);
-      Animated.parallel([
-        Animated.timing(settlePosition, {
-          toValue: { x: settleTarget.x, y: settleTarget.y },
-          duration: DRAG_BOARD_SETTLE_DURATION,
-          useNativeDriver: true,
-        }),
-        Animated.timing(settleScale, {
-          toValue: settleTarget.scale,
-          duration: DRAG_BOARD_SETTLE_DURATION,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        onComplete?.();
-      });
-    },
-    [settlePosition, settleScale]
-  );
-
-  const animateSettlingTileToRack = useCallback(
-    (startPosition, settleTarget, onComplete) => {
-      settlePosition.setValue(startPosition);
-      settleScale.setValue(1);
-      Animated.parallel([
-        Animated.timing(settlePosition, {
-          toValue: { x: settleTarget.x, y: settleTarget.y },
-          duration: DRAG_RACK_RETURN_DURATION,
-          useNativeDriver: true,
-        }),
-        Animated.timing(settleScale, {
-          toValue: 1,
-          duration: DRAG_RACK_RETURN_DURATION,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        onComplete?.();
-      });
-    },
-    [settlePosition, settleScale]
-  );
-
-  const setDragPositionFromScreen = useCallback(
-    (screenX, screenY) => {
-      const { x: ox, y: oy } = containerWindowRef.current;
-      const { x: touchOffsetX, y: touchOffsetY } = dragTouchOffsetRef.current;
-      dragTargetRef.current = {
-        x: screenX - ox - touchOffsetX,
-        y: screenY - oy - touchOffsetY,
-      };
-      if (!dragAnimatingPickupRef.current) {
-        dragPosition.setValue(dragTargetRef.current);
-      }
-    },
-    [dragPosition]
-  );
-
-  const getRackTileSourceTarget = useCallback((visibleIndex, slotCount) => {
-    const {
-      x: rackScreenX,
-      y: rackScreenY,
-      width: rackWidth,
-      height: rackHeight,
-    } = rackLayoutRef.current;
-    const { x: containerScreenX, y: containerScreenY } =
-      containerWindowRef.current;
-    if (
-      typeof rackScreenX !== "number" ||
-      typeof rackScreenY !== "number" ||
-      typeof rackWidth !== "number" ||
-      typeof rackHeight !== "number" ||
-      typeof containerScreenX !== "number" ||
-      typeof containerScreenY !== "number" ||
-      slotCount <= 0 ||
-      visibleIndex == null
-    ) {
-      return null;
-    }
-
-    const tileSize = DRAG_TILE_HALF_SIZE * 2;
-    const rackLeft =
-      rackScreenX -
-      containerScreenX +
-      (rackWidth - slotCount * RACK_SLOT_WIDTH) / 2;
-    const tileTop =
-      rackScreenY - containerScreenY + Math.max(0, (rackHeight - tileSize) / 2);
-    return {
-      x:
-        rackLeft +
-        visibleIndex * RACK_SLOT_WIDTH +
-        (RACK_SLOT_WIDTH - tileSize) / 2,
-      y: tileTop,
-    };
-  }, []);
-
-  const getRackSlotTarget = useCallback((slotIndex, slotCount) => {
-    const {
-      x: rackScreenX,
-      y: rackScreenY,
-      width: rackWidth,
-      height: rackHeight,
-    } = rackLayoutRef.current;
-    const { x: containerScreenX, y: containerScreenY } =
-      containerWindowRef.current;
-    if (
-      typeof rackScreenX !== "number" ||
-      typeof rackScreenY !== "number" ||
-      typeof rackWidth !== "number" ||
-      typeof rackHeight !== "number" ||
-      typeof containerScreenX !== "number" ||
-      typeof containerScreenY !== "number" ||
-      slotCount <= 0 ||
-      slotIndex == null
-    ) {
-      return null;
-    }
-
-    const tileSize = DRAG_TILE_HALF_SIZE * 2;
-    const rackLeft =
-      rackScreenX -
-      containerScreenX +
-      (rackWidth - slotCount * RACK_SLOT_WIDTH) / 2;
-    const tileTop =
-      rackScreenY - containerScreenY + Math.max(0, (rackHeight - tileSize) / 2);
-
-    return {
-      x:
-        rackLeft +
-        slotIndex * RACK_SLOT_WIDTH +
-        (RACK_SLOT_WIDTH - tileSize) / 2,
-      y: tileTop,
-    };
-  }, []);
-
-  const getBoardTileSettleTarget = useCallback(
-    (row, col) => {
-      const layout = boardLayoutRef.current;
-      const { x: containerScreenX, y: containerScreenY } =
-        containerWindowRef.current;
-      if (
-        !layout ||
-        typeof containerScreenX !== "number" ||
-        typeof containerScreenY !== "number"
-      )
-        return null;
-
-      const sl = layout.screenLeft;
-      const st = layout.screenTop;
-      const sr = layout.screenRight;
-      const sb = layout.screenBottom;
-      const hasMeasuredBounds =
-        typeof sl === "number" &&
-        typeof st === "number" &&
-        typeof sr === "number" &&
-        typeof sb === "number";
-      if (!hasMeasuredBounds) return null;
-
-      const boardScreenSize = sr - sl;
-      const boardScreenHeight = sb - st;
-      if (boardScreenSize <= 0 || boardScreenHeight <= 0) return null;
-
-      const screenCellWidth = boardScreenSize / BOARD_SIZE;
-      const screenCellHeight = boardScreenHeight / BOARD_SIZE;
-      const tileRatio =
-        layout.cellSize > 0
-          ? Math.max(0.01, (layout.cellSize - 3) / layout.cellSize)
-          : 1;
-      const tileScreenSize =
-        Math.min(screenCellWidth, screenCellHeight) * tileRatio;
-      const tileScale = tileScreenSize / (DRAG_TILE_HALF_SIZE * 2);
-      const cellCenterX = sl - containerScreenX + (col + 0.5) * screenCellWidth;
-      const cellCenterY =
-        st - containerScreenY + (row + 0.5) * screenCellHeight;
-
-      return {
-        x: cellCenterX - DRAG_TILE_HALF_SIZE,
-        y: cellCenterY - DRAG_TILE_HALF_SIZE,
-        scale: tileScale,
-      };
-    },
-    [boardLayoutRef]
-  );
-
-  const animateDragIntoBoardCell = useCallback(
-    (row, col, onComplete) => {
-      const settleTarget = getBoardTileSettleTarget(row, col);
-      if (!settleTarget) {
-        onComplete();
-        return;
-      }
-      dragTargetRef.current = { x: settleTarget.x, y: settleTarget.y };
-      dragPosition.stopAnimation();
-      dragScale.stopAnimation();
-      Animated.parallel([
-        Animated.timing(dragPosition, {
-          toValue: { x: settleTarget.x, y: settleTarget.y },
-          duration: DRAG_BOARD_SETTLE_DURATION,
-          useNativeDriver: true,
-        }),
-        Animated.timing(dragScale, {
-          toValue: settleTarget.scale,
-          duration: DRAG_BOARD_SETTLE_DURATION,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        onComplete();
-      });
-    },
-    [dragPosition, dragScale, getBoardTileSettleTarget]
-  );
-
-  const completeBoardDrop = useCallback(
-    (tile, settleTarget, optimistic, commit, options = {}) => {
-      const { deferDragClear = true } = options;
-      if (!settleTarget) {
-        if (optimistic) setOptimisticPlacement(optimistic);
-        setDraggingTile(null);
-        setDropTargetRackIndex(null);
-        resetDragAnimation();
-        startTransition(() => {
-          commit();
-          setOptimisticPlacement(null);
-        });
-        return;
-      }
-
-      const startPosition = { ...dragTargetRef.current };
-      const startScaleValue = 1;
-      dragAnimatingPickupRef.current = false;
-      dragPendingFinalizeRef.current = null;
-      dragReleasedDuringPickupRef.current = false;
-      dragPosition.stopAnimation();
-      dragScale.stopAnimation();
-      setSettlingTile({ ...tile, destination: "board" });
-      settlePosition.setValue(startPosition);
-      settleScale.setValue(startScaleValue);
-      const clearDrag = () => {
-        setDraggingTile(null);
-        setDropTargetRackIndex(null);
-        resetDragAnimation();
-      };
-      if (deferDragClear) {
-        requestAnimationFrame(clearDrag);
-      } else {
-        clearDrag();
-      }
-      animateSettlingTileToBoard(
-        startPosition,
-        startScaleValue,
-        settleTarget,
-        () => {
-          if (optimistic) {
-            setOptimisticPlacement({ ...optimistic, renderTarget: true });
-          }
-          setSettlingTile(null);
-          requestAnimationFrame(() => {
-            startTransition(() => {
-              commit();
-              setOptimisticPlacement(null);
-            });
-          });
-        }
-      );
-    },
-    [
-      resetDragAnimation,
-      animateSettlingTileToBoard,
-      settlePosition,
-      settleScale,
-    ]
-  );
-
-  const completeRackReturn = useCallback(
-    (tile, slotIndex, slotCount, commit) => {
-      const settleTarget = getRackSlotTarget(slotIndex, slotCount);
-      if (!settleTarget) {
-        setDraggingTile(null);
-        setDropTargetRackIndex(null);
-        resetDragAnimation();
-        commit?.();
-        return;
-      }
-      const startPosition = { ...dragTargetRef.current };
-
-      dragAnimatingPickupRef.current = false;
-      dragPendingFinalizeRef.current = null;
-      dragReleasedDuringPickupRef.current = false;
-      dragPosition.stopAnimation();
-      dragScale.stopAnimation();
-      setSettlingTile({ ...tile, destination: "rack" });
-      settlePosition.setValue(startPosition);
-      settleScale.setValue(1);
-      resetDragAnimation();
-      animateSettlingTileToRack(startPosition, settleTarget, () => {
-        commit?.();
-        setSettlingTile(null);
-        setDraggingTile(null);
-        setDropTargetRackIndex(null);
-      });
-    },
-    [
-      resetDragAnimation,
-      animateSettlingTileToRack,
-      settlePosition,
-      settleScale,
-      getRackSlotTarget,
-    ]
-  );
-
-  const animateDragIntoRackSlot = useCallback(
-    (slotIndex, slotCount, onComplete) => {
-      const settleTarget = getRackSlotTarget(slotIndex, slotCount);
-      if (!settleTarget) {
-        onComplete();
-        return;
-      }
-      dragTargetRef.current = settleTarget;
-      Animated.timing(dragPosition, {
-        toValue: settleTarget,
-        duration: DRAG_RACK_SETTLE_DURATION,
-        useNativeDriver: true,
-      }).start(() => {
-        onComplete();
-      });
-    },
-    [dragPosition, getRackSlotTarget]
-  );
-
-  const finalizeDrag = useCallback(
-    (commit, animateBeforeCommit, options = {}) => {
-      const { interruptPickup = false } = options;
-      const runCommit = () => {
-        const finish = () => {
-          setDraggingTile(null);
-          setDropTargetRackIndex(null);
-          resetDragAnimation();
-          commit();
-        };
-        if (animateBeforeCommit) {
-          animateBeforeCommit(finish);
-          return;
-        }
-        finish();
-      };
-      if (dragAnimatingPickupRef.current) {
-        if (interruptPickup) {
-          dragAnimatingPickupRef.current = false;
-          dragPendingFinalizeRef.current = null;
-          dragReleasedDuringPickupRef.current = false;
-          dragPosition.stopAnimation();
-          dragScale.stopAnimation();
-          runCommit();
-          return;
-        }
-        dragReleasedDuringPickupRef.current = true;
-        dragPendingFinalizeRef.current = runCommit;
-        return;
-      }
-      runCommit();
-    },
-    [dragPosition, dragScale, resetDragAnimation]
-  );
-
-  // Math-based index from finger X: rackLeft + slotWidth * index. Only used for hover; no measure per frame.
-  const computeRackIndex = useCallback(
-    (screenX, screenY, rackLength) => {
-      const r = rackLayoutRef.current;
-      if (r.width <= 0 || r.height <= 0 || rackLength <= 0) return null;
-      if (screenY < r.y - rackDropExpansionTop || screenY > r.y + r.height)
-        return null;
-      const rackLeft = r.x + (r.width - rackLength * RACK_SLOT_WIDTH) / 2;
-      const rackRight = rackLeft + rackLength * RACK_SLOT_WIDTH;
-      if (screenX <= rackLeft) return 0;
-      if (screenX >= rackRight) return rackLength - 1;
-      const index = Math.floor(
-        (screenX - rackLeft + RACK_SLOT_WIDTH / 2) / RACK_SLOT_WIDTH
-      );
-      return Math.min(rackLength - 1, Math.max(0, index));
-    },
-    [rackDropExpansionTop]
-  );
-
-  // Convert screen coords to board cell using measured grid bounds (scale-aware, no transform math).
-  const screenToBoardCell = useCallback((screenX, screenY) => {
-    const layout = boardLayoutRef.current;
-    if (!layout) return null;
-    const { cellSize, gridSize } = layout;
-    if (gridSize == null) return null;
-
-    const viewportX = layout.x;
-    const viewportY = layout.y;
-    const viewportWidth = layout.width;
-    const viewportHeight = layout.height;
-    const hasViewportBounds =
-      typeof viewportX === "number" &&
-      typeof viewportY === "number" &&
-      typeof viewportWidth === "number" &&
-      typeof viewportHeight === "number" &&
-      viewportWidth > 0 &&
-      viewportHeight > 0;
-    if (hasViewportBounds) {
-      const viewportRight = viewportX + viewportWidth;
-      const viewportBottom = viewportY + viewportHeight;
-      if (
-        screenX < viewportX ||
-        screenX > viewportRight ||
-        screenY < viewportY ||
-        screenY > viewportBottom
-      ) {
-        return null;
-      }
-    }
-
-    const sl = layout.screenLeft;
-    const st = layout.screenTop;
-    const sr = layout.screenRight;
-    const sb = layout.screenBottom;
-    const hasMeasuredBounds =
-      typeof sl === "number" &&
-      typeof st === "number" &&
-      typeof sr === "number" &&
-      typeof sb === "number";
-
-    let gx, gy;
-    if (hasMeasuredBounds) {
-      const w = sr - sl;
-      const h = sb - st;
-      if (w <= 0 || h <= 0) return null;
-      // Map screen point to grid space [0, gridSize) using measured rect
-      gx = ((screenX - sl) / w) * gridSize;
-      gy = ((screenY - st) / h) * gridSize;
-      // Reject if outside the visible grid
-      if (gx < 0 || gx >= gridSize || gy < 0 || gy >= gridSize) return null;
-    } else {
-      // Fallback for 1x before first measure: content-origin mapping
-      const padding = layout.padding ?? 0;
-      const contentLeft = layout.x + (layout.contentOriginX ?? padding);
-      const contentTop = layout.y + (layout.contentOriginY ?? padding);
-      gx = screenX - contentLeft;
-      gy = screenY - contentTop;
-    }
-
-    const col = Math.floor(gx / cellSize);
-    const row = Math.floor(gy / cellSize);
-    if (row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE) {
-      return { row, col };
-    }
-    return null;
-  }, []);
-
-  const getDropTargetCell = useCallback(
-    (screenX, screenY) => {
-      const cell = screenToBoardCell(screenX, screenY);
-      if (cell != null && game.board[cell.row][cell.col] === null) {
-        return cell;
-      }
-      return null;
-    },
-    [game.board, screenToBoardCell]
-  );
-
-  const getCellAtPosition = useCallback(
-    (screenX, screenY) => {
-      return screenToBoardCell(screenX, screenY);
-    },
-    [screenToBoardCell]
-  );
-
-  // For zoomed overlay: return cell under (screenX, screenY) if it has a draggable tile (in play, not scored).
-  const getDraggableTileCell = useCallback(
-    (screenX, screenY) => {
-      const isDraggableCell = (row, col) => {
-        const tile = game.board[row]?.[col];
-        return !!(
-          tile &&
-          tile.isFromRack &&
-          tile.rackIndex !== undefined &&
-          !tile.scored
-        );
-      };
-
-      const cell = getCellAtPosition(screenX, screenY);
-      if (cell && isDraggableCell(cell.row, cell.col)) return cell;
-
-      const layout = boardLayoutRef.current;
-      if (
-        !layout ||
-        typeof layout.cellSize !== "number" ||
-        layout.cellSize <= 0
-      )
-        return null;
-
-      const rowCandidates = cell
-        ? [cell.row - 1, cell.row, cell.row + 1]
-        : Array.from({ length: BOARD_SIZE }, (_, row) => row);
-      const colCandidates = cell
-        ? [cell.col - 1, cell.col, cell.col + 1]
-        : Array.from({ length: BOARD_SIZE }, (_, col) => col);
-      const tileScreenSize = Math.max(1, layout.cellSize - 3);
-
-      for (const row of rowCandidates) {
-        if (row < 0 || row >= BOARD_SIZE) continue;
-        for (const col of colCandidates) {
-          if (col < 0 || col >= BOARD_SIZE) continue;
-          if (!isDraggableCell(row, col)) continue;
-          const settleTarget = getBoardTileSettleTarget(row, col);
-          if (!settleTarget) continue;
-          const left =
-            settleTarget.x +
-            containerWindowRef.current.x -
-            BOARD_TILE_PICKUP_SLOP;
-          const top =
-            settleTarget.y +
-            containerWindowRef.current.y -
-            BOARD_TILE_PICKUP_SLOP;
-          const size = tileScreenSize + BOARD_TILE_PICKUP_SLOP * 2;
-          if (
-            screenX >= left &&
-            screenX <= left + size &&
-            screenY >= top &&
-            screenY <= top + size
-          ) {
-            return { row, col };
-          }
-        }
-      }
-      return null;
-    },
-    [game.board, getCellAtPosition, getBoardTileSettleTarget]
-  );
-
-  const handleTileDrop = useCallback(
-    (tileIndex, screenX, screenY) => {
-      hoverIndexRef.current = null;
-      setDragPositionFromScreen(screenX, screenY);
-      if (game.isSwapMode || swapAnimating) return; // In swap mode only tap-to-select and Swap button do anything
-      const cell = screenToBoardCell(screenX, screenY);
-      const placeAt =
-        cell != null && game.board[cell.row][cell.col] === null
-          ? { row: cell.row, col: cell.col }
-          : null;
-      const rackTargetIndex = computeRackIndex(
-        screenX,
-        screenY,
-        visibleRackTiles.length
-      );
-      const rackSettleSlotCount = visibleRackTiles.length;
-      const returnRackIndex =
-        rackTargetIndex ??
-        (draggingTile?.from === "rack" ? draggingTile.visibleIndex : null);
-      const shouldAnimateIntoRack =
-        placeAt == null && returnRackIndex != null && rackSettleSlotCount > 0;
-      if (placeAt) {
-        const tile = game.tileRack[tileIndex];
-        if (tile) {
-          if (game.isBlankRackTile(tile)) {
-            finalizeDrag(
-              () => {
-                setPendingBlankPlacement({
-                  tileIndex,
-                  row: placeAt.row,
-                  col: placeAt.col,
-                });
-              },
-              undefined,
-              { interruptPickup: true }
-            );
-          } else {
-            const settleTarget = getBoardTileSettleTarget(
-              placeAt.row,
-              placeAt.col
-            );
-            completeBoardDrop(
-              { letter: tile.letter, value: tile.value, rackIndex: tileIndex },
-              settleTarget,
-              {
-                row: placeAt.row,
-                col: placeAt.col,
-                letter: tile.letter,
-                value: tile.value,
-                rackIndex: tileIndex,
-                renderTarget: false,
-              },
-              () => game.placeTileOnBoard(tileIndex, placeAt.row, placeAt.col)
-            );
-          }
-        } else {
-          completeBoardDrop(
-            draggingTile?.tile ?? null,
-            getBoardTileSettleTarget(placeAt.row, placeAt.col),
-            null,
-            () => game.placeTileOnBoard(tileIndex, placeAt.row, placeAt.col)
-          );
-        }
-        return;
-      }
-      if (shouldAnimateIntoRack && draggingTile?.from === "rack") {
-        completeRackReturn(
-          {
-            letter: draggingTile.tile.letter,
-            value: draggingTile.tile.value,
-            rackIndex: draggingTile.index,
-          },
-          returnRackIndex,
-          rackSettleSlotCount,
-          () => {
-            if (rackTargetIndex != null && visibleRackTiles.length > 0) {
-              game.reorderRack(tileIndex, rackTargetIndex);
-            }
-          }
-        );
-        return;
-      }
-      finalizeDrag(
-        () => {
-          if (rackTargetIndex != null && visibleRackTiles.length > 0) {
-            game.reorderRack(tileIndex, rackTargetIndex);
-          }
-        },
-        shouldAnimateIntoRack
-          ? (finish) =>
-              animateDragIntoRackSlot(
-                returnRackIndex,
-                rackSettleSlotCount,
-                finish
-              )
-          : undefined,
-        { interruptPickup: false }
-      );
-    },
-    [
-      game.isSwapMode,
-      game.board,
-      game.tileRack,
-      game.placeTileOnBoard,
-      game.reorderRack,
-      game.isBlankRackTile,
-      screenToBoardCell,
-      computeRackIndex,
-      visibleRackTiles.length,
-      draggingTile,
-      setDragPositionFromScreen,
-      finalizeDrag,
-      animateDragIntoRackSlot,
-      getBoardTileSettleTarget,
-      completeBoardDrop,
-      completeRackReturn,
-      swapAnimating,
-    ]
-  );
-
-  // Same pickup visual at 1x and when zoomed. Do NOT remove tile from board on pickup (avoids full board re-render = lag).
-  // Tile stays in state; dragSourceCell hides it in the cell. We remove/place only on drop.
-  const handleBoardTilePickup = useCallback(
-    (row, col, pageX, pageY) => {
-      if (game.isSwapMode || swapAnimating) return;
-      const tile = game.board[row]?.[col];
-      if (
-        !tile ||
-        !tile.isFromRack ||
-        tile.rackIndex === undefined ||
-        tile.scored
-      )
-        return;
-      const sx = pageX ?? 0;
-      const sy = pageY ?? 0;
-      const payload = {
-        from: "board",
-        row,
-        col,
-        tile: {
-          letter: tile.letter,
-          value: tile.value,
-          rackIndex: tile.rackIndex,
-        },
-      };
-      boardDragPayloadRef.current = payload;
-      dragTouchOffsetRef.current = {
-        x: DRAG_TILE_HALF_SIZE,
-        y: DRAG_TILE_HALF_SIZE,
-      };
-      const { x: ox, y: oy } = containerWindowRef.current;
-      dragTargetRef.current = {
-        x: sx - ox - DRAG_TILE_HALF_SIZE,
-        y: sy - oy - DRAG_TILE_HALF_SIZE,
-      };
-      setDraggingTile(payload);
-      animateBoardPickupToDragTarget(row, col);
-      refreshContainerWindowPosition();
-    },
-    [
-      game.board,
-      game.isSwapMode,
-      animateBoardPickupToDragTarget,
-      refreshContainerWindowPosition,
-      swapAnimating,
-    ]
-  );
-
-  const handleBoardTileDrop = useCallback(
-    (screenX, screenY) => {
-      const payload =
-        draggingTile?.from === "board"
-          ? draggingTile
-          : boardDragPayloadRef.current;
-      if (!payload || payload.from !== "board") return;
-      if (swapAnimating) return;
-      boardDragPayloadRef.current = null;
-      hoverIndexRef.current = null;
-      setDragPositionFromScreen(screenX, screenY);
-      const sameCellDrop = (() => {
-        const cell = screenToBoardCell(screenX, screenY);
-        if (!cell) return null;
-        return cell.row === payload.row && cell.col === payload.col
-          ? cell
-          : null;
-      })();
-      const target = sameCellDrop ?? getDropTargetCell(screenX, screenY);
-      const rackTargetIndex = computeRackIndex(
-        screenX,
-        screenY,
-        visibleRackTiles.length + 1
-      );
-      const shouldAnimateIntoRack = target == null && rackTargetIndex != null;
-      if (target != null) {
-        const { tile, row: fromRow, col: fromCol } = payload;
-        const rackIndex = tile?.rackIndex;
-        if (rackIndex !== undefined && tile) {
-          if (target.row === fromRow && target.col === fromCol) {
-            completeBoardDrop(
-              { letter: tile.letter, value: tile.value, rackIndex },
-              getBoardTileSettleTarget(target.row, target.col),
-              null,
-              () => {}
-            );
-            return;
-          }
-          completeBoardDrop(
-            { letter: tile.letter, value: tile.value, rackIndex },
-            getBoardTileSettleTarget(target.row, target.col),
-            {
-              fromRow,
-              fromCol,
-              row: target.row,
-              col: target.col,
-              letter: tile.letter,
-              value: tile.value,
-              rackIndex,
-              renderTarget: false,
-            },
-            () => game.moveTileOnBoard(fromRow, fromCol, target.row, target.col)
-          );
-        }
-        return;
-      }
-      if (rackTargetIndex == null) {
-        const { tile, row: fromRow, col: fromCol } = payload;
-        if (tile) {
-          completeBoardDrop(
-            {
-              letter: tile.letter,
-              value: tile.value,
-              rackIndex: tile.rackIndex,
-            },
-            getBoardTileSettleTarget(fromRow, fromCol),
-            null,
-            () => {}
-          );
-        }
-        return;
-      }
-      finalizeDrag(
-        () => {
-          const { tile, row: fromRow, col: fromCol } = payload;
-          const rackIndex = tile?.rackIndex;
-          if (rackIndex !== undefined && tile) {
-            game.removeTileFromBoard(fromRow, fromCol);
-            if (rackTargetIndex != null) {
-              game.reorderRack(rackIndex, rackTargetIndex, rackIndex);
-            }
-          }
-        },
-        shouldAnimateIntoRack
-          ? (finish) =>
-              animateDragIntoRackSlot(
-                rackTargetIndex,
-                visibleRackTiles.length + 1,
-                finish
-              )
-          : undefined,
-        { interruptPickup: false }
-      );
-    },
-    [
-      draggingTile,
-      getDropTargetCell,
-      screenToBoardCell,
-      computeRackIndex,
-      visibleRackTiles.length,
-      game.moveTileOnBoard,
-      game.removeTileFromBoard,
-      game.reorderRack,
-      setDragPositionFromScreen,
-      finalizeDrag,
-      animateDragIntoRackSlot,
-      getBoardTileSettleTarget,
-      completeBoardDrop,
-      swapAnimating,
-    ]
-  );
-
-  const handleRackDragStart = useCallback(
-    (index, tile, x, y, touchOffsetX, touchOffsetY) => {
-      const sx = x ?? 0;
-      const sy = y ?? 0;
-      refreshContainerWindowPosition();
-      const offsetX = touchOffsetX ?? DRAG_TILE_HALF_SIZE;
-      const offsetY = touchOffsetY ?? DRAG_TILE_HALF_SIZE;
-      dragTouchOffsetRef.current = { x: offsetX, y: offsetY };
-      setDragPositionFromScreen(sx, sy);
-      const sourceTarget = getRackTileSourceTarget(
-        tile.visibleIndex,
-        visibleRackTiles.length
-      );
-      hoverIndexRef.current = tile.visibleIndex;
-      setDraggingTile({
-        from: "rack",
-        index,
-        visibleIndex: tile.visibleIndex,
-        tile,
-      });
-      setDropTargetRackIndex(tile.visibleIndex);
-      requestAnimationFrame(() => {
-        if (sourceTarget) {
-          animateRackPickupToDragTarget(sourceTarget.x, sourceTarget.y);
-        } else {
-          animateDragPickup();
-        }
-      });
-    },
-    [
-      setDragPositionFromScreen,
-      getRackTileSourceTarget,
-      visibleRackTiles.length,
-      animateRackPickupToDragTarget,
-      animateDragPickup,
-      refreshContainerWindowPosition,
-    ]
-  );
-
-  const handleRackDragUpdate = useCallback(
-    (x, y) => {
-      setDragPositionFromScreen(x, y);
-      const nextIndex = computeRackIndex(x, y, visibleRackTiles.length);
-      if (nextIndex !== hoverIndexRef.current) {
-        hoverIndexRef.current = nextIndex;
-        setDropTargetRackIndex(nextIndex);
-      }
-    },
-    [computeRackIndex, setDragPositionFromScreen, visibleRackTiles.length]
-  );
-
   const handleClearReturnAnimationComplete = useCallback(() => {
-    setClearedRackIndices([]);
+    setClearedRackTileIds([]);
   }, []);
-
-  const handleBoardDragUpdate = useCallback(
-    (x, y) => {
-      setDragPositionFromScreen(x, y);
-      const nextIndex = computeRackIndex(x, y, visibleRackTiles.length + 1);
-      if (nextIndex !== hoverIndexRef.current) {
-        hoverIndexRef.current = nextIndex;
-        setDropTargetRackIndex(nextIndex);
-      }
-    },
-    [computeRackIndex, setDragPositionFromScreen, visibleRackTiles.length]
-  );
-
-  const handleBoardTap = useCallback(
-    (screenX, screenY) => {
-      if (swapAnimating) return;
-      const cell = getCellAtPosition(screenX, screenY);
-      if (cell) game.handleCellClick(cell.row, cell.col);
-    },
-    [getCellAtPosition, game.handleCellClick, swapAnimating]
-  );
 
   const resetSwapAnimationState = useCallback(() => {
     rackTileAnimationsRef.current = {};
@@ -1520,7 +629,7 @@ function App() {
           (prev) => prev?.filter((rackTile) => rackTile.id !== tile.id) ?? prev
         );
         clearRackTileAnimationState(tile.id);
-        await wait(SWAP_LAYOUT_DURATION + SWAP_STEP_DELAY);
+        await wait(SWAP_STEP_DELAY);
       }
 
       await animateRackInsertSequence(preparedSwap.drawnTiles);
@@ -1553,22 +662,30 @@ function App() {
 
     const preparedSubmit = game.prepareSubmitWord();
     if (!preparedSubmit) return;
+    const completesGame =
+      preparedSubmit.nextTilesRemaining === 0 &&
+      preparedSubmit.resultingRack.length === 0;
 
-    const nextFlavor = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      previousWordCount: game.wordCount,
-      wordDelta: preparedSubmit.newWords.length,
-      previousTurnCount: game.turnCount,
-      turnDelta: 1,
-      previousTilesRemaining: game.tilesRemaining,
-      tilesDelta: preparedSubmit.drawnTiles.length,
-    };
+    if (!completesGame) {
+      const nextFlavor = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        previousWordCount: game.wordCount,
+        wordDelta: preparedSubmit.newWords.length,
+        previousTurnCount: game.turnCount,
+        turnDelta: 1,
+        previousTilesRemaining: game.tilesRemaining,
+        tilesDelta: preparedSubmit.drawnTiles.length,
+      };
 
-    if (preparedSubmit.earnedScrabbleBonus) {
-      setGameInfoFlavor(nextFlavor);
-      setPendingGameInfoFlavor(null);
+      if (preparedSubmit.earnedScrabbleBonus) {
+        setGameInfoFlavor(nextFlavor);
+        setPendingGameInfoFlavor(null);
+      } else {
+        setPendingGameInfoFlavor(nextFlavor);
+      }
     } else {
-      setPendingGameInfoFlavor(nextFlavor);
+      setGameInfoFlavor(null);
+      setPendingGameInfoFlavor(null);
     }
 
     game.commitPreparedSubmitWord(preparedSubmit);
@@ -1658,12 +775,26 @@ function App() {
   }, []);
 
   useEffect(() => {
+    resetController();
+  }, [game.currentSeed, gameStarted, resetController]);
+
+  useEffect(() => {
     const loadPlayerProfile = async () => {
       const storedProfile = await loadOrCreatePlayerProfile();
       setPlayerProfile(storedProfile);
     };
 
     loadPlayerProfile();
+  }, []);
+
+  useEffect(() => {
+    const loadConsentStatus = async () => {
+      const storedStatus = await loadLeaderboardConsentStatus();
+      setLeaderboardConsentStatus(storedStatus);
+      setLeaderboardConsentLoaded(true);
+    };
+
+    loadConsentStatus();
   }, []);
 
   const loadLeaderboardPosition = useCallback(async () => {
@@ -1755,6 +886,47 @@ function App() {
     [selectedDailyLeaderboardSeed]
   );
 
+  const submitLatestCompletedScore = useCallback(
+    async ({
+      seed,
+      finalScore,
+      finalScoreBreakdown,
+      isDailySeed: isDailySeedSubmission,
+    }) => {
+      const result = await submitCompletedScore({
+        seed,
+        finalScore,
+        finalScoreBreakdown,
+        isDailySeed: isDailySeedSubmission,
+      });
+
+      if (!result.ok && result.reason !== "backend_not_configured") {
+        console.warn("Failed to submit score", result);
+        setLeaderboardError(getLeaderboardSubmitErrorMessage(result));
+        return result;
+      }
+
+      if (result.ok) {
+        loadGlobalLeaderboard();
+        loadLeaderboardPosition();
+        if (
+          (activeDailySeed ?? seed) === selectedDailyLeaderboardSeed
+        ) {
+          loadDailyLeaderboard(activeDailySeed ?? seed);
+        }
+      }
+
+      return result;
+    },
+    [
+      activeDailySeed,
+      loadDailyLeaderboard,
+      loadGlobalLeaderboard,
+      loadLeaderboardPosition,
+      selectedDailyLeaderboardSeed,
+    ]
+  );
+
   useEffect(() => {
     if (gameStarted) {
       return;
@@ -1841,6 +1013,7 @@ function App() {
 
   useEffect(() => {
     if (
+      !leaderboardConsentLoaded ||
       !game.gameOver ||
       typeof game.finalScore !== "number" ||
       !game.finalScoreBreakdown
@@ -1885,28 +1058,23 @@ function App() {
     }
     backendSubmitRef.current = backendSubmitKey;
 
-    submitCompletedScore({
+    const submission = {
       seed: game.currentSeed,
       finalScore: game.finalScore,
       finalScoreBreakdown: game.finalScoreBreakdown,
       isDailySeed: activeDailySeed === game.currentSeed,
-    }).then((result) => {
-      if (!result.ok && result.reason !== "backend_not_configured") {
-        console.warn("Failed to submit score", result);
-        setLeaderboardError("Failed to submit latest score");
-        return;
-      }
+    };
 
-      if (result.ok) {
-        loadGlobalLeaderboard();
-        loadLeaderboardPosition();
-        if (
-          (activeDailySeed ?? game.currentSeed) === selectedDailyLeaderboardSeed
-        ) {
-          loadDailyLeaderboard(activeDailySeed ?? game.currentSeed);
-        }
-      }
-    });
+    if (leaderboardConsentStatus === LEADERBOARD_CONSENT_GRANTED) {
+      submitLatestCompletedScore(submission);
+      return;
+    }
+
+    if (leaderboardConsentStatus == null) {
+      setPendingLeaderboardSubmission(submission);
+      setLeaderboardConsentModalSource("gameOver");
+      setLeaderboardConsentModalVisible(true);
+    }
   }, [
     activeDailySeed,
     game.finalScore,
@@ -1914,23 +1082,153 @@ function App() {
     game.gameOver,
     game.currentSeed,
     game.wordCount,
-    loadDailyLeaderboard,
-    loadGlobalLeaderboard,
-    loadLeaderboardPosition,
+    leaderboardConsentLoaded,
+    leaderboardConsentStatus,
     playerStats,
     scoreRecords,
-    selectedDailyLeaderboardSeed,
+    submitLatestCompletedScore,
   ]);
 
   const handleSavePlayerName = useCallback(async (displayName) => {
+    if (leaderboardConsentStatus === LEADERBOARD_CONSENT_GRANTED) {
+      const remoteSaveResult = await saveRemotePlayerProfile({
+        username: displayName,
+        displayName,
+      });
+
+      if (!remoteSaveResult.ok) {
+        return remoteSaveResult;
+      }
+    }
+
     const nextProfile = await savePlayerDisplayName(displayName);
     setPlayerProfile(nextProfile);
+    return { ok: true, profile: nextProfile };
+  }, [leaderboardConsentStatus]);
+
+  const handleOpenLeaderboardSharingSettings = useCallback(() => {
+    setLeaderboardConsentModalSource("settings");
+    setSettingsModalVisible(false);
+    setLeaderboardConsentModalVisible(true);
   }, []);
+
+  const handleOpenDeleteAccountModal = useCallback(() => {
+    setSettingsModalVisible(false);
+    setDeleteAccountModalVisible(true);
+  }, []);
+
+  const handleAllowLeaderboardSharing = useCallback(async () => {
+    const nextStatus = await saveLeaderboardConsentStatus(
+      LEADERBOARD_CONSENT_GRANTED
+    );
+    setLeaderboardConsentStatus(nextStatus);
+    setLeaderboardConsentModalVisible(false);
+    setSettingsModalVisible(false);
+
+    if (pendingLeaderboardSubmission) {
+      const pendingSubmission = pendingLeaderboardSubmission;
+      setPendingLeaderboardSubmission(null);
+      submitLatestCompletedScore(pendingSubmission);
+    }
+  }, [pendingLeaderboardSubmission, submitLatestCompletedScore]);
+
+  const handleDenyLeaderboardSharing = useCallback(async () => {
+    const nextStatus = await saveLeaderboardConsentStatus(
+      LEADERBOARD_CONSENT_DENIED
+    );
+    setLeaderboardConsentStatus(nextStatus);
+    setPendingLeaderboardSubmission(null);
+    setLeaderboardConsentModalVisible(false);
+    setSettingsModalVisible(false);
+  }, []);
+
+  const handleDeleteAccount = useCallback(async () => {
+    setDeleteAccountLoading(true);
+
+    const result = await deleteRemoteAccount();
+
+    if (!result.ok) {
+      const normalizedMessage =
+        typeof result.error?.message === "string" ? result.error.message : "";
+      setDeleteAccountLoading(false);
+      setDeleteAccountModalVisible(false);
+      setAccountMessage({
+        title: "Delete Account Failed",
+        text:
+          normalizedMessage ||
+          "Could not delete your account right now. Confirm the Supabase delete-account function is deployed and try again.",
+      });
+      return;
+    }
+
+    await Promise.all([
+      clearPlayerProfile(),
+      clearLeaderboardConsentStatus(),
+      clearMultiplayerSession(),
+      clearGameSnapshotPayload(),
+    ]);
+
+    const nextProfile = await loadOrCreatePlayerProfile();
+    setPlayerProfile(nextProfile);
+    setLeaderboardConsentStatus(null);
+    setSavedGamePayload(null);
+    setLeaderboardPosition(null);
+    setLeaderboardPositionError(null);
+    setLeaderboardEntries([]);
+    setDailyLeaderboardEntries([]);
+    setActiveDailySeed(null);
+    setEndGameSummary(null);
+    setHomeScreen("main");
+    setGameStarted(false);
+    setPlayMenuVisible(false);
+    setPlayModeModalVisible(false);
+    setInGameMenuVisible(false);
+    setConfirmLeaveGameVisible(false);
+    setSettingsModalVisible(false);
+    setDeleteAccountModalVisible(false);
+    setPendingLeaderboardSubmission(null);
+    setLeaderboardConsentModalVisible(false);
+    setActiveMultiplayerSessionId("local-multiplayer-prototype");
+    backendSubmitRef.current = null;
+    persistedGameRef.current = null;
+    setDeleteAccountLoading(false);
+    setAccountMessage({
+      title: "Account Deleted",
+      text:
+        "Your Supabase account data was removed. Published leaderboard scores were kept.",
+    });
+  }, []);
+
+  const requireChosenUsername = useCallback(
+    (action) => {
+      if (playerProfile?.hasChosenUsername) {
+        action();
+        return;
+      }
+
+      setMainMenuUsernamePromptToken((currentValue) => currentValue + 1);
+    },
+    [playerProfile?.hasChosenUsername]
+  );
 
   const handleOpenLeaderboard = useCallback(() => {
     setLeaderboardSelectedDailySeed(dailySeed);
     setHomeScreen("leaderboard");
   }, [dailySeed]);
+
+  const handleOpenPlayModeMenu = useCallback(() => {
+    setPlayModeModalVisible(true);
+  }, []);
+
+  const handleOpenSoloPlayMenu = useCallback(() => {
+    setPlayModeModalVisible(false);
+    setPlayMenuVisible(true);
+  }, []);
+
+  const handleOpenMultiplayerMenu = useCallback(() => {
+    setPlayModeModalVisible(false);
+    setHomeScreen("multiplayer-menu");
+  }, []);
 
   const handleBackToMainMenu = useCallback(() => {
     setHomeScreen("main");
@@ -1980,9 +1278,7 @@ function App() {
 
   useEffect(() => {
     return () => {
-      if (pendingPlacementFrameRef.current != null) {
-        cancelAnimationFrame(pendingPlacementFrameRef.current);
-      }
+      resetController();
       if (scrabbleBannerTimeoutRef.current != null) {
         clearTimeout(scrabbleBannerTimeoutRef.current);
       }
@@ -1990,7 +1286,7 @@ function App() {
         clearTimeout(dailySeedRefreshTimeoutRef.current);
       }
     };
-  }, []);
+  }, [resetController]);
 
   const spin = spinValue.interpolate({
     inputRange: [0, 1],
@@ -2006,6 +1302,11 @@ function App() {
       setEndGameSummary(null);
       setGameInfoFlavor(null);
       setPendingGameInfoFlavor(null);
+      setPendingLeaderboardSubmission(null);
+      setLeaderboardConsentModalVisible(false);
+      setPlayModeModalVisible(false);
+      setSettingsModalVisible(false);
+      setDeleteAccountModalVisible(false);
       backendSubmitRef.current = null;
       persistedGameRef.current = null;
       setGameStarted(true);
@@ -2027,6 +1328,11 @@ function App() {
     setEndGameSummary(null);
     setGameInfoFlavor(null);
     setPendingGameInfoFlavor(null);
+    setPendingLeaderboardSubmission(null);
+    setLeaderboardConsentModalVisible(false);
+    setPlayModeModalVisible(false);
+    setSettingsModalVisible(false);
+    setDeleteAccountModalVisible(false);
     backendSubmitRef.current = null;
     persistedGameRef.current = null;
     setGameStarted(true);
@@ -2041,6 +1347,11 @@ function App() {
     setEndGameSummary(null);
     setGameInfoFlavor(null);
     setPendingGameInfoFlavor(null);
+    setPendingLeaderboardSubmission(null);
+    setLeaderboardConsentModalVisible(false);
+    setPlayModeModalVisible(false);
+    setSettingsModalVisible(false);
+    setDeleteAccountModalVisible(false);
     backendSubmitRef.current = null;
     persistedGameRef.current = null;
     setGameStarted(true);
@@ -2065,6 +1376,11 @@ function App() {
     setEndGameSummary(null);
     setGameInfoFlavor(null);
     setPendingGameInfoFlavor(null);
+    setPendingLeaderboardSubmission(null);
+    setLeaderboardConsentModalVisible(false);
+    setPlayModeModalVisible(false);
+    setSettingsModalVisible(false);
+    setDeleteAccountModalVisible(false);
     setGameStarted(false);
     setHomeScreen("main");
   }, [activeDailySeed, game, game.gameOver]);
@@ -2085,6 +1401,11 @@ function App() {
     setPendingGameInfoFlavor(null);
     setPendingBlankPlacement(null);
     setConfirmLeaveGameVisible(false);
+    setPendingLeaderboardSubmission(null);
+    setLeaderboardConsentModalVisible(false);
+    setPlayModeModalVisible(false);
+    setSettingsModalVisible(false);
+    setDeleteAccountModalVisible(false);
     backendSubmitRef.current = null;
     persistedGameRef.current = null;
     setGameStarted(true);
@@ -2152,7 +1473,9 @@ function App() {
         ref={safeAreaRef}
         style={[
           styles.container,
-          !gameStarted && styles.fullScreenMenuContainer,
+          !gameStarted &&
+            homeScreen !== "multiplayer" &&
+            styles.fullScreenMenuContainer,
         ]}
         onLayout={refreshContainerWindowPosition}
       >
@@ -2211,6 +1534,9 @@ function App() {
                     ? { row: draggingTile.row, col: draggingTile.col }
                     : null
                 }
+                settlingBoardTile={
+                  settlingTile?.destination === "board" ? settlingTile : null
+                }
                 onBoardTilePickup={handleBoardTilePickup}
                 onBoardDragUpdate={handleBoardDragUpdate}
                 onBoardTileDrop={handleBoardTileDrop}
@@ -2247,23 +1573,61 @@ function App() {
                   onMeasureLayout={updateRackLayout}
                   tileAnimationStates={rackTileAnimationStates}
                   shuffleTrigger={shuffleTrigger}
-                  clearedRackIndices={clearedRackIndices}
+                  clearedRackTileIds={clearedRackTileIds}
                   onClearReturnAnimationComplete={
                     handleClearReturnAnimationComplete
                   }
                   draggingRackIndex={
                     draggingTile?.from === "rack" ? draggingTile.index : null
                   }
+                  draggingTileId={
+                    draggingTile?.from === "rack"
+                      ? draggingTile.tile?.id ?? null
+                      : null
+                  }
                   draggingVisibleIndex={
                     draggingTile?.from === "rack"
                       ? draggingTile.visibleIndex
                       : null
                   }
+                  draggingVisibleIndexValue={rackDraggingVisibleIndexValue}
                   predictedInsertionIndex={
-                    draggingTile?.from === "rack" ? dropTargetRackIndex : null
+                    draggingTile?.from === "rack" &&
+                    draggingTile?.settlingDestination !== "rack"
+                      ? dropTargetRackIndex
+                      : null
                   }
+                  hoverIndexValue={rackHoverIndexValue}
                   rackPlaceholderIndex={
-                    draggingTile?.from === "board" ? dropTargetRackIndex : null
+                    draggingTile?.from === "board" &&
+                    draggingTile?.settlingDestination !== "rack"
+                      ? boardHoverRackIndex
+                      : null
+                  }
+                  rackPlaceholderIndexValue={boardRackPlaceholderIndexValue}
+                  showBoardPlaceholder={
+                    draggingTile?.from === "board" &&
+                    draggingTile?.settlingDestination !== "rack"
+                  }
+                  settlingRackPlaceholderIndex={
+                    settlingTile?.destination === "rack"
+                      ? settlingTile.slotIndex
+                      : null
+                  }
+                  settlingRackSlotCount={
+                    settlingTile?.destination === "rack"
+                      ? settlingTile.slotCount
+                      : null
+                  }
+                  settlingRackTileId={
+                    settlingTile?.destination === "rack"
+                      ? settlingTile.id
+                      : null
+                  }
+                  settlingRackOrder={
+                    settlingTile?.destination === "rack"
+                      ? settlingTile.visibleRackOrder
+                      : null
                   }
                   onDragStart={handleRackDragStart}
                   onDragUpdate={handleRackDragUpdate}
@@ -2348,12 +1712,10 @@ function App() {
                     onPress={() => {
                       if (swapAnimating) return;
                       if (game.selectedCells.length > 0) {
-                        const indices = game.selectedCells
-                          .map(
-                            ({ row, col }) => game.board[row]?.[col]?.rackIndex
-                          )
-                          .filter((r) => r != null);
-                        setClearedRackIndices(indices);
+                        const tileIds = game.selectedCells
+                          .map(({ row, col }) => game.board[row]?.[col]?.id)
+                          .filter((id) => id != null);
+                        setClearedRackTileIds(tileIds);
                         game.clearSelection();
                       } else {
                         setShuffleTrigger((c) => c + 1);
@@ -2434,13 +1796,44 @@ function App() {
                 backendConfigured={isBackendConfigured()}
                 onBack={handleBackToMainMenu}
               />
+            ) : homeScreen === "multiplayer-menu" ? (
+              <MultiplayerMenuScreen
+                dailySeed={dailySeed}
+                onBack={handleBackToMainMenu}
+                onOpenActiveGame={(game) => {
+                  setActiveMultiplayerSessionId(
+                    game?.sessionId ?? "local-multiplayer-prototype"
+                  );
+                  setHomeScreen("multiplayer");
+                }}
+                onOpenNewMultiplayerGame={(game) => {
+                  setActiveMultiplayerSessionId(
+                    game?.sessionId ?? "local-multiplayer-prototype"
+                  );
+                  setHomeScreen("multiplayer");
+                }}
+              />
+            ) : homeScreen === "multiplayer" ? (
+              <MultiplayerModeScreen
+                onBack={handleBackToMainMenu}
+                sessionId={activeMultiplayerSessionId}
+              />
             ) : (
               <MainMenuScreen
                 playerName={playerProfile?.displayName ?? "Player"}
+                hasChosenUsername={playerProfile?.hasChosenUsername ?? false}
+                usernamePromptToken={mainMenuUsernamePromptToken}
                 onSavePlayerName={handleSavePlayerName}
-                onOpenPlay={() => setPlayMenuVisible(true)}
-                onOpenLeaderboard={handleOpenLeaderboard}
-                onStatsPress={() => setHomeScreen("stats")}
+                onOpenSettings={() => setSettingsModalVisible(true)}
+                onOpenPlay={() =>
+                  requireChosenUsername(handleOpenPlayModeMenu)
+                }
+                onOpenLeaderboard={() =>
+                  requireChosenUsername(handleOpenLeaderboard)
+                }
+                onStatsPress={() =>
+                  requireChosenUsername(() => setHomeScreen("stats"))
+                }
               />
             )}
           </>
@@ -2501,79 +1894,112 @@ function App() {
           summary={endGameSummary}
           onClose={() => setEndGameSummary(null)}
         />
-        {(draggingTile || settlingTile) && (
-          <View style={styles.dragOverlayContainer} pointerEvents="none">
-            {draggingTile && !settlingTile && (
-              <Animated.View
+        <LeaderboardConsentModal
+          visible={leaderboardConsentModalVisible}
+          showCancel={leaderboardConsentModalSource === "settings"}
+          onAllow={handleAllowLeaderboardSharing}
+          onDeny={handleDenyLeaderboardSharing}
+          onCancel={() => setLeaderboardConsentModalVisible(false)}
+        />
+        <PlayModeModal
+          visible={playModeModalVisible}
+          onSolo={handleOpenSoloPlayMenu}
+          onMultiplayer={handleOpenMultiplayerMenu}
+          onClose={() => setPlayModeModalVisible(false)}
+        />
+        <SettingsModal
+          visible={settingsModalVisible}
+          leaderboardSharingEnabled={
+            leaderboardConsentStatus === LEADERBOARD_CONSENT_GRANTED
+          }
+          onManageLeaderboardSharing={handleOpenLeaderboardSharingSettings}
+          onDeleteAccount={handleOpenDeleteAccountModal}
+          onClose={() => setSettingsModalVisible(false)}
+        />
+        <DeleteAccountModal
+          visible={deleteAccountModalVisible}
+          deleting={deleteAccountLoading}
+          onConfirm={handleDeleteAccount}
+          onCancel={() => setDeleteAccountModalVisible(false)}
+        />
+        <MessageOverlay
+          message={accountMessage}
+          onClose={() => setAccountMessage(null)}
+        />
+        <View style={styles.dragOverlayContainer} pointerEvents="none">
+        <Animated.View
+          style={[
+            styles.dragOverlay,
+            {
+              opacity: draggingTile ? 1 : 0,
+              transform: [
+                { translateX: dragPosition.x },
+                { translateY: dragPosition.y },
+                { scale: dragScale },
+              ],
+              },
+            ]}
+          >
+          <View
+            style={[
+              styles.dragTile,
+              draggingTile?.settlingDestination === "rack"
+                ? null
+                : styles.dragTileLifted,
+            ]}
+          >
+              <Text
                 style={[
-                  styles.dragOverlay,
-                  {
-                    transform: [
-                      { translateX: dragPosition.x },
-                      { translateY: dragPosition.y },
-                      { scale: dragScale },
-                    ],
-                  },
+                  styles.dragTileLetter,
+                  (draggingTile?.tile.letter === " " ||
+                    draggingTile?.tile.letter === "") &&
+                    styles.dragTileLetterBlank,
                 ]}
               >
-                <View style={[styles.dragTile, styles.dragTileLifted]}>
-                  <Text
-                    style={[
-                      styles.dragTileLetter,
-                      (draggingTile.tile.letter === " " ||
-                        draggingTile.tile.letter === "") &&
-                        styles.dragTileLetterBlank,
-                    ]}
-                  >
-                    {draggingTile.tile.letter === " " ||
-                    draggingTile.tile.letter === ""
-                      ? " "
-                      : draggingTile.tile.letter}
-                  </Text>
-                  {draggingTile.tile.value > 0 && (
-                    <Text style={styles.dragTileValue}>
-                      {draggingTile.tile.value}
-                    </Text>
-                  )}
-                </View>
-              </Animated.View>
-            )}
-            {settlingTile && (
-              <Animated.View
+                {draggingTile?.tile.letter === " " ||
+                draggingTile?.tile.letter === ""
+                  ? " "
+                  : draggingTile?.tile.letter ?? " "}
+              </Text>
+              {(draggingTile?.tile.value ?? 0) > 0 && (
+                <Text style={styles.dragTileValue}>
+                  {draggingTile?.tile.value}
+                </Text>
+              )}
+            </View>
+          </Animated.View>
+        <Animated.View
+          style={[
+            styles.dragOverlay,
+            {
+              opacity: settlingTile && !draggingTile ? 1 : 0,
+              transform: [
+                { translateX: settlePosition.x },
+                { translateY: settlePosition.y },
+                { scale: settleScale },
+              ],
+              },
+            ]}
+          >
+            <View style={styles.dragTile}>
+              <Text
                 style={[
-                  styles.dragOverlay,
-                  {
-                    transform: [
-                      { translateX: settlePosition.x },
-                      { translateY: settlePosition.y },
-                      { scale: settleScale },
-                    ],
-                  },
+                  styles.dragTileLetter,
+                  (settlingTile?.letter === " " ||
+                    settlingTile?.letter === "") &&
+                    styles.dragTileLetterBlank,
                 ]}
               >
-                <View style={styles.dragTile}>
-                  <Text
-                    style={[
-                      styles.dragTileLetter,
-                      (settlingTile.letter === " " ||
-                        settlingTile.letter === "") &&
-                        styles.dragTileLetterBlank,
-                    ]}
-                  >
-                    {settlingTile.letter === " " || settlingTile.letter === ""
-                      ? " "
-                      : settlingTile.letter}
-                  </Text>
-                  {settlingTile.value > 0 && (
-                    <Text style={styles.dragTileValue}>
-                      {settlingTile.value}
-                    </Text>
-                  )}
-                </View>
-              </Animated.View>
-            )}
-          </View>
-        )}
+                {settlingTile?.letter === " " || settlingTile?.letter === ""
+                  ? " "
+                  : settlingTile?.letter ?? " "}
+              </Text>
+              {(settlingTile?.value ?? 0) > 0 && (
+                <Text style={styles.dragTileValue}>{settlingTile?.value}</Text>
+              )}
+            </View>
+          </Animated.View>
+        </View>
       </SafeAreaView>
     </GestureHandlerRootView>
   );

@@ -8,33 +8,76 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SFSymbol } from "react-native-sfsymbols";
+import { validatePlayerDisplayName } from "../utils/playerProfile";
 
 const MainMenuScreen = ({
   playerName,
+  hasChosenUsername = true,
+  usernamePromptToken = 0,
   onSavePlayerName,
   onOpenPlay,
   onOpenLeaderboard,
   onStatsPress,
+  onOpenSettings,
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [draftName, setDraftName] = useState(playerName ?? "");
+  const [nameError, setNameError] = useState(null);
 
   useEffect(() => {
     if (!isEditingName) {
       setDraftName(playerName ?? "");
+      setNameError(null);
     }
   }, [isEditingName, playerName]);
 
-  const commitName = () => {
-    const trimmedName = draftName.trim();
-    if (trimmedName.length > 0) {
-      onSavePlayerName(trimmedName);
+  useEffect(() => {
+    if (hasChosenUsername || usernamePromptToken === 0) {
+      return;
     }
+
+    setIsEditingName(true);
+    setDraftName(playerName ?? "");
+    setNameError("Choose a username to continue.");
+  }, [hasChosenUsername, playerName, usernamePromptToken]);
+
+  const commitName = async () => {
+    const trimmedName = draftName.trim();
+    const validationError = validatePlayerDisplayName(trimmedName);
+    if (validationError) {
+      setNameError(validationError);
+      return;
+    }
+
+    const saveResult = await onSavePlayerName(trimmedName);
+    if (!saveResult?.ok) {
+      setNameError(
+        saveResult?.errorMessage ?? "Could not save your username right now."
+      );
+      return;
+    }
+
+    setNameError(null);
     setIsEditingName(false);
   };
 
   return (
     <SafeAreaView style={styles.container}>
+      <TouchableOpacity
+        style={styles.settingsButton}
+        onPress={onOpenSettings}
+        accessibilityLabel="Open settings"
+      >
+        <SFSymbol
+          name="gearshape.fill"
+          size={20}
+          color="#22313f"
+          weight="medium"
+          scale="medium"
+        />
+      </TouchableOpacity>
+
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>Daily boards. Seed battles.</Text>
         <Text style={styles.title}>Friends With Words</Text>
@@ -44,11 +87,15 @@ const MainMenuScreen = ({
             style={styles.nameInput}
             value={draftName}
             onChangeText={setDraftName}
-            onSubmitEditing={commitName}
-            onBlur={commitName}
+            onSubmitEditing={() => {
+              void commitName();
+            }}
+            onBlur={() => {
+              void commitName();
+            }}
             autoFocus
             maxLength={24}
-            placeholder="Player name"
+            placeholder="Username"
             placeholderTextColor="#8b8d7a"
             returnKeyType="done"
           />
@@ -57,6 +104,10 @@ const MainMenuScreen = ({
             <Text style={styles.username}>@{playerName}</Text>
           </Pressable>
         )}
+
+        {isEditingName && nameError ? (
+          <Text style={styles.nameError}>{nameError}</Text>
+        ) : null}
       </View>
 
       <View style={styles.actions}>
@@ -90,6 +141,21 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingTop: 48,
     paddingBottom: 42,
+  },
+  settingsButton: {
+    position: "absolute",
+    top: 20,
+    right: 28,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e3d3b9",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+    elevation: 10,
   },
   hero: {
     gap: 10,
@@ -127,6 +193,14 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     paddingVertical: 12,
     paddingHorizontal: 14,
+  },
+  nameError: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#b42318",
+    fontWeight: "700",
+    maxWidth: 280,
   },
   actions: {
     gap: 14,

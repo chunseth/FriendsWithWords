@@ -32,7 +32,7 @@ export const submitCompletedScore = async ({
   if (!sessionResult.ok) {
     return {
       ok: false,
-      reason: "auth_failed",
+      reason: sessionResult.reason ?? "auth_failed",
       error: sessionResult.error ?? null,
     };
   }
@@ -171,7 +171,7 @@ export const fetchPlayerHighScorePosition = async (playerId) => {
   if (!sessionResult.ok) {
     return {
       ok: false,
-      reason: "auth_failed",
+      reason: sessionResult.reason ?? "auth_failed",
       error: sessionResult.error ?? null,
       position: null,
     };

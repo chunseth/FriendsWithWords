@@ -8,7 +8,7 @@ const MessageOverlay = ({ message, onClose }) => {
         <Modal
             visible={!!message}
             transparent={true}
-            animationType="fade"
+            animationType="none"
             onRequestClose={onClose}
         >
             <TouchableOpacity 
@@ -76,4 +76,3 @@ const styles = StyleSheet.create({
 });
 
 export default MessageOverlay;
-

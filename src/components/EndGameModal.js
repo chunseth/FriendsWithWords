@@ -270,6 +270,7 @@ const EndGameModal = ({ visible, summary, onClose }) => {
             onPress={onClose}
             accessibilityLabel="Minimize final score"
             activeOpacity={0.8}
+            hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
           >
             {Platform.OS === "ios" ? (
               <SFSymbol

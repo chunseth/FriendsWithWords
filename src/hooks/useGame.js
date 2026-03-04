@@ -1,183 +1,20 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { dictionary } from "../utils/dictionary";
-
-// Blank tile sentinel (unplaced blank on rack)
-export const BLANK_LETTER = " ";
-
-// Official English Scrabble distribution (100 tiles including 2 blanks)
-const TILE_DISTRIBUTION = {
-  [BLANK_LETTER]: { count: 2, value: 0 },
-  A: { count: 9, value: 1 },
-  B: { count: 2, value: 3 },
-  C: { count: 2, value: 3 },
-  D: { count: 4, value: 2 },
-  E: { count: 12, value: 1 },
-  F: { count: 2, value: 4 },
-  G: { count: 3, value: 2 },
-  H: { count: 2, value: 4 },
-  I: { count: 9, value: 1 },
-  J: { count: 1, value: 8 },
-  K: { count: 1, value: 5 },
-  L: { count: 4, value: 1 },
-  M: { count: 2, value: 3 },
-  N: { count: 6, value: 1 },
-  O: { count: 8, value: 1 },
-  P: { count: 2, value: 3 },
-  Q: { count: 1, value: 10 },
-  R: { count: 6, value: 1 },
-  S: { count: 4, value: 1 },
-  T: { count: 6, value: 1 },
-  U: { count: 4, value: 1 },
-  V: { count: 2, value: 4 },
-  W: { count: 2, value: 4 },
-  X: { count: 1, value: 8 },
-  Y: { count: 2, value: 4 },
-  Z: { count: 1, value: 10 },
-};
-
-const BOARD_SIZE = 15;
-const SCRABBLE_BONUS = 50;
-
-// Premium square positions — classic Scrabble layout
-const getPremiumSquares = () => {
-  const premiumSquares = {};
-
-  // Triple Word Score (TWS) — corners + mid-edges, 8 squares
-  const twSquares = [
-    [0, 0],
-    [0, 7],
-    [0, 14],
-    [7, 0],
-    [7, 14],
-    [14, 0],
-    [14, 7],
-    [14, 14],
-  ];
-  twSquares.forEach(([r, c]) => (premiumSquares[`${r},${c}`] = "tw"));
-
-  // Double Word Score (DWS) — diagonals from corners, 16 squares
-  const dwSquares = [
-    [1, 1],
-    [2, 2],
-    [3, 3],
-    [4, 4],
-    [1, 13],
-    [2, 12],
-    [3, 11],
-    [4, 10],
-    [13, 1],
-    [12, 2],
-    [11, 3],
-    [10, 4],
-    [13, 13],
-    [12, 12],
-    [11, 11],
-    [10, 10],
-  ];
-  dwSquares.forEach(([r, c]) => (premiumSquares[`${r},${c}`] = "dw"));
-
-  // Triple Letter Score (TLS) — outer + inner cross pattern, 24 squares
-  const tlSquares = [
-    [1, 5],
-    [1, 9],
-    [5, 1],
-    [5, 5],
-    [5, 9],
-    [5, 13],
-    [9, 1],
-    [9, 5],
-    [9, 9],
-    [9, 13],
-    [13, 5],
-    [13, 9],
-    [2, 6],
-    [2, 8],
-    [6, 2],
-    [6, 6],
-    [6, 8],
-    [6, 12],
-    [8, 2],
-    [8, 6],
-    [8, 8],
-    [8, 12],
-    [12, 6],
-    [12, 8],
-  ];
-  tlSquares.forEach(([r, c]) => (premiumSquares[`${r},${c}`] = "tl"));
-
-  // Double Letter Score (DLS) — edges + inner clusters, 24 squares
-  const dlSquares = [
-    [0, 3],
-    [0, 11],
-    [3, 0],
-    [3, 7],
-    [3, 14],
-    [7, 3],
-    [7, 11],
-    [11, 0],
-    [11, 7],
-    [11, 14],
-    [14, 3],
-    [14, 11],
-    [2, 4],
-    [2, 10],
-    [4, 2],
-    [4, 6],
-    [4, 8],
-    [4, 12],
-    [6, 4],
-    [6, 10],
-    [8, 4],
-    [8, 10],
-    [10, 2],
-    [10, 6],
-    [10, 8],
-    [10, 12],
-    [12, 4],
-    [12, 10],
-  ];
-  dlSquares.forEach(([r, c]) => (premiumSquares[`${r},${c}`] = "dl"));
-
-  // Center star (overwrites 7,7)
-  premiumSquares["7,7"] = "center";
-
-  return premiumSquares;
-};
-
-// Seeded random number generator
-const createSeededRandom = (seed, initialState = null) => {
-  const hashSeed = (seed) => {
-    let hash = 0;
-    for (let i = 0; i < seed.length; i++) {
-      const char = seed.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash = hash & hash;
-    }
-    return Math.abs(hash);
-  };
-
-  let s =
-    typeof initialState === "number" && Number.isFinite(initialState)
-      ? initialState
-      : hashSeed(seed);
-
-  return {
-    next: () => {
-      s = (s * 1664525 + 1013904223) % Math.pow(2, 32);
-      return s / Math.pow(2, 32);
-    },
-    getState: () => s,
-  };
-};
-
-const shuffleArray = (array, randomFn) => {
-  const shuffled = [...array];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(randomFn() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
-};
+import {
+  BLANK_LETTER,
+  createSeededRandom,
+  initializeTileBag,
+  shuffleArray,
+} from "../game/shared/bag";
+import {
+  BOARD_SIZE,
+  createClassicPremiumSquares,
+} from "../game/shared/premiumSquares";
+import {
+  buildFinalScoreBreakdown,
+} from "../game/shared/scoring";
+import { buildResolvedSubmitPayload } from "../game/shared/turnResolution";
+import { validateSubmitTurn } from "../game/shared/validation";
 
 export const useGame = () => {
   const [board, setBoard] = useState(() =>
@@ -212,17 +49,7 @@ export const useGame = () => {
   const pendingSubmitRef = useRef(null);
   const tilesUsedThisTurnRef = useRef(new Set());
   const boardAtTurnStartRef = useRef(null);
-  const premiumSquaresRef = useRef(getPremiumSquares());
-
-  const initializeTileBag = useCallback(() => {
-    const tileBag = [];
-    for (const [letter, data] of Object.entries(TILE_DISTRIBUTION)) {
-      for (let i = 0; i < data.count; i++) {
-        tileBag.push({ letter, value: data.value });
-      }
-    }
-    return tileBag;
-  }, []);
+  const premiumSquaresRef = useRef(createClassicPremiumSquares());
 
   const drawTiles = useCallback((count) => {
     setTileRack((prev) => {
@@ -278,7 +105,7 @@ export const useGame = () => {
       pendingSubmitRef.current = null;
       tilesUsedThisTurnRef.current = new Set();
       boardAtTurnStartRef.current = null;
-      premiumSquaresRef.current = getPremiumSquares();
+      premiumSquaresRef.current = createClassicPremiumSquares();
 
       // Clear board
       setBoard(
@@ -288,10 +115,7 @@ export const useGame = () => {
       );
 
       // Initialize and shuffle tile bag
-      tileBagRef.current = shuffleArray(
-        initializeTileBag(),
-        randomRef.current.next
-      );
+      tileBagRef.current = shuffleArray(initializeTileBag(), randomRef.current.next);
 
       // Draw initial 7 tiles (or fewer if bag has fewer)
       const initialRack = [];
@@ -304,7 +128,7 @@ export const useGame = () => {
       setTileRack(initialRack);
       setTilesRemaining(100 - tilesDrawn);
     },
-    [initializeTileBag]
+    []
   );
 
   const resetGame = useCallback(() => {
@@ -337,7 +161,7 @@ export const useGame = () => {
     pendingSubmitRef.current = null;
     tilesUsedThisTurnRef.current = new Set();
     boardAtTurnStartRef.current = null;
-    premiumSquaresRef.current = getPremiumSquares();
+    premiumSquaresRef.current = createClassicPremiumSquares();
 
     setBoard(
       Array(BOARD_SIZE)
@@ -345,10 +169,7 @@ export const useGame = () => {
         .map(() => Array(BOARD_SIZE).fill(null))
     );
 
-    tileBagRef.current = shuffleArray(
-      initializeTileBag(),
-      randomRef.current.next
-    );
+    tileBagRef.current = shuffleArray(initializeTileBag(), randomRef.current.next);
 
     const initialRack = [];
     let tilesDrawn = 0;
@@ -359,7 +180,7 @@ export const useGame = () => {
     }
     setTileRack(initialRack);
     setTilesRemaining(100 - tilesDrawn);
-  }, [currentSeed, initializeTileBag]);
+  }, [currentSeed]);
 
   const selectTile = useCallback(
     (index) => {
@@ -662,306 +483,32 @@ export const useGame = () => {
     setIsSwapMode(true);
   }, [clearSelection, commitPreparedSwap, isSwapMode, prepareSwapTiles]);
 
-  const getWordsOnBoard = useCallback(() => {
-    const words = [];
-    const visited = new Set();
-
-    // Horizontal words
-    for (let row = 0; row < BOARD_SIZE; row++) {
-      let word = [];
-      let cells = [];
-      for (let col = 0; col < BOARD_SIZE; col++) {
-        if (board[row][col]) {
-          word.push(board[row][col].letter);
-          cells.push({ row, col });
-        } else {
-          if (word.length >= 2) {
-            const wordStr = word.join("");
-            const key = `h-${row}-${cells[0].col}-${
-              cells[cells.length - 1].col
-            }`;
-            if (!visited.has(key)) {
-              words.push({
-                word: wordStr,
-                cells: [...cells],
-                direction: "horizontal",
-              });
-              cells.forEach((c) => visited.add(`${c.row},${c.col}`));
-            }
-          }
-          word = [];
-          cells = [];
-        }
-      }
-      if (word.length >= 2) {
-        const wordStr = word.join("");
-        const key = `h-${row}-${cells[0].col}-${cells[cells.length - 1].col}`;
-        if (!visited.has(key)) {
-          words.push({
-            word: wordStr,
-            cells: [...cells],
-            direction: "horizontal",
-          });
-        }
-      }
-    }
-
-    // Vertical words
-    for (let col = 0; col < BOARD_SIZE; col++) {
-      let word = [];
-      let cells = [];
-      for (let row = 0; row < BOARD_SIZE; row++) {
-        if (board[row][col]) {
-          word.push(board[row][col].letter);
-          cells.push({ row, col });
-        } else {
-          if (word.length >= 2) {
-            const wordStr = word.join("");
-            const key = `v-${col}-${cells[0].row}-${
-              cells[cells.length - 1].row
-            }`;
-            if (!visited.has(key)) {
-              words.push({
-                word: wordStr,
-                cells: [...cells],
-                direction: "vertical",
-              });
-              cells.forEach((c) => visited.add(`${c.row},${c.col}`));
-            }
-          }
-          word = [];
-          cells = [];
-        }
-      }
-      if (word.length >= 2) {
-        const wordStr = word.join("");
-        const key = `v-${col}-${cells[0].row}-${cells[cells.length - 1].row}`;
-        if (!visited.has(key)) {
-          words.push({
-            word: wordStr,
-            cells: [...cells],
-            direction: "vertical",
-          });
-        }
-      }
-    }
-
-    return words;
-  }, [board]);
-
-  const hasNewTiles = useCallback((wordData) => {
-    if (!boardAtTurnStartRef.current) return true;
-    // Snapshot stores true = had tile, false = was empty at turn start
-    return wordData.cells.some(({ row, col }) => {
-      return boardAtTurnStartRef.current[row][col] === false;
-    });
-  }, []);
-
-  const calculateWordScore = useCallback(
-    (wordData) => {
-      let score = 0;
-      let wordMultiplier = 1;
-
-      wordData.cells.forEach(({ row, col }) => {
-        const tile = board[row][col];
-        if (!tile) return;
-
-        const key = `${row},${col}`;
-        const premium = premiumSquaresRef.current[key];
-
-        if (premium === "dw" || premium === "center") {
-          wordMultiplier *= 2;
-        } else if (premium === "tw") {
-          wordMultiplier *= 3;
-        }
-
-        // Blanks count as 0 and do not get letter multipliers (DL/TL)
-        if (tile.isBlank) {
-          score += 0;
-        } else {
-          let tileMultiplier = 1;
-          if (premium === "dl") tileMultiplier = 2;
-          else if (premium === "tl") tileMultiplier = 3;
-          score += tile.value * tileMultiplier;
-        }
-      });
-
-      return score * wordMultiplier;
-    },
-    [board]
-  );
-
   const prepareSubmitWord = useCallback(() => {
     if (gameOver) return null;
-
-    const placedCells = [];
-    for (let r = 0; r < BOARD_SIZE; r++) {
-      for (let c = 0; c < BOARD_SIZE; c++) {
-        const tile = board[r][c];
-        if (tile && tile.isFromRack && !tile.scored) {
-          placedCells.push({ row: r, col: c });
-        }
-      }
-    }
-
-    if (placedCells.length === 0) {
-      setMessage({
-        title: "No Word",
-        text: "Please place tiles on the board first.",
-      });
-      return null;
-    }
-
-    const sameRow = placedCells.every(({ row }) => row === placedCells[0].row);
-    const sameCol = placedCells.every(({ col }) => col === placedCells[0].col);
-    if (!sameRow && !sameCol) {
-      setMessage({
-        title: "Invalid Placement",
-        text: "Tiles must be placed in a single row or a single column.",
-      });
-      return null;
-    }
-
-    if (isFirstTurn) {
-      const hasCenter = placedCells.some(
-        ({ row, col }) => row === 7 && col === 7
-      );
-      if (!hasCenter) {
-        setMessage({
-          title: "First Word",
-          text: "The first word must be placed on the center square (★).",
-        });
-        return null;
-      }
-    } else {
-      const hasConnection = placedCells.some(({ row, col }) => {
-        const adjacent = [
-          { r: row - 1, c: col },
-          { r: row + 1, c: col },
-          { r: row, c: col - 1 },
-          { r: row, c: col + 1 },
-        ];
-        return adjacent.some(({ r, c }) => {
-          if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE)
-            return false;
-          return (
-            board[r][c] !== null &&
-            !placedCells.some((sc) => sc.row === r && sc.col === c)
-          );
-        });
-      });
-
-      if (!hasConnection) {
-        setMessage({
-          title: "Invalid Placement",
-          text: "New words must connect to existing words.",
-        });
-        return null;
-      }
-    }
-
-    const words = getWordsOnBoard();
-    if (words.length === 0) {
-      setMessage({
-        title: "Invalid Word",
-        text: "No valid words found on the board.",
-      });
-      return null;
-    }
-
-    const newWords = words.filter((wordData) => hasNewTiles(wordData));
-    if (newWords.length === 0) {
-      setMessage({
-        title: "No New Words",
-        text: "You must place at least one new tile.",
-      });
-      return null;
-    }
-
-    const invalidWords = [];
-    for (const wordData of words) {
-      if (!dictionary.isValid(wordData.word)) {
-        invalidWords.push(wordData.word.toUpperCase());
-      }
-    }
-
-    if (invalidWords.length > 0) {
-      setMessage({
-        title: "Invalid Word",
-        text: `Invalid words: ${invalidWords.join(", ")}`,
-      });
-      return null;
-    }
-
-    let baseWordScore = 0;
-    newWords.forEach((wordData) => {
-      baseWordScore += calculateWordScore(wordData);
+    const validation = validateSubmitTurn({
+      board,
+      isFirstTurn,
+      boardAtTurnStart: boardAtTurnStartRef.current,
+      dictionary,
+      boardSize: BOARD_SIZE,
     });
-
-    const earnedScrabbleBonus = placedCells.length === 7;
-    let turnScore = baseWordScore;
-    if (earnedScrabbleBonus) {
-      turnScore += SCRABBLE_BONUS;
+    if (!validation.ok) {
+      setMessage(validation.error);
+      return null;
     }
 
-    const newHistory = newWords.map((wordData) => ({
-      word: wordData.word.toUpperCase(),
-      score: calculateWordScore(wordData),
-      turn: turnCount + 1,
-    }));
-    if (earnedScrabbleBonus) {
-      newHistory.push({
-        word: "SCRABBLE BONUS",
-        score: SCRABBLE_BONUS,
-        turn: turnCount + 1,
-      });
-    }
-
-    const usedIndices = new Set();
-    placedCells.forEach(({ row, col }) => {
-      const tile = board[row][col];
-      if (tile && tile.isFromRack && tile.rackIndex !== undefined) {
-        usedIndices.add(tile.rackIndex);
-      }
-    });
-
-    const remainingRack = tileRack.filter(
-      (_, index) => !usedIndices.has(index)
-    );
-    const nextBag = [...tileBagRef.current];
-    const drawnTiles = [];
-    let nextTileId = nextTileIdRef.current;
-
-    for (let i = 0; i < usedIndices.size && nextBag.length > 0; i++) {
-      const tile = nextBag.pop();
-      drawnTiles.push({ ...tile, id: nextTileId++ });
-    }
-
-    const newPremiumSquares = { ...premiumSquaresRef.current };
-    words.forEach((wordData) => {
-      wordData.cells.forEach(({ row, col }) => {
-        const key = `${row},${col}`;
-        delete newPremiumSquares[key];
-      });
-    });
-
-    const payload = {
-      baseWordScore,
-      turnScore,
-      earnedScrabbleBonus,
-      scrabbleBonus: earnedScrabbleBonus ? SCRABBLE_BONUS : 0,
-      newWords,
-      newHistory,
+    const { placedCells, words, newWords } = validation;
+    const payload = buildResolvedSubmitPayload({
+      board,
+      tileRack,
+      tileBag: tileBagRef.current,
+      nextTileId: nextTileIdRef.current,
+      premiumSquares: premiumSquaresRef.current,
+      turnCount,
       placedCells,
-      remainingRack,
-      drawnTiles,
-      resultingRack: [...remainingRack, ...drawnTiles],
-      nextBag,
-      nextTileId,
-      nextTilesRemaining: Math.max(0, tilesRemaining - drawnTiles.length),
-      newPremiumSquares,
-      nextBoardAtTurnStart: board.map((r) => r.map((c) => c !== null)),
-    };
+      words,
+      newWords,
+    });
 
     pendingSubmitRef.current = payload;
     return payload;
@@ -970,16 +517,14 @@ export const useGame = () => {
     isFirstTurn,
     board,
     tileRack,
-    tilesRemaining,
-    getWordsOnBoard,
-    hasNewTiles,
-    calculateWordScore,
     turnCount,
   ]);
 
   const commitPreparedSubmitWord = useCallback((preparedSubmit = null) => {
     const payload = preparedSubmit ?? pendingSubmitRef.current;
     if (!payload) return false;
+    const completesGame =
+      payload.nextTilesRemaining === 0 && payload.resultingRack.length === 0;
 
     pendingSubmitRef.current = payload;
     setTotalScore((prev) => prev + payload.turnScore);
@@ -1007,7 +552,7 @@ export const useGame = () => {
 
     boardAtTurnStartRef.current = payload.nextBoardAtTurnStart;
     premiumSquaresRef.current = payload.newPremiumSquares;
-    if (!payload.earnedScrabbleBonus) {
+    if (!payload.earnedScrabbleBonus && !completesGame) {
       setMessage({
         title: "Word Accepted!",
         text: `You scored ${payload.turnScore} points! Words: ${payload.newWords
@@ -1039,22 +584,21 @@ export const useGame = () => {
 
   const finishGame = useCallback(() => {
     if (gameOver || tilesRemaining > 0) return; // Only when bag is empty and game not already over
-    const turnPenalties = turnCount * 2;
-    const score =
-      wordPointsTotal - swapPenaltyTotal - turnPenalties + scrabbleBonusTotal;
-    setFinalScoreBreakdown({
-      pointsEarned: wordPointsTotal,
-      swapPenalties: swapPenaltyTotal,
-      turnPenalties,
-      scrabbleBonus: scrabbleBonusTotal,
-      finalScore: score,
+    const breakdown = buildFinalScoreBreakdown({
+      wordPointsTotal,
+      swapPenaltyTotal,
+      scrabbleBonusTotal,
+      turnCount,
+      rackTiles: tileRack,
     });
-    setFinalScore(score);
+    setFinalScoreBreakdown(breakdown);
+    setFinalScore(breakdown.finalScore);
     setGameOver(true);
   }, [
     gameOver,
     scrabbleBonusTotal,
     swapPenaltyTotal,
+    tileRack,
     tilesRemaining,
     turnCount,
     wordPointsTotal,
@@ -1081,6 +625,17 @@ export const useGame = () => {
 
   const getStableSnapshot = useCallback(() => {
     if (!currentSeed) {
+      return null;
+    }
+
+    if (isSwapMode || selectedCells.length > 0 || selectedTiles.length > 0) {
+      return null;
+    }
+
+    const hasPendingBoardPlacements = board.some((row) =>
+      row.some((tile) => tile?.isFromRack && !tile?.scored)
+    );
+    if (hasPendingBoardPlacements) {
       return null;
     }
 
@@ -1117,7 +672,10 @@ export const useGame = () => {
     finalScoreBreakdown,
     gameOver,
     isFirstTurn,
+    isSwapMode,
     scrabbleBonusTotal,
+    selectedCells.length,
+    selectedTiles.length,
     swapCount,
     swapPenaltyTotal,
     tileRack,
@@ -1152,7 +710,7 @@ export const useGame = () => {
     premiumSquaresRef.current =
       snapshot.premiumSquares && typeof snapshot.premiumSquares === "object"
         ? snapshot.premiumSquares
-        : getPremiumSquares();
+        : createClassicPremiumSquares();
 
     setBoard(snapshot.board);
     setTileRack(snapshot.tileRack ?? []);

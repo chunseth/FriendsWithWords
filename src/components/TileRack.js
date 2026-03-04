@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import { View, Text, StyleSheet, Animated } from "react-native";
 
 const TILE_SIZE = 42;
@@ -63,6 +63,7 @@ function DraggableTileInner({
       onDragStart(
         index,
         {
+          id: tile.id,
           letter: tile.letter,
           value: tile.value,
           rackIndex: tile.rackIndex,
@@ -129,6 +130,7 @@ function DraggableTileInner({
     isDragging && styles.tileDragging,
     collapseInRack && styles.tileCollapsed,
     animationState?.opacity ? { opacity: animationState.opacity } : null,
+    tile.hidden && styles.tileHidden,
     transform.length > 0 ? { transform } : null,
   ].filter(Boolean);
 
@@ -227,6 +229,7 @@ function tilePropsEqual(a, b) {
     ta.id === tb.id &&
     ta.letter === tb.letter &&
     ta.value === tb.value &&
+    ta.hidden === tb.hidden &&
     ta.used === tb.used &&
     ta.rackIndex === tb.rackIndex &&
     ta.visibleIndex === tb.visibleIndex
@@ -243,11 +246,20 @@ const TileRack = ({
   onTilePress,
   swapSelectedIndices = [],
   draggingRackIndex,
+  draggingTileId = null,
   draggingVisibleIndex,
+  draggingVisibleIndexValue,
   predictedInsertionIndex,
+  hoverIndexValue,
   rackPlaceholderIndex,
+  rackPlaceholderIndexValue,
+  showBoardPlaceholder = false,
+  settlingRackPlaceholderIndex = null,
+  settlingRackSlotCount = null,
+  settlingRackTileId = null,
+  settlingRackOrder = null,
   shuffleTrigger,
-  clearedRackIndices = [],
+  clearedRackTileIds = [],
   onClearReturnAnimationComplete,
   onMeasureLayout,
   isSwapMode = false,
@@ -262,6 +274,10 @@ const TileRack = ({
   const displacementValueRef = useRef({});
   const rackRootRef = useRef(null);
   const rackRowRef = useRef(null);
+  const draggingVisibleIndexRef = useRef(draggingVisibleIndex ?? -1);
+  const hoverIndexRef = useRef(predictedInsertionIndex ?? -1);
+  const [boardPlaceholderIndex, setBoardPlaceholderIndex] = useState(null);
+  const [isDraggingOutsideRack, setIsDraggingOutsideRack] = useState(false);
 
   if (!animatedValuesRef.current) {
     animatedValuesRef.current = {};
@@ -282,19 +298,19 @@ const TileRack = ({
   };
 
   const clearReturnScaleRef = useRef({});
-  const getClearReturnScale = (rackIndex) => {
-    if (!clearReturnScaleRef.current[rackIndex]) {
-      clearReturnScaleRef.current[rackIndex] = new Animated.Value(1);
+  const getClearReturnScale = (tileId) => {
+    if (!clearReturnScaleRef.current[tileId]) {
+      clearReturnScaleRef.current[tileId] = new Animated.Value(1);
     }
-    return clearReturnScaleRef.current[rackIndex];
+    return clearReturnScaleRef.current[tileId];
   };
 
   useEffect(() => {
-    if (clearedRackIndices.length === 0) return;
-    const indices = clearedRackIndices;
+    if (clearedRackTileIds.length === 0) return;
+    const tileIds = clearedRackTileIds;
     const runAnimation = () => {
-      indices.forEach((rackIndex) => {
-        const scale = getClearReturnScale(rackIndex);
+      tileIds.forEach((tileId) => {
+        const scale = getClearReturnScale(tileId);
         scale.setValue(0.25);
         Animated.spring(scale, {
           toValue: 1,
@@ -312,7 +328,7 @@ const TileRack = ({
       cancelAnimationFrame(frameId);
       clearTimeout(t);
     };
-  }, [clearedRackIndices]);
+  }, [clearedRackTileIds, onClearReturnAnimationComplete]);
 
   // Store current order (by tile id) for next time; skip when shuffle just fired so shuffle effect can read old order
   useEffect(() => {
@@ -352,8 +368,122 @@ const TileRack = ({
 
   // Update displacement Animated.Values only when hover index changes; only affected tiles get setValue.
   useEffect(() => {
+    draggingVisibleIndexRef.current = draggingVisibleIndex ?? -1;
+    if (draggingVisibleIndex == null) {
+      setIsDraggingOutsideRack(false);
+      applyDisplacementOffsets(-1, -1);
+    }
+  }, [applyDisplacementOffsets, draggingVisibleIndex]);
+
+  useEffect(() => {
+    hoverIndexRef.current = predictedInsertionIndex ?? -1;
+    if (draggingVisibleIndex != null) {
+      setIsDraggingOutsideRack(predictedInsertionIndex == null);
+    }
+  }, [predictedInsertionIndex]);
+
+  useEffect(() => {
+    if (!showBoardPlaceholder) {
+      setBoardPlaceholderIndex(null);
+      return undefined;
+    }
+    if (rackPlaceholderIndex != null) {
+      setBoardPlaceholderIndex(Math.round(rackPlaceholderIndex));
+      return undefined;
+    }
+    if (!rackPlaceholderIndexValue) {
+      const nextIndex =
+        rackPlaceholderIndex == null ? null : Math.round(rackPlaceholderIndex);
+      setBoardPlaceholderIndex(nextIndex);
+      return undefined;
+    }
+    const subscriptionId = rackPlaceholderIndexValue.addListener(({ value }) => {
+      const nextIndex = Math.round(value);
+      if (nextIndex >= 0) {
+        setBoardPlaceholderIndex(nextIndex);
+        return;
+      }
+      setBoardPlaceholderIndex(null);
+    });
+    return () => {
+      rackPlaceholderIndexValue.removeListener(subscriptionId);
+    };
+  }, [rackPlaceholderIndex, rackPlaceholderIndexValue, showBoardPlaceholder]);
+
+  const applyDisplacementOffsets = React.useCallback(
+    (fromIdx, toIdx) => {
+      if (fromIdx == null || fromIdx < 0 || toIdx == null || toIdx < 0) {
+        Object.keys(displacementAnimRef.current).forEach((id) => {
+          const anim = displacementAnimRef.current[id];
+          anim.setValue(0);
+          displacementValueRef.current[id] = 0;
+        });
+        return;
+      }
+      tiles.forEach((tile) => {
+        const newOffset = getDisplacementOffset(
+          tile.visibleIndex,
+          fromIdx,
+          toIdx
+        );
+        const current = displacementValueRef.current[tile.id] ?? 0;
+        if (newOffset === current) return;
+        const anim = getDisplacementValue(tile.id);
+        anim.setValue(newOffset);
+        displacementValueRef.current[tile.id] = newOffset;
+      });
+    },
+    [tiles]
+  );
+
+  useEffect(() => {
+    applyDisplacementOffsets(
+      draggingVisibleIndexRef.current,
+      hoverIndexRef.current
+    );
+  }, [applyDisplacementOffsets, tiles]);
+
+  useEffect(() => {
+    if (!draggingVisibleIndexValue) return undefined;
+    const subscriptionId = draggingVisibleIndexValue.addListener(({ value }) => {
+      draggingVisibleIndexRef.current = Math.round(value);
+      applyDisplacementOffsets(
+        draggingVisibleIndexRef.current,
+        hoverIndexRef.current
+      );
+    });
+    return () => {
+      draggingVisibleIndexValue.removeListener(subscriptionId);
+    };
+  }, [applyDisplacementOffsets, draggingVisibleIndexValue]);
+
+  useEffect(() => {
+    if (!hoverIndexValue) return undefined;
+    const subscriptionId = hoverIndexValue.addListener(({ value }) => {
+      hoverIndexRef.current = Math.round(value);
+      if (draggingVisibleIndexRef.current < 0) {
+        applyDisplacementOffsets(-1, -1);
+        return;
+      }
+      if (draggingVisibleIndexRef.current != null && draggingVisibleIndexRef.current >= 0) {
+        setIsDraggingOutsideRack(hoverIndexRef.current < 0);
+      }
+      applyDisplacementOffsets(
+        draggingVisibleIndexRef.current,
+        hoverIndexRef.current
+      );
+    });
+    return () => {
+      hoverIndexValue.removeListener(subscriptionId);
+    };
+  }, [applyDisplacementOffsets, hoverIndexValue]);
+
+  useEffect(() => {
     const fromIdx = draggingVisibleIndex;
     const toIdx = predictedInsertionIndex;
+    if (draggingVisibleIndexValue || hoverIndexValue) {
+      return undefined;
+    }
     if (fromIdx == null || toIdx == null) {
       Object.keys(displacementAnimRef.current).forEach((id) => {
         const anim = displacementAnimRef.current[id];
@@ -371,23 +501,67 @@ const TileRack = ({
       const current = displacementValueRef.current[tile.id] ?? 0;
       if (newOffset === current) return;
       const anim = getDisplacementValue(tile.id);
-      anim.setValue(newOffset);
-      displacementValueRef.current[tile.id] = newOffset;
-    });
-  }, [draggingVisibleIndex, predictedInsertionIndex, tiles]);
+        anim.setValue(newOffset);
+        displacementValueRef.current[tile.id] = newOffset;
+      });
+  }, [
+    draggingVisibleIndex,
+    draggingVisibleIndexValue,
+    hoverIndexValue,
+    predictedInsertionIndex,
+    tiles,
+  ]);
 
-  // Keep the dragged tile's slot footprint in the rack during release/settle so
-  // the rack doesn't briefly collapse to one fewer tile before re-centering.
-  const collapseDraggedTile = false;
-  const showPlaceholder = rackPlaceholderIndex != null;
-  const slotCount = tiles.length + (showPlaceholder ? 1 : 0);
+  // Keep the dragged tile's footprint only while it still has a valid rack
+  // insertion target. Once it leaves the rack area, collapse it so the
+  // remaining tiles recenter as n - 1.
+  const collapseDraggedTile = isDraggingOutsideRack;
+  const showSettlingRackPlaceholder = settlingRackPlaceholderIndex != null;
+  const rackRenderTiles = React.useMemo(() => {
+    if (!showSettlingRackPlaceholder || settlingRackTileId == null) {
+      return tiles;
+    }
+
+    const currentTiles = tiles.filter((tile) => tile.id !== settlingRackTileId);
+    const currentById = new Map(currentTiles.map((tile) => [tile.id, tile]));
+    const frozenOrder = settlingRackOrder;
+    if (!frozenOrder) {
+      return currentTiles;
+    }
+
+    const ordered = frozenOrder
+      .map((tileId) => currentById.get(tileId))
+      .filter(Boolean);
+    const seenIds = new Set(ordered.map((tile) => tile.id));
+    currentTiles.forEach((tile) => {
+      if (!seenIds.has(tile.id)) {
+        ordered.push(tile);
+      }
+    });
+    return ordered;
+  }, [settlingRackOrder, settlingRackTileId, showSettlingRackPlaceholder, tiles]);
+  const showPlaceholder =
+    showSettlingRackPlaceholder ||
+    (showBoardPlaceholder &&
+      (rackPlaceholderIndexValue
+        ? boardPlaceholderIndex != null
+        : rackPlaceholderIndex != null));
+  const slotCount = rackRenderTiles.length + (showPlaceholder ? 1 : 0);
   const placeholderIndex = showPlaceholder
-    ? Math.min(rackPlaceholderIndex, tiles.length)
+    ? Math.min(
+        showSettlingRackPlaceholder
+          ? settlingRackPlaceholderIndex
+          : rackPlaceholderIndexValue
+            ? boardPlaceholderIndex
+            : rackPlaceholderIndex,
+        rackRenderTiles.length
+      )
     : -1;
   const slotIndices = Array.from({ length: slotCount }, (_, i) => i);
 
   const hasDisplacement =
-    draggingVisibleIndex != null && predictedInsertionIndex != null;
+    (draggingVisibleIndexValue != null && hoverIndexValue != null) ||
+    (draggingVisibleIndex != null && predictedInsertionIndex != null);
 
   const handleRackLayout = () => {
     rackRowRef.current?.measureInWindow?.((x, y, width, height) => {
@@ -396,7 +570,10 @@ const TileRack = ({
   };
 
   return (
-    <View ref={rackRootRef} style={[styles.container, isSwapMode && styles.containerSwapMode]}>
+    <View
+      ref={rackRootRef}
+      style={[styles.container, isSwapMode && styles.containerSwapMode]}
+    >
       {isSwapMode && !interactionsDisabled && (
         <Text style={styles.swapLabel}>
           {`click tiles to swap! (- ${swapMultiplier.toFixed(1)}x)`}
@@ -412,7 +589,7 @@ const TileRack = ({
                 showPlaceholder && slotIndex > placeholderIndex
                   ? slotIndex - 1
                   : slotIndex;
-              const tile = tiles[tileIndex];
+              const tile = rackRenderTiles[tileIndex];
               if (!tile) return null;
               return (
                 <DraggableTile
@@ -425,10 +602,16 @@ const TileRack = ({
                   onPress={onTilePress}
                   isSwapSelected={swapSelectedIndices.includes(tile.rackIndex)}
                   isDragging={
-                    !collapseDraggedTile && draggingRackIndex === tile.rackIndex
+                    !collapseDraggedTile &&
+                    (draggingTileId != null
+                      ? draggingTileId === tile.id
+                      : draggingRackIndex === tile.rackIndex)
                   }
                   collapseInRack={
-                    collapseDraggedTile && draggingRackIndex === tile.rackIndex
+                    collapseDraggedTile &&
+                    (draggingTileId != null
+                      ? draggingTileId === tile.id
+                      : draggingRackIndex === tile.rackIndex)
                   }
                   animationState={tileAnimationStates[tile.id]}
                   interactionsDisabled={interactionsDisabled}
@@ -436,7 +619,7 @@ const TileRack = ({
                   displacementX={
                     hasDisplacement ? getDisplacementValue(tile.id) : undefined
                   }
-                  clearReturnScale={getClearReturnScale(tile.rackIndex)}
+                  clearReturnScale={getClearReturnScale(tile.id)}
                 />
               );
             })()
@@ -510,6 +693,9 @@ const styles = StyleSheet.create({
     height: 0,
     marginHorizontal: 0,
     borderWidth: 0,
+    opacity: 0,
+  },
+  tileHidden: {
     opacity: 0,
   },
   tileLetter: {

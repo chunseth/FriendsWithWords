@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Choices — Friends With Words</title>
+    <style>
+      :root {
+        --bg: #f8f4ed;
+        --card: #fffdf8;
+        --text: #22313f;
+        --muted: #5e6b66;
+        --border: #eadcc8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      .wrap {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 48px 20px 80px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        padding: 32px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 38px;
+      }
+
+      h2 {
+        margin: 28px 0 8px;
+        font-size: 20px;
+      }
+
+      p,
+      li {
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.6;
+      }
+
+      a {
+        color: var(--text);
+      }
+
+      .steps {
+        list-style: none;
+        padding-left: 0;
+      }
+
+      .steps li {
+        margin-bottom: 12px;
+        padding-left: 28px;
+        position: relative;
+      }
+
+      .steps li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 6px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <h1>Privacy Choices</h1>
+        <p>
+          You can manage your data and how the app uses it. Below is how to
+          delete your account and how to keep your scores off the leaderboard.
+        </p>
+
+        <h2>Delete your account</h2>
+        <p>
+          Deleting your account removes your profile, friends and friend
+          requests, and multiplayer game links from our servers. Your
+          leaderboard entries may be kept for public rankings (as in our
+          <a href="./privacy.html">Privacy Policy</a>). Your auth identity is
+          removed so you can no longer sign in as that account.
+        </p>
+        <p><strong>How to delete your account in the app:</strong></p>
+        <ul class="steps">
+          <li>Open the app and go to the main menu.</li>
+          <li>Tap the <strong>gear icon</strong> (Settings).</li>
+          <li>Tap <strong>Delete Account</strong>.</li>
+          <li>Confirm in the dialog. The app will remove your account data and sign you out.</li>
+        </ul>
+        <p>
+          After deletion, on-device data (saved games, stats, preferences) stays
+          on your device until you delete the app or clear its data.
+        </p>
+
+        <h2>Do not share scores to the leaderboard</h2>
+        <p>
+          You can choose to keep your scores private. When you do, the app does
+          not upload your score, username, or seed to our servers for the
+          public leaderboard. Your results stay on your device only.
+        </p>
+        <p><strong>How to keep scores private (or change it later):</strong></p>
+        <ul class="steps">
+          <li>Open the app and go to the main menu.</li>
+          <li>Tap the <strong>gear icon</strong> (Settings).</li>
+          <li>Tap <strong>Leaderboard Sharing</strong> → <strong>Manage</strong>.</li>
+          <li>Choose <strong>Keep Scores Private</strong>. Your choice is saved on the device.</li>
+        </ul>
+        <p>
+          The first time the app would submit a score (e.g. after a game), it
+          may ask you to choose “Share Scores” or “Keep Scores Private.” You can
+          change this later from the main menu as described above.
+        </p>
+
+        <h2>Contact</h2>
+        <p>
+          For questions about your data or these choices, contact
+          <a href="mailto:seth_chun@yahoo.com">seth_chun@yahoo.com</a> or use
+          our <a href="./support.html">Support</a> page.
+        </p>
+
+        <p><a href="./index.html">Back to site</a></p>
+      </section>
+    </main>
+  </body>
+</html>

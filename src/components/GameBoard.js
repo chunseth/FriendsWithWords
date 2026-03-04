@@ -2,6 +2,7 @@ import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Animated } from 'react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import LinearGradient from 'react-native-linear-gradient';
+import { runOnJS } from 'react-native-reanimated';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 1.75;
@@ -27,7 +28,7 @@ const CELL_MARGIN = 1.5;
 const CELL_SIZE_EFFECTIVE = TILE_SIZE + 2 * CELL_MARGIN;
 const BOARD_INDICES = Array.from({ length: BOARD_SIZE }, (_, index) => index);
 
-const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false }) => {
+const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, settlingBoardTile = null, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false, allowEmptyCellPress = false }) => {
     const boardViewRef = useRef(null);
     const zoomWrapperRef = useRef(null);
     const [zoom, setZoom] = useState(1);
@@ -50,6 +51,44 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
     onBoardTileDropRef.current = onBoardTileDrop;
     getDraggableTileCellRef.current = getDraggableTileCell;
     onBoardTapRef.current = onBoardTap;
+
+    const handleOverlayBoardPickup = useCallback((absoluteX, absoluteY) => {
+        const cell = getDraggableTileCellRef.current?.(absoluteX, absoluteY);
+        if (cell) {
+            draggingTileFromOverlayRef.current = true;
+            onBoardTilePickupRef.current?.(cell.row, cell.col, absoluteX, absoluteY);
+            return true;
+        }
+
+        draggingTileFromOverlayRef.current = false;
+        panStartRef.current = { x: panCurrentRef.current.x, y: panCurrentRef.current.y };
+        return false;
+    }, []);
+
+    const handleOverlayBoardMove = useCallback((absoluteX, absoluteY, translationX, translationY) => {
+        if (draggingTileFromOverlayRef.current) {
+            onBoardDragUpdateRef.current?.(absoluteX, absoluteY);
+            return;
+        }
+
+        const z = zoomRef.current;
+        if (z <= 1) return;
+        const next = {
+            x: clampPan(panStartRef.current.x + translationX, z),
+            y: clampPan(panStartRef.current.y + translationY, z),
+        };
+        panCurrentRef.current = next;
+        panAnim.setValue(next);
+    }, []);
+
+    const handleOverlayBoardEnd = useCallback((absoluteX, absoluteY) => {
+        if (draggingTileFromOverlayRef.current) {
+            onBoardTileDropRef.current?.(absoluteX, absoluteY);
+        } else if (zoomRef.current <= 1) {
+            onBoardTapRef.current?.(absoluteX, absoluteY);
+        }
+        draggingTileFromOverlayRef.current = false;
+    }, []);
 
     useEffect(() => {
         if (zoom <= 1) {
@@ -179,43 +218,24 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
 
     // When zoomed: one Pan on overlay. On touch start, hit-test. If on a draggable tile → lift tile and drag it; else → board pan.
     // Refs for callbacks so gesture is stable across re-renders (pickup causes setState; recreating gesture would break active pan).
-    // runOnJS(true) so callbacks run on JS thread immediately.
+    // Keep the gesture itself on the UI thread and bridge only the JS controller callbacks that still require JS state.
     const overlayPanGesture = useMemo(() => Gesture.Pan()
         .minPointers(1)
         .maxPointers(1)
         .minDistance(0)
-        .runOnJS(true)
         .onBegin((e) => {
-            const cell = getDraggableTileCellRef.current?.(e.absoluteX, e.absoluteY);
-            if (cell) {
-                draggingTileFromOverlayRef.current = true;
-                onBoardTilePickupRef.current?.(cell.row, cell.col, e.absoluteX, e.absoluteY);
-            } else {
-                draggingTileFromOverlayRef.current = false;
-                panStartRef.current = { x: panCurrentRef.current.x, y: panCurrentRef.current.y };
-            }
+            runOnJS(handleOverlayBoardPickup)(e.absoluteX, e.absoluteY);
         })
         .onUpdate((e) => {
-            if (draggingTileFromOverlayRef.current) {
-                onBoardDragUpdateRef.current?.(e.absoluteX, e.absoluteY);
-            } else {
-                const z = zoomRef.current;
-                if (z <= 1) return;
-                const next = {
-                    x: clampPan(panStartRef.current.x + e.translationX, z),
-                    y: clampPan(panStartRef.current.y + e.translationY, z),
-                };
-                panCurrentRef.current = next;
-                panAnim.setValue(next);
-            }
+            runOnJS(handleOverlayBoardMove)(
+                e.absoluteX,
+                e.absoluteY,
+                e.translationX,
+                e.translationY
+            );
         })
         .onEnd((e) => {
-            if (draggingTileFromOverlayRef.current) {
-                onBoardTileDropRef.current?.(e.absoluteX, e.absoluteY);
-            } else if (zoomRef.current <= 1) {
-                onBoardTapRef.current?.(e.absoluteX, e.absoluteY);
-            }
-            draggingTileFromOverlayRef.current = false;
+            runOnJS(handleOverlayBoardEnd)(e.absoluteX, e.absoluteY);
         }), []);
 
     const overlayGesture = useMemo(() => overlayPanGesture, [overlayPanGesture]);
@@ -312,10 +332,14 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                                 const cellTile = board[row][col];
                                 const isOptimisticSource = optimisticPlacement?.fromRow != null && optimisticPlacement?.fromCol != null && row === optimisticPlacement.fromRow && col === optimisticPlacement.fromCol;
                                 const isOptimisticTarget = optimisticPlacement && optimisticPlacement.row === row && optimisticPlacement.col === col && optimisticPlacement.renderTarget !== false;
+                                const isSettlingSource = settlingBoardTile && settlingBoardTile.fromRow === row && settlingBoardTile.fromCol === col && cellTile?.id === settlingBoardTile.id;
+                                const isSettlingTarget = settlingBoardTile && settlingBoardTile.row === row && settlingBoardTile.col === col && cellTile?.id === settlingBoardTile.id;
                                 const optTile = isOptimisticTarget ? { letter: optimisticPlacement.letter, value: optimisticPlacement.value, isFromRack: true, rackIndex: optimisticPlacement.rackIndex } : null;
-                                const tile = isOptimisticSource ? null : (cellTile ?? optTile);
+                                const tile = isOptimisticSource || isSettlingSource ? null : (cellTile ?? optTile);
                                 const defaultSelected = selectedCellKeys.has(`${row},${col}`);
-                                const isSelected = isOptimisticSource ? false : (isOptimisticTarget ? true : defaultSelected);
+                                const isSelected = (isOptimisticSource || isSettlingTarget)
+                                    ? false
+                                    : (isOptimisticTarget ? true : defaultSelected);
                                 return (
                                 <BoardCell
                                     key={`${row}-${col}`}
@@ -329,6 +353,7 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                                     onBoardDragUpdate={onBoardDragUpdate}
                                     onBoardTileDrop={onBoardTileDrop}
                                     onCellClick={onCellClick}
+                                    allowEmptyCellPress={allowEmptyCellPress}
                                 />
                             ); })}
                         </View>
@@ -509,14 +534,16 @@ const styles = StyleSheet.create({
         borderColor: '#bdc3c7',
     },
     tileLetter: {
-        fontSize: TILE_SIZE * 0.4,
+        fontSize: TILE_SIZE * 0.4 + 2,
         fontWeight: '700',
         color: '#2c3e50',
     },
     tileValue: {
+        position: 'absolute',
+        top: 2,
+        right: 3,
         fontSize: TILE_SIZE * 0.2,
         color: '#7f8c8d',
-        marginTop: -2,
     },
 });
 
@@ -524,7 +551,7 @@ const PREMIUM_LABELS = { dw: 'DW', tw: 'TW', dl: 'DL', tl: 'TL', center: '★' }
 
 const BoardCell = React.memo(function BoardCell({
     row, col, tile, isSelected, isDragSource, premium,
-    onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, onCellClick,
+    onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, onCellClick, allowEmptyCellPress,
 }) {
     const cellStyle = useMemo(() => [
         styles.cell,
@@ -590,9 +617,11 @@ const BoardCell = React.memo(function BoardCell({
     return (
         <TouchableOpacity
             style={cellStyle}
-            onPress={() => tile && onCellClick(row, col)}
+            onPress={() => {
+                if ((tile || allowEmptyCellPress) && onCellClick) onCellClick(row, col);
+            }}
             activeOpacity={0.3}
-            disabled={!tile}
+            disabled={!tile && !allowEmptyCellPress}
         >
             {cellContent}
         </TouchableOpacity>

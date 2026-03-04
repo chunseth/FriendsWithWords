@@ -29,9 +29,12 @@ const GameInfo = ({
     expressionOpacity.setValue(1);
     totalOpacity.setValue(0);
 
+    const totalDelay = 850;
     const tileStepTimeouts = [];
-    const tileStepDuration = 180;
-    for (let step = 1; step <= (turnFlavor.tilesDelta ?? 0); step += 1) {
+    const tileStepCount = Math.max(0, turnFlavor.tilesDelta ?? 0);
+    const tileStepDuration =
+      tileStepCount > 0 ? totalDelay / tileStepCount : totalDelay;
+    for (let step = 1; step <= tileStepCount; step += 1) {
       const timeoutId = setTimeout(() => {
         setTileAnimationState({
           current: turnFlavor.previousTilesRemaining - step,
@@ -41,10 +44,6 @@ const GameInfo = ({
       tileStepTimeouts.push(timeoutId);
     }
 
-    const totalDelay = Math.max(
-      850,
-      (turnFlavor.tilesDelta ?? 0) * tileStepDuration + 220
-    );
     const animation = Animated.sequence([
       Animated.delay(totalDelay),
       Animated.parallel([
@@ -76,7 +75,9 @@ const GameInfo = ({
   const renderMetricValue = (label, total, flavorValue) => {
     const hasFlavor = displayFlavor && flavorValue?.delta > 0;
     const pendingValue =
-      pendingTurnFlavor && typeof flavorValue?.pendingPrevious === "number"
+      !turnFlavor?.id &&
+      pendingTurnFlavor &&
+      typeof flavorValue?.pendingPrevious === "number"
         ? flavorValue.pendingPrevious
         : null;
 
@@ -119,7 +120,9 @@ const GameInfo = ({
 
   const renderTilesValue = () => {
     const hasFlavor = displayFlavor && displayFlavor.tilesDelta > 0;
-    const pendingValue = pendingTurnFlavor?.previousTilesRemaining ?? null;
+    const pendingValue = !turnFlavor?.id
+      ? pendingTurnFlavor?.previousTilesRemaining ?? null
+      : null;
 
     return (
       <View style={styles.infoItem}>
