@@ -5,6 +5,7 @@ create table if not exists public.scores (
   player_id text not null,
   display_name text not null,
   seed text not null,
+  score_mode text not null default 'solo',
   is_daily_seed boolean not null default false,
   final_score integer not null,
   points_earned integer not null,
@@ -17,11 +18,13 @@ create table if not exists public.scores (
   updated_at timestamptz not null default now()
 );
 
-create unique index if not exists scores_player_seed_idx
-  on public.scores (player_id, seed);
+drop index if exists scores_player_seed_idx;
+create unique index if not exists scores_player_seed_mode_idx
+  on public.scores (player_id, seed, score_mode);
 
-create index if not exists scores_seed_score_idx
-  on public.scores (seed, final_score desc, completed_at asc);
+drop index if exists scores_seed_score_idx;
+create index if not exists scores_seed_mode_score_idx
+  on public.scores (seed, score_mode, final_score desc, completed_at asc);
 
 alter table public.scores enable row level security;
 

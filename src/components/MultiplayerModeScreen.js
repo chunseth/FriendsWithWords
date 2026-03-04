@@ -199,6 +199,7 @@ const WaitingRackDisplay = React.memo(function WaitingRackDisplay({
 const MultiplayerModeScreen = ({
   onBack = null,
   sessionId = "local-multiplayer-prototype",
+  onSessionCompleted = null,
 }) => {
   const screenInstanceIdRef = useRef(
     `screen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -241,6 +242,7 @@ const MultiplayerModeScreen = ({
   const draftBoardRef = useRef(draftBoard);
   const lastAnimatedWaitingRackEventIdRef = useRef(null);
   const lastHandledRemotePlayEventIdRef = useRef(null);
+  const completionEventHandledRef = useRef(null);
   const remoteUpdateBannerOpacity = useRef(new Animated.Value(0)).current;
   const remoteUpdateBannerTranslateY = useRef(new Animated.Value(-10)).current;
 
@@ -261,6 +263,49 @@ const MultiplayerModeScreen = ({
   useEffect(() => {
     dictionary.load();
   }, []);
+
+  useEffect(() => {
+    if (
+      session.status !== "completed" ||
+      typeof session.sharedScore.finalScore !== "number"
+    ) {
+      return;
+    }
+
+    const completionKey = `${session.sessionId}:${session.savedAt}:${session.sharedScore.finalScore}`;
+    if (completionEventHandledRef.current === completionKey) {
+      return;
+    }
+    completionEventHandledRef.current = completionKey;
+
+    onSessionCompleted?.({
+      sessionId: session.sessionId,
+      seed: session.seed,
+      isDailySeed: session.isDailySeed === true,
+      finalScore: session.sharedScore.finalScore,
+      finalScoreBreakdown: {
+        pointsEarned: session.sharedScore.wordPointsTotal ?? 0,
+        swapPenalties: session.sharedScore.swapPenaltyTotal ?? 0,
+        turnPenalties: session.sharedScore.turnPenaltyTotal ?? 0,
+        rackPenalty: session.sharedScore.rackPenaltyTotal ?? 0,
+        scrabbleBonus: session.sharedScore.scrabbleBonusTotal ?? 0,
+        finalScore: session.sharedScore.finalScore,
+      },
+    });
+  }, [
+    onSessionCompleted,
+    session.isDailySeed,
+    session.savedAt,
+    session.seed,
+    session.sessionId,
+    session.sharedScore.finalScore,
+    session.sharedScore.rackPenaltyTotal,
+    session.sharedScore.scrabbleBonusTotal,
+    session.sharedScore.swapPenaltyTotal,
+    session.sharedScore.turnPenaltyTotal,
+    session.sharedScore.wordPointsTotal,
+    session.status,
+  ]);
 
   useEffect(() => {
     waitingRackRef.current = waitingRack;
@@ -1240,6 +1285,12 @@ const MultiplayerModeScreen = ({
   const activeTurnLabel = activeTurnName.endsWith("s")
     ? `${activeTurnName}' Turn`
     : `${activeTurnName}'s Turn`;
+  const turnStateLabel =
+    session.status === "completed"
+      ? "Completed"
+      : canLocalPlayerAct
+        ? "Your turn"
+        : "Waiting";
 
   return (
     <SafeAreaView
@@ -1273,9 +1324,7 @@ const MultiplayerModeScreen = ({
             <View style={styles.infoRow}>
               <View style={styles.infoItem}>
                 <Text style={styles.infoLabel}>{activeTurnLabel}</Text>
-                <Text style={styles.infoValue}>
-                  {canLocalPlayerAct ? "Your turn" : "Waiting"}
-                </Text>
+                <Text style={styles.infoValue}>{turnStateLabel}</Text>
               </View>
               <View style={styles.infoItem}>
                 <Text style={styles.infoLabel}>Turn</Text>
@@ -1290,9 +1339,20 @@ const MultiplayerModeScreen = ({
         </View>
 
         <AnimatedScoreDisplay
-          totalScore={session.sharedScore.total ?? 0}
+          totalScore={
+            session.sharedScore.finalScore ?? session.sharedScore.total ?? 0
+          }
           remoteUpdateEventId={remoteUpdateEvent?.id ?? null}
         />
+
+        {session.status === "completed" ? (
+          <View style={styles.completedBanner}>
+            <Text style={styles.completedBannerTitle}>Game complete</Text>
+            <Text style={styles.completedBannerText}>
+              Final score {session.sharedScore.finalScore ?? 0}
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.boardSection}>
           <Animated.View
@@ -1453,12 +1513,14 @@ const MultiplayerModeScreen = ({
               <TouchableOpacity
                 style={[
                   styles.controlButton,
+                  session.status === "completed" && styles.controlButtonDisabled,
                   !canLocalPlayerAct && styles.controlButtonDisabled,
                   isSubmitAnimating && styles.controlButtonDisabled,
                   selectedCells.length === 0 && styles.controlButtonDisabled,
                 ]}
                 onPress={handleSubmit}
                 disabled={
+                  session.status === "completed" ||
                   !canLocalPlayerAct ||
                   isSubmitAnimating ||
                   selectedCells.length === 0
@@ -1670,6 +1732,29 @@ const styles = StyleSheet.create({
   infoValue: {
     color: "#2c3e50",
     fontSize: 14,
+    fontWeight: "700",
+  },
+  completedBanner: {
+    marginTop: 10,
+    marginHorizontal: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: "#fff7e8",
+    borderWidth: 1,
+    borderColor: "#e8c98a",
+  },
+  completedBannerTitle: {
+    color: "#9a6b2f",
+    fontSize: 14,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  completedBannerText: {
+    marginTop: 4,
+    color: "#5a5248",
+    fontSize: 16,
     fontWeight: "700",
   },
   scoreSection: {

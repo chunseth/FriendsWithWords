@@ -33,6 +33,7 @@ import {
 const MultiplayerMenuScreen = ({
   dailySeed,
   onBack,
+  onOpenLeaderboard,
   onOpenActiveGame,
   onOpenNewMultiplayerGame,
 }) => {
@@ -235,7 +236,15 @@ const MultiplayerMenuScreen = ({
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.title}>Multiplayer</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>Multiplayer</Text>
+        <TouchableOpacity
+          style={styles.leaderboardButton}
+          onPress={onOpenLeaderboard}
+        >
+          <Text style={styles.leaderboardButtonText}>High Scores</Text>
+        </TouchableOpacity>
+      </View>
       <Text style={styles.subtitle}>Start or resume games with friends.</Text>
 
       <View style={styles.tabRow}>
@@ -658,19 +667,6 @@ const MultiplayerMenuScreen = ({
                                     : "Unadd Friend"}
                                 </Text>
                               </TouchableOpacity>
-                              <TouchableOpacity
-                                style={styles.friendActionButton}
-                                disabled
-                              >
-                                <Text
-                                  style={[
-                                    styles.friendActionText,
-                                    styles.friendActionTextDisabled,
-                                  ]}
-                                >
-                                  View Profile
-                                </Text>
-                              </TouchableOpacity>
                             </View>
                           ) : null}
                         </View>
@@ -890,19 +886,40 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "800",
   },
-  title: {
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginTop: 18,
+    gap: 12,
+  },
+  title: {
     fontSize: 40,
     lineHeight: 44,
     fontWeight: "900",
     color: "#22313f",
+    flex: 1,
   },
   subtitle: {
     marginTop: 10,
     fontSize: 15,
     lineHeight: 21,
     color: "#6a736f",
-    marginBottom: 14,
+    marginBottom: 12,
+  },
+  leaderboardButton: {
+    marginBottom: 0,
+    borderRadius: 999,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e3d3b9",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  leaderboardButtonText: {
+    color: "#2f6f4f",
+    fontSize: 14,
+    fontWeight: "800",
   },
   tabRow: {
     flexDirection: "row",

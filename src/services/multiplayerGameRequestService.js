@@ -251,6 +251,7 @@ export const acceptMultiplayerGameRequest = async ({
   const session = createInitialSession({
     seed,
     sessionId,
+    gameType,
     players: [
       {
         id: senderId,

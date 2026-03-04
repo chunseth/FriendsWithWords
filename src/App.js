@@ -60,7 +60,9 @@ import {
 import {
   fetchGlobalLeaderboard,
   fetchPlayerHighScorePosition,
-  fetchSeedLeaderboard,
+  fetchSeedLeaderboardByMode,
+  LEADERBOARD_SCORE_MODE_MULTIPLAYER,
+  LEADERBOARD_SCORE_MODE_SOLO,
   submitCompletedScore,
 } from "./services/leaderboardService";
 import { saveRemotePlayerProfile } from "./services/profileService";
@@ -167,6 +169,9 @@ function App() {
   const [gameStarted, setGameStarted] = useState(false);
   const [savedGamePayload, setSavedGamePayload] = useState(null);
   const [homeScreen, setHomeScreen] = useState("main");
+  const [leaderboardInitialPage, setLeaderboardInitialPage] = useState(
+    "highScores"
+  );
   const [activeMultiplayerSessionId, setActiveMultiplayerSessionId] =
     useState("local-multiplayer-prototype");
   const [dailySeed, setDailySeed] = useState(() => getDailySeed());
@@ -195,6 +200,12 @@ function App() {
   const [leaderboardEntries, setLeaderboardEntries] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardError, setLeaderboardError] = useState(null);
+  const [multiplayerLeaderboardEntries, setMultiplayerLeaderboardEntries] =
+    useState([]);
+  const [multiplayerLeaderboardLoading, setMultiplayerLeaderboardLoading] =
+    useState(false);
+  const [multiplayerLeaderboardError, setMultiplayerLeaderboardError] =
+    useState(null);
   const [dailyLeaderboardEntries, setDailyLeaderboardEntries] = useState([]);
   const [dailyLeaderboardLoading, setDailyLeaderboardLoading] = useState(false);
   const [dailyLeaderboardError, setDailyLeaderboardError] = useState(null);
@@ -824,7 +835,8 @@ function App() {
     setLeaderboardPositionLoading(false);
   }, [playerProfile]);
 
-  const loadGlobalLeaderboard = useCallback(async () => {
+  const loadGlobalLeaderboard = useCallback(
+    async (scoreMode = LEADERBOARD_SCORE_MODE_SOLO) => {
     setLeaderboardEntries([]);
     setLeaderboardError(null);
     if (!isBackendConfigured()) {
@@ -835,7 +847,7 @@ function App() {
     setLeaderboardLoading(true);
     setLeaderboardError(null);
 
-    const result = await fetchGlobalLeaderboard();
+    const result = await fetchGlobalLeaderboard(scoreMode);
     if (!result.ok) {
       setLeaderboardEntries([]);
       setLeaderboardError(
@@ -849,6 +861,37 @@ function App() {
 
     setLeaderboardEntries(result.leaderboard);
     setLeaderboardLoading(false);
+    },
+    []
+  );
+
+  const loadMultiplayerLeaderboard = useCallback(async () => {
+    setMultiplayerLeaderboardEntries([]);
+    setMultiplayerLeaderboardError(null);
+    if (!isBackendConfigured()) {
+      setMultiplayerLeaderboardLoading(false);
+      return;
+    }
+
+    setMultiplayerLeaderboardLoading(true);
+    setMultiplayerLeaderboardError(null);
+
+    const result = await fetchGlobalLeaderboard(
+      LEADERBOARD_SCORE_MODE_MULTIPLAYER
+    );
+    if (!result.ok) {
+      setMultiplayerLeaderboardEntries([]);
+      setMultiplayerLeaderboardError(
+        result.reason === "backend_not_configured"
+          ? null
+          : "Unable to load leaderboard"
+      );
+      setMultiplayerLeaderboardLoading(false);
+      return;
+    }
+
+    setMultiplayerLeaderboardEntries(result.leaderboard);
+    setMultiplayerLeaderboardLoading(false);
   }, []);
 
   const loadDailyLeaderboard = useCallback(
@@ -868,7 +911,10 @@ function App() {
       setDailyLeaderboardLoading(true);
       setDailyLeaderboardError(null);
 
-      const result = await fetchSeedLeaderboard(seed);
+      const result = await fetchSeedLeaderboardByMode(
+        seed,
+        LEADERBOARD_SCORE_MODE_SOLO
+      );
       if (!result.ok) {
         setDailyLeaderboardEntries([]);
         setDailyLeaderboardError(
@@ -892,12 +938,14 @@ function App() {
       finalScore,
       finalScoreBreakdown,
       isDailySeed: isDailySeedSubmission,
+      scoreMode = LEADERBOARD_SCORE_MODE_SOLO,
     }) => {
       const result = await submitCompletedScore({
         seed,
         finalScore,
         finalScoreBreakdown,
         isDailySeed: isDailySeedSubmission,
+        scoreMode,
       });
 
       if (!result.ok && result.reason !== "backend_not_configured") {
@@ -907,9 +955,16 @@ function App() {
       }
 
       if (result.ok) {
-        loadGlobalLeaderboard();
-        loadLeaderboardPosition();
+        if (scoreMode === LEADERBOARD_SCORE_MODE_MULTIPLAYER) {
+          loadMultiplayerLeaderboard();
+        } else {
+          loadGlobalLeaderboard();
+        }
+        if (scoreMode === LEADERBOARD_SCORE_MODE_SOLO) {
+          loadLeaderboardPosition();
+        }
         if (
+          scoreMode === LEADERBOARD_SCORE_MODE_SOLO &&
           (activeDailySeed ?? seed) === selectedDailyLeaderboardSeed
         ) {
           loadDailyLeaderboard(activeDailySeed ?? seed);
@@ -922,6 +977,7 @@ function App() {
       activeDailySeed,
       loadDailyLeaderboard,
       loadGlobalLeaderboard,
+      loadMultiplayerLeaderboard,
       loadLeaderboardPosition,
       selectedDailyLeaderboardSeed,
     ]
@@ -933,13 +989,14 @@ function App() {
     }
 
     loadGlobalLeaderboard();
+    loadMultiplayerLeaderboard();
     loadDailyLeaderboard();
   }, [
     gameStarted,
     homeScreen,
     loadDailyLeaderboard,
     loadGlobalLeaderboard,
-    selectedDailyLeaderboardSeed,
+    loadMultiplayerLeaderboard,
   ]);
 
   useEffect(() => {
@@ -1212,6 +1269,13 @@ function App() {
   );
 
   const handleOpenLeaderboard = useCallback(() => {
+    setLeaderboardInitialPage("highScores");
+    setLeaderboardSelectedDailySeed(dailySeed);
+    setHomeScreen("leaderboard");
+  }, [dailySeed]);
+
+  const handleOpenMultiplayerLeaderboard = useCallback(() => {
+    setLeaderboardInitialPage("multiplayer");
     setLeaderboardSelectedDailySeed(dailySeed);
     setHomeScreen("leaderboard");
   }, [dailySeed]);
@@ -1233,6 +1297,49 @@ function App() {
   const handleBackToMainMenu = useCallback(() => {
     setHomeScreen("main");
   }, []);
+
+  const handleMultiplayerSessionCompleted = useCallback(
+    ({ seed, finalScore, finalScoreBreakdown, isDailySeed }) => {
+      if (
+        !leaderboardConsentLoaded ||
+        !seed ||
+        typeof finalScore !== "number" ||
+        !finalScoreBreakdown
+      ) {
+        return;
+      }
+
+      const backendSubmitKey = `multiplayer:${seed}:${finalScore}`;
+      if (backendSubmitRef.current === backendSubmitKey) {
+        return;
+      }
+      backendSubmitRef.current = backendSubmitKey;
+
+      const submission = {
+        seed,
+        finalScore,
+        finalScoreBreakdown,
+        isDailySeed,
+        scoreMode: LEADERBOARD_SCORE_MODE_MULTIPLAYER,
+      };
+
+      if (leaderboardConsentStatus === LEADERBOARD_CONSENT_GRANTED) {
+        submitLatestCompletedScore(submission);
+        return;
+      }
+
+      if (leaderboardConsentStatus == null) {
+        setPendingLeaderboardSubmission(submission);
+        setLeaderboardConsentModalSource("gameOver");
+        setLeaderboardConsentModalVisible(true);
+      }
+    },
+    [
+      leaderboardConsentLoaded,
+      leaderboardConsentStatus,
+      submitLatestCompletedScore,
+    ]
+  );
 
   const selectedDailyLeaderboardIndex = dailySeeds.indexOf(
     selectedDailyLeaderboardSeed
@@ -1764,9 +1871,13 @@ function App() {
           <>
             {homeScreen === "leaderboard" ? (
               <LeaderboardScreen
+                initialPage={leaderboardInitialPage}
                 globalLeaderboardEntries={leaderboardEntries}
                 globalLeaderboardLoading={leaderboardLoading}
                 globalLeaderboardError={leaderboardError}
+                multiplayerLeaderboardEntries={multiplayerLeaderboardEntries}
+                multiplayerLeaderboardLoading={multiplayerLeaderboardLoading}
+                multiplayerLeaderboardError={multiplayerLeaderboardError}
                 selectedDailySeed={selectedDailyLeaderboardSeed ?? dailySeed}
                 dailyLeaderboardEntries={dailyLeaderboardEntries}
                 dailyLeaderboardLoading={dailyLeaderboardLoading}
@@ -1782,9 +1893,8 @@ function App() {
                 onBack={handleBackToMainMenu}
                 onRefresh={() => {
                   loadGlobalLeaderboard();
-                  loadDailyLeaderboard(
-                    selectedDailyLeaderboardSeed ?? dailySeed
-                  );
+                  loadMultiplayerLeaderboard();
+                  loadDailyLeaderboard(selectedDailyLeaderboardSeed ?? dailySeed);
                 }}
               />
             ) : homeScreen === "stats" ? (
@@ -1800,6 +1910,7 @@ function App() {
               <MultiplayerMenuScreen
                 dailySeed={dailySeed}
                 onBack={handleBackToMainMenu}
+                onOpenLeaderboard={handleOpenMultiplayerLeaderboard}
                 onOpenActiveGame={(game) => {
                   setActiveMultiplayerSessionId(
                     game?.sessionId ?? "local-multiplayer-prototype"
@@ -1817,6 +1928,7 @@ function App() {
               <MultiplayerModeScreen
                 onBack={handleBackToMainMenu}
                 sessionId={activeMultiplayerSessionId}
+                onSessionCompleted={handleMultiplayerSessionCompleted}
               />
             ) : (
               <MainMenuScreen

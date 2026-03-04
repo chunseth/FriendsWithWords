@@ -12,9 +12,18 @@ import {
 import Clipboard from "@react-native-clipboard/clipboard";
 
 const LeaderboardScreen = ({
+  title = "Leaderboards",
+  highScoresTitle = "High Scores",
+  highScoresSubtitle = "Top 100 overall scores.",
+  multiplayerTitle = "Multiplayer High Scores",
+  multiplayerSubtitle = "Top 100 multiplayer scores.",
+  initialPage = "highScores",
   globalLeaderboardEntries,
   globalLeaderboardLoading,
   globalLeaderboardError,
+  multiplayerLeaderboardEntries,
+  multiplayerLeaderboardLoading,
+  multiplayerLeaderboardError,
   selectedDailySeed,
   dailyLeaderboardEntries,
   dailyLeaderboardLoading,
@@ -27,7 +36,7 @@ const LeaderboardScreen = ({
   onBack,
   onRefresh,
 }) => {
-  const [activePage, setActivePage] = useState("highScores");
+  const [activePage, setActivePage] = useState(initialPage);
   const [seedCopiedVisible, setSeedCopiedVisible] = useState(false);
   const [seedCopiedPosition, setSeedCopiedPosition] = useState({
     x: 0,
@@ -55,6 +64,10 @@ const LeaderboardScreen = ({
       day: "numeric",
     });
   };
+
+  useEffect(() => {
+    setActivePage(initialPage);
+  }, [initialPage]);
 
   useEffect(() => {
     if (!seedCopiedVisible) {
@@ -97,7 +110,7 @@ const LeaderboardScreen = ({
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.title}>Leaderboards</Text>
+      <Text style={styles.title}>{title}</Text>
       {seedCopiedVisible && (
         <View
           pointerEvents="none"
@@ -127,7 +140,7 @@ const LeaderboardScreen = ({
               activePage === "highScores" && styles.pageTabTextActive,
             ]}
           >
-            High Scores
+            {highScoresTitle}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -146,6 +159,22 @@ const LeaderboardScreen = ({
             Daily Seeds
           </Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.pageTab,
+            activePage === "multiplayer" && styles.pageTabActive,
+          ]}
+          onPress={() => setActivePage("multiplayer")}
+        >
+          <Text
+            style={[
+              styles.pageTabText,
+              activePage === "multiplayer" && styles.pageTabTextActive,
+            ]}
+          >
+            Multiplayer
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -155,8 +184,8 @@ const LeaderboardScreen = ({
       >
         {activePage === "highScores" ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>High Scores</Text>
-            <Text style={styles.sectionSubtitle}>Top 100 overall scores.</Text>
+            <Text style={styles.sectionTitle}>{highScoresTitle}</Text>
+            <Text style={styles.sectionSubtitle}>{highScoresSubtitle}</Text>
 
             {!backendConfigured ? (
               <Text style={styles.stateText}>
@@ -220,7 +249,7 @@ const LeaderboardScreen = ({
               })
             )}
           </View>
-        ) : (
+        ) : activePage === "daily" ? (
           <View style={styles.section}>
             <View style={styles.seedNavigator}>
               <TouchableOpacity
@@ -297,6 +326,73 @@ const LeaderboardScreen = ({
                   </View>
                 </View>
               ))
+            )}
+          </View>
+        ) : (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>{multiplayerTitle}</Text>
+            <Text style={styles.sectionSubtitle}>{multiplayerSubtitle}</Text>
+
+            {!backendConfigured ? (
+              <Text style={styles.stateText}>
+                Add Supabase env values to load online leaderboard scores.
+              </Text>
+            ) : multiplayerLeaderboardLoading ? (
+              <Text style={styles.stateText}>Loading leaderboard...</Text>
+            ) : multiplayerLeaderboardError ? (
+              <Text style={styles.errorText}>{multiplayerLeaderboardError}</Text>
+            ) : multiplayerLeaderboardEntries.length === 0 ? (
+              <Text style={styles.stateText}>No scores have been submitted yet.</Text>
+            ) : (
+              multiplayerLeaderboardEntries.map((entry, index) => {
+                const entryKey = `${entry.display_name}-${entry.completed_at}-${index}`;
+
+                return (
+                  <View key={entryKey} style={styles.rowWrapper}>
+                    {highlightedRowKey === entryKey && (
+                      <Animated.View
+                        pointerEvents="none"
+                        style={[
+                          styles.rowHighlightOverlay,
+                          { opacity: highlightOpacity },
+                        ]}
+                      />
+                    )}
+                    <TouchableOpacity
+                      style={styles.rowTouchable}
+                      activeOpacity={0.85}
+                      onPress={(event) => {
+                        setHighlightedRowKey(entryKey);
+                        highlightOpacity.stopAnimation();
+                        highlightOpacity.setValue(1);
+                        Animated.timing(highlightOpacity, {
+                          toValue: 0,
+                          duration: 300,
+                          useNativeDriver: true,
+                        }).start(() => {
+                          setHighlightedRowKey((currentKey) =>
+                            currentKey === entryKey ? null : currentKey
+                          );
+                        });
+                        handleCopySeed(entry.seed, event);
+                      }}
+                    >
+                      <View style={styles.row}>
+                        <Text style={styles.rank}>{index + 1}</Text>
+                        <View style={styles.meta}>
+                          <Text style={styles.name}>{entry.display_name}</Text>
+                          <Text style={styles.date}>
+                            {entry.completed_at
+                              ? new Date(entry.completed_at).toLocaleDateString()
+                              : ""}
+                          </Text>
+                        </View>
+                        <Text style={styles.score}>{entry.final_score}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
             )}
           </View>
         )}

@@ -44,9 +44,21 @@ const createTurnLogEntry = ({
   createdAt: Date.now(),
 });
 
+const getRackPenaltyTotal = (players = []) =>
+  players.reduce(
+    (total, player) =>
+      total +
+      (player?.rack ?? []).reduce(
+        (playerTotal, tile) => playerTotal + (tile?.value ?? 0),
+        0
+      ),
+    0
+  );
+
 const createInitialSession = ({
   seed = "async-coop-prototype",
   sessionId = "local-multiplayer-prototype",
+  gameType = "seeded",
   players = null,
 } = {}) => {
   const { random, tileBag } = createShuffledTileBag(seed);
@@ -64,6 +76,8 @@ const createInitialSession = ({
     modeId: MULTIPLAYER_MODE_ID,
     sessionId,
     seed,
+    gameType,
+    isDailySeed: gameType === "daily",
     status: "active",
     sharedBoard: createEmptyBoard(),
     sharedPremiumSquares: createClassicPremiumSquares(),
@@ -473,6 +487,46 @@ export const useAsyncCoopSession = ({
           return player;
         });
 
+        const completesSession = nextPassStreak >= 2;
+        if (completesSession) {
+          const rackPenaltyTotal = getRackPenaltyTotal(nextPlayers);
+          const finalScore =
+            currentSession.sharedScore.total + scoreDelta - rackPenaltyTotal;
+
+          return {
+            ...currentSession,
+            status: "completed",
+            players: nextPlayers.map((player) => ({
+              ...player,
+              readiness: "waiting",
+            })),
+            sharedScore: {
+              ...currentSession.sharedScore,
+              total: finalScore,
+              rackPenaltyTotal,
+              finalScore,
+            },
+            turn: {
+              number: nextTurnNumber,
+              activePlayerId: nextActivePlayerId,
+              passStreak: nextPassStreak,
+              pendingAction: null,
+              lockedAt: null,
+              lastCompletedTurnId: nextHistoryEntry.id,
+            },
+            bag: {
+              ...currentSession.bag,
+              tiles: refillResult.nextBag,
+              remainingCount: refillResult.nextBag.length,
+              nextTileId: refillResult.nextTileId,
+            },
+            history: [...currentSession.history, nextHistoryEntry],
+            lastMoveSummary: nextHistoryEntry,
+            boardRevision: currentSession.boardRevision + 1,
+            savedAt: Date.now(),
+          };
+        }
+
         return {
           ...currentSession,
           players: nextPlayers,
@@ -579,6 +633,57 @@ export const useAsyncCoopSession = ({
 
           return player;
         });
+
+        const completesSession =
+          payload.nextBag.length === 0 && payload.resultingRack.length === 0;
+
+        if (completesSession) {
+          const rackPenaltyTotal = getRackPenaltyTotal(nextPlayers);
+          const finalScore =
+            currentSession.sharedScore.total +
+            payload.turnScore -
+            rackPenaltyTotal;
+
+          return {
+            ...currentSession,
+            status: "completed",
+            sharedBoard: payload.resolvedBoard,
+            sharedPremiumSquares: payload.newPremiumSquares,
+            sharedScore: {
+              ...currentSession.sharedScore,
+              total: finalScore,
+              wordPointsTotal:
+                currentSession.sharedScore.wordPointsTotal + payload.baseWordScore,
+              scrabbleBonusTotal:
+                currentSession.sharedScore.scrabbleBonusTotal +
+                payload.scrabbleBonus,
+              rackPenaltyTotal,
+              finalScore,
+            },
+            players: nextPlayers.map((player) => ({
+              ...player,
+              readiness: "waiting",
+            })),
+            turn: {
+              number: currentSession.turn.number + 1,
+              activePlayerId: nextActivePlayerId,
+              passStreak: 0,
+              pendingAction: null,
+              lockedAt: null,
+              lastCompletedTurnId: nextHistoryEntry.id,
+            },
+            bag: {
+              ...currentSession.bag,
+              tiles: payload.nextBag,
+              remainingCount: payload.nextBag.length,
+              nextTileId: payload.nextTileId,
+            },
+            history: [...currentSession.history, nextHistoryEntry],
+            lastMoveSummary: nextHistoryEntry,
+            boardRevision: currentSession.boardRevision + 1,
+            savedAt: Date.now(),
+          };
+        }
 
         return {
           ...currentSession,

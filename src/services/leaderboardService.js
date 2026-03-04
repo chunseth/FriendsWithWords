@@ -3,12 +3,20 @@ import { isBackendConfigured } from "../config/backend";
 import { loadOrCreatePlayerProfile } from "../utils/playerProfile";
 
 const SCORES_TABLE = "scores";
+export const LEADERBOARD_SCORE_MODE_SOLO = "solo";
+export const LEADERBOARD_SCORE_MODE_MULTIPLAYER = "multiplayer";
+
+const normalizeScoreMode = (scoreMode) =>
+  scoreMode === LEADERBOARD_SCORE_MODE_MULTIPLAYER
+    ? LEADERBOARD_SCORE_MODE_MULTIPLAYER
+    : LEADERBOARD_SCORE_MODE_SOLO;
 
 export const submitCompletedScore = async ({
   seed,
   finalScore,
   finalScoreBreakdown,
   isDailySeed = false,
+  scoreMode = LEADERBOARD_SCORE_MODE_SOLO,
 }) => {
   if (!isBackendConfigured()) {
     return { ok: false, reason: "backend_not_configured" };
@@ -43,11 +51,13 @@ export const submitCompletedScore = async ({
   }
 
   const playerProfile = await loadOrCreatePlayerProfile();
+  const normalizedScoreMode = normalizeScoreMode(scoreMode);
 
   const submission = {
     player_id: authUserId,
     display_name: playerProfile.displayName,
     seed,
+    score_mode: normalizedScoreMode,
     is_daily_seed: isDailySeed,
     final_score: finalScore,
     points_earned: finalScoreBreakdown.pointsEarned,
@@ -63,6 +73,7 @@ export const submitCompletedScore = async ({
     .select("id, final_score")
     .eq("player_id", authUserId)
     .eq("seed", seed)
+    .eq("score_mode", normalizedScoreMode)
     .maybeSingle();
 
   if (existingScoreError) {
@@ -120,6 +131,7 @@ export const fetchSeedLeaderboard = async (seed, limit = 25) => {
       "display_name, seed, final_score, points_earned, swap_penalties, turn_penalties, rack_penalty, scrabble_bonus, completed_at"
     )
     .eq("seed", seed)
+    .eq("score_mode", LEADERBOARD_SCORE_MODE_SOLO)
     .order("final_score", { ascending: false })
     .order("completed_at", { ascending: true })
     .limit(limit);
@@ -131,7 +143,47 @@ export const fetchSeedLeaderboard = async (seed, limit = 25) => {
   return { ok: true, leaderboard: data ?? [] };
 };
 
-export const fetchGlobalLeaderboard = async (limit = 100) => {
+export const fetchSeedLeaderboardByMode = async (
+  seed,
+  scoreMode = LEADERBOARD_SCORE_MODE_SOLO,
+  limit = 25
+) => {
+  if (!isBackendConfigured()) {
+    return { ok: false, reason: "backend_not_configured", leaderboard: [] };
+  }
+
+  if (!seed) {
+    return { ok: false, reason: "missing_seed", leaderboard: [] };
+  }
+
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { ok: false, reason: "backend_not_configured", leaderboard: [] };
+  }
+
+  const normalizedScoreMode = normalizeScoreMode(scoreMode);
+  const { data, error } = await supabase
+    .from(SCORES_TABLE)
+    .select(
+      "display_name, seed, final_score, points_earned, swap_penalties, turn_penalties, rack_penalty, scrabble_bonus, completed_at"
+    )
+    .eq("seed", seed)
+    .eq("score_mode", normalizedScoreMode)
+    .order("final_score", { ascending: false })
+    .order("completed_at", { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    return { ok: false, reason: "fetch_failed", error, leaderboard: [] };
+  }
+
+  return { ok: true, leaderboard: data ?? [] };
+};
+
+export const fetchGlobalLeaderboard = async (
+  scoreMode = LEADERBOARD_SCORE_MODE_SOLO,
+  limit = 100
+) => {
   if (!isBackendConfigured()) {
     return { ok: false, reason: "backend_not_configured", leaderboard: [] };
   }
@@ -141,11 +193,13 @@ export const fetchGlobalLeaderboard = async (limit = 100) => {
     return { ok: false, reason: "backend_not_configured", leaderboard: [] };
   }
 
+  const normalizedScoreMode = normalizeScoreMode(scoreMode);
   const { data, error } = await supabase
     .from(SCORES_TABLE)
     .select(
       "player_id, display_name, seed, is_daily_seed, final_score, points_earned, swap_penalties, turn_penalties, rack_penalty, scrabble_bonus, completed_at"
     )
+    .eq("score_mode", normalizedScoreMode)
     .order("final_score", { ascending: false })
     .order("completed_at", { ascending: true })
     .limit(limit);
@@ -157,7 +211,10 @@ export const fetchGlobalLeaderboard = async (limit = 100) => {
   return { ok: true, leaderboard: data ?? [] };
 };
 
-export const fetchPlayerHighScorePosition = async (playerId) => {
+export const fetchPlayerHighScorePosition = async (
+  playerId,
+  scoreMode = LEADERBOARD_SCORE_MODE_SOLO
+) => {
   if (!isBackendConfigured()) {
     return { ok: false, reason: "backend_not_configured", position: null };
   }
@@ -182,10 +239,12 @@ export const fetchPlayerHighScorePosition = async (playerId) => {
     return { ok: false, reason: "missing_player_id", position: null };
   }
 
+  const normalizedScoreMode = normalizeScoreMode(scoreMode);
   const { data: bestScore, error: bestScoreError } = await supabase
     .from(SCORES_TABLE)
     .select("final_score, completed_at")
     .eq("player_id", scopedPlayerId)
+    .eq("score_mode", normalizedScoreMode)
     .order("final_score", { ascending: false })
     .order("completed_at", { ascending: true })
     .limit(1)
@@ -207,6 +266,7 @@ export const fetchPlayerHighScorePosition = async (playerId) => {
   const { count: higherScoreCount, error: higherScoreError } = await supabase
     .from(SCORES_TABLE)
     .select("id", { count: "exact", head: true })
+    .eq("score_mode", normalizedScoreMode)
     .gt("final_score", bestScore.final_score);
 
   if (higherScoreError) {
@@ -221,6 +281,7 @@ export const fetchPlayerHighScorePosition = async (playerId) => {
   const { count: tiedEarlierCount, error: tiedEarlierError } = await supabase
     .from(SCORES_TABLE)
     .select("id", { count: "exact", head: true })
+    .eq("score_mode", normalizedScoreMode)
     .eq("final_score", bestScore.final_score)
     .lt("completed_at", bestScore.completed_at);
 
@@ -239,7 +300,10 @@ export const fetchPlayerHighScorePosition = async (playerId) => {
   };
 };
 
-export const fetchAvailableSeeds = async (limit = 200) => {
+export const fetchAvailableSeeds = async (
+  scoreMode = LEADERBOARD_SCORE_MODE_SOLO,
+  limit = 200
+) => {
   if (!isBackendConfigured()) {
     return { ok: false, reason: "backend_not_configured", seeds: [] };
   }
@@ -249,9 +313,11 @@ export const fetchAvailableSeeds = async (limit = 200) => {
     return { ok: false, reason: "backend_not_configured", seeds: [] };
   }
 
+  const normalizedScoreMode = normalizeScoreMode(scoreMode);
   const { data, error } = await supabase
     .from(SCORES_TABLE)
     .select("seed, is_daily_seed, completed_at")
+    .eq("score_mode", normalizedScoreMode)
     .order("completed_at", { ascending: false })
     .limit(limit);
 
