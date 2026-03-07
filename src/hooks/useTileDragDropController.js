@@ -809,6 +809,25 @@ export const useTileDragDropController = ({
     [rackDropExpansionTop]
   );
 
+  const isWithinRackDropZone = useCallback(
+    (screenX, screenY) => {
+      const rack = rackLayoutRef.current;
+      if (rack.width <= 0 || rack.height <= 0) {
+        return false;
+      }
+      const { x: touchOffsetX, y: touchOffsetY } = dragTouchOffsetRef.current;
+      const tileCenterX = screenX - touchOffsetX + DRAG_TILE_HALF_SIZE;
+      const tileCenterY = screenY - touchOffsetY + DRAG_TILE_HALF_SIZE;
+      return (
+        tileCenterX >= rack.x &&
+        tileCenterX <= rack.x + rack.width &&
+        tileCenterY >= rack.y - rackDropExpansionTop &&
+        tileCenterY <= rack.y + rack.height
+      );
+    },
+    [rackDropExpansionTop]
+  );
+
   const screenToBoardCell = useCallback(
     (screenX, screenY) => {
       const layout = boardLayoutRef.current;
@@ -1230,9 +1249,18 @@ export const useTileDragDropController = ({
     (x, y) => {
       if (!canInteract) return;
       setDragPositionFromScreen(x, y);
-      const nextIndex = computeRackIndex(x, y, visibleRackTiles.length + 1, {
+      let nextIndex = computeRackIndex(x, y, visibleRackTiles.length + 1, {
         clampToEdges: false,
       });
+      if (
+        nextIndex == null &&
+        isWithinRackDropZone(x, y) &&
+        visibleRackTiles.length + 1 > 0
+      ) {
+        nextIndex = computeRackIndex(x, y, visibleRackTiles.length + 1, {
+          clampToEdges: true,
+        });
+      }
       boardRackPlaceholderIndexValue.setValue(nextIndex ?? -1);
       boardHoverRackIndexRef.current = nextIndex;
       if (nextIndex !== hoverIndexRef.current) {
@@ -1243,6 +1271,7 @@ export const useTileDragDropController = ({
       boardRackPlaceholderIndexValue,
       canInteract,
       computeRackIndex,
+      isWithinRackDropZone,
       setDragPositionFromScreen,
       visibleRackTiles.length,
     ]
@@ -1269,11 +1298,25 @@ export const useTileDragDropController = ({
         return cell.row === payload.row && cell.col === payload.col ? cell : null;
       })();
       const target = sameCellDrop ?? getDropTargetCell(screenX, screenY);
-      const rackTargetIndex =
+      let rackTargetIndex =
         lastHoverIndex ??
         computeRackIndex(screenX, screenY, visibleRackTiles.length + 1, {
           clampToEdges: false,
         });
+      if (
+        rackTargetIndex == null &&
+        isWithinRackDropZone(screenX, screenY) &&
+        visibleRackTiles.length + 1 > 0
+      ) {
+        rackTargetIndex = computeRackIndex(
+          screenX,
+          screenY,
+          visibleRackTiles.length + 1,
+          {
+            clampToEdges: true,
+          }
+        );
+      }
       if (target != null) {
         const { tile, row: fromRow, col: fromCol } = payload;
         const rackIndex = tile?.rackIndex;
@@ -1355,6 +1398,7 @@ export const useTileDragDropController = ({
       getRackIndexByTileId,
       getBoardTileSettleTarget,
       getDropTargetCell,
+      isWithinRackDropZone,
       onMoveBoardTile,
       onRemoveBoardTile,
       onReorderRack,

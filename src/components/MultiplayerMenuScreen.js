@@ -894,11 +894,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   title: {
-    fontSize: 40,
-    lineHeight: 44,
+    fontSize: 34,
+    lineHeight: 38,
     fontWeight: "900",
     color: "#22313f",
     flex: 1,
+    flexShrink: 1,
   },
   subtitle: {
     marginTop: 10,

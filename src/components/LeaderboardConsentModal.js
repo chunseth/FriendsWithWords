@@ -25,12 +25,12 @@ const LeaderboardConsentModal = ({
         <View style={styles.card} onStartShouldSetResponder={() => true}>
           <Text style={styles.title}>Share Scores Online?</Text>
           <Text style={styles.body}>
-            To join the global leaderboard, the app uploads your chosen
-            username, score, board seed, and completion time to our server.
+            If enabled, your game scores are uploaded to global leaderboards
+            with your username, board seed, and completion time.
           </Text>
           <Text style={styles.detail}>
-            If you keep scores private, your results stay on this device and are
-            not uploaded.
+            If disabled, only leaderboard score uploads are turned off. Your
+            username can still be found by friends.
           </Text>
 
           <TouchableOpacity style={styles.primaryButton} onPress={onAllow}>

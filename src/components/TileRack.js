@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useLayoutEffect, useState } from "react";
 import { View, Text, StyleSheet, Animated } from "react-native";
 
 const TILE_SIZE = 42;
@@ -339,7 +339,7 @@ const TileRack = ({
   }, [tiles, shuffleTrigger]);
 
   // When shuffle button was pressed, animate from last order to current order (by tile id)
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (shuffleTrigger === 0) return;
     const prevOrder = lastOrderRef.current;
     const newOrder = tiles.map((t) => t.id);
@@ -348,22 +348,19 @@ const TileRack = ({
     const orderChanged = prevOrder.some((r, i) => r !== newOrder[i]);
     if (!orderChanged) return;
 
-    const id = requestAnimationFrame(() => {
-      tiles.forEach((tile, newIndex) => {
-        const oldIndex = prevOrder.indexOf(tile.id);
-        if (oldIndex !== newIndex) {
-          const anim = getAnimatedValue(tile.id);
-          const delta = (oldIndex - newIndex) * SLOT_WIDTH;
-          anim.setValue(delta);
-          Animated.timing(anim, {
-            toValue: 0,
-            duration: SHUFFLE_ANIM_DURATION,
-            useNativeDriver: true,
-          }).start();
-        }
-      });
+    tiles.forEach((tile, newIndex) => {
+      const oldIndex = prevOrder.indexOf(tile.id);
+      if (oldIndex !== newIndex) {
+        const anim = getAnimatedValue(tile.id);
+        const delta = (oldIndex - newIndex) * SLOT_WIDTH;
+        anim.setValue(delta);
+        Animated.timing(anim, {
+          toValue: 0,
+          duration: SHUFFLE_ANIM_DURATION,
+          useNativeDriver: true,
+        }).start();
+      }
     });
-    return () => cancelAnimationFrame(id);
   }, [shuffleTrigger]);
 
   // Update displacement Animated.Values only when hover index changes; only affected tiles get setValue.

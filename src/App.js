@@ -808,6 +808,15 @@ function App() {
     loadConsentStatus();
   }, []);
 
+  useEffect(() => {
+    if (!leaderboardConsentLoaded || leaderboardConsentStatus != null) {
+      return;
+    }
+
+    setLeaderboardConsentModalSource("startup");
+    setLeaderboardConsentModalVisible(true);
+  }, [leaderboardConsentLoaded, leaderboardConsentStatus]);
+
   const loadLeaderboardPosition = useCallback(async () => {
     if (!isBackendConfigured() || !playerProfile?.playerId) {
       setLeaderboardPosition(null);
@@ -1147,21 +1156,19 @@ function App() {
   ]);
 
   const handleSavePlayerName = useCallback(async (displayName) => {
-    if (leaderboardConsentStatus === LEADERBOARD_CONSENT_GRANTED) {
-      const remoteSaveResult = await saveRemotePlayerProfile({
-        username: displayName,
-        displayName,
-      });
+    const remoteSaveResult = await saveRemotePlayerProfile({
+      username: displayName,
+      displayName,
+    });
 
-      if (!remoteSaveResult.ok) {
-        return remoteSaveResult;
-      }
+    if (!remoteSaveResult.ok) {
+      return remoteSaveResult;
     }
 
     const nextProfile = await savePlayerDisplayName(displayName);
     setPlayerProfile(nextProfile);
     return { ok: true, profile: nextProfile };
-  }, [leaderboardConsentStatus]);
+  }, []);
 
   const handleOpenLeaderboardSharingSettings = useCallback(() => {
     setLeaderboardConsentModalSource("settings");
