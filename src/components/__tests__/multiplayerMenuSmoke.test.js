@@ -791,6 +791,122 @@ describe("multiplayer menu smoke", () => {
     });
   });
 
+  it("accepts an incoming multiplayer game request with its game type", async () => {
+    mockLoadMultiplayerGameRequests
+      .mockResolvedValueOnce({
+        ok: true,
+        requests: [
+          {
+            id: "game-request-9",
+            direction: "incoming",
+            friendId: "friend-9",
+            friendName: "vape_friend",
+            friendDisplayName: "Vape Friend",
+            seed: "seed-99",
+            gameType: "daily",
+            status: "pending",
+            summary: "Sent you a game request.",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        requests: [],
+      });
+
+    const onOpenActiveGame = jest.fn();
+
+    let tree;
+    await act(async () => {
+      tree = renderer.create(
+        <MultiplayerMenuScreen
+          dailySeed="20260301"
+          onBack={jest.fn()}
+          onOpenActiveGame={onOpenActiveGame}
+          onOpenNewMultiplayerGame={jest.fn()}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const acceptButton = tree.root.findAllByType(TouchableOpacity).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Accept")
+    );
+
+    await act(async () => {
+      await acceptButton.props.onPress();
+    });
+
+    expect(mockAcceptMultiplayerGameRequest).toHaveBeenCalledWith({
+      requestId: "game-request-9",
+      senderId: "friend-9",
+      senderUsername: "vape_friend",
+      senderDisplayName: "Vape Friend",
+      seed: "seed-99",
+      gameType: "daily",
+    });
+    expect(onOpenActiveGame).toHaveBeenCalled();
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it("shows an error when accepting a game request throws", async () => {
+    mockLoadMultiplayerGameRequests.mockResolvedValue({
+      ok: true,
+      requests: [
+        {
+          id: "game-request-19",
+          direction: "incoming",
+          friendId: "friend-19",
+          friendName: "throw_friend",
+          friendDisplayName: "Throw Friend",
+          seed: "seed-19",
+          gameType: "seeded",
+          status: "pending",
+          summary: "Sent you a game request.",
+        },
+      ],
+    });
+    mockAcceptMultiplayerGameRequest.mockRejectedValueOnce(
+      new Error("network exploded")
+    );
+
+    let tree;
+    await act(async () => {
+      tree = renderer.create(
+        <MultiplayerMenuScreen
+          dailySeed="20260301"
+          onBack={jest.fn()}
+          onOpenActiveGame={jest.fn()}
+          onOpenNewMultiplayerGame={jest.fn()}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const acceptButton = tree.root.findAllByType(TouchableOpacity).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Accept")
+    );
+
+    await act(async () => {
+      await acceptButton.props.onPress();
+      await Promise.resolve();
+    });
+
+    const texts = tree.root.findAllByType(Text).map((node) => {
+      const value = node.props.children;
+      return Array.isArray(value) ? value.join("") : String(value);
+    });
+    expect(texts).toContain("Could Not Load Games");
+    expect(texts).toContain("Could not accept that game request.");
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
   it("allows the sender to unsend a pending multiplayer game request", async () => {
     mockLoadMultiplayerGameRequests
       .mockResolvedValueOnce({

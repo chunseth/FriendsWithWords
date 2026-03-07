@@ -9,6 +9,7 @@ import {
   createClassicPremiumSquares,
   createEmptyBoard,
 } from "../game/shared/premiumSquares";
+import { calculateConsistencyBonusTotal } from "../game/shared/scoring";
 import {
   loadMultiplayerSession,
   saveMultiplayerSession,
@@ -55,6 +56,14 @@ const getRackPenaltyTotal = (players = []) =>
     0
   );
 
+const buildWordHistoryFromTurns = (turnHistory = []) =>
+  (turnHistory ?? []).flatMap((entry) =>
+    (entry?.words ?? []).map((wordEntry) => ({
+      turn: entry?.turnNumber,
+      score: wordEntry?.score ?? 0,
+    }))
+  );
+
 const createInitialSession = ({
   seed = "async-coop-prototype",
   sessionId = "local-multiplayer-prototype",
@@ -86,6 +95,7 @@ const createInitialSession = ({
       wordPointsTotal: 0,
       swapPenaltyTotal: 0,
       scrabbleBonusTotal: 0,
+      consistencyBonusTotal: 0,
       turnPenaltyTotal: 0,
       rackPenaltyTotal: 0,
       finalScore: null,
@@ -490,8 +500,16 @@ export const useAsyncCoopSession = ({
         const completesSession = nextPassStreak >= 2;
         if (completesSession) {
           const rackPenaltyTotal = getRackPenaltyTotal(nextPlayers);
+          const nextHistory = [...currentSession.history, nextHistoryEntry];
+          const consistencyBonusTotal = calculateConsistencyBonusTotal({
+            turnCount: currentSession.turn.number,
+            wordHistory: buildWordHistoryFromTurns(nextHistory),
+          });
           const finalScore =
-            currentSession.sharedScore.total + scoreDelta - rackPenaltyTotal;
+            currentSession.sharedScore.total +
+            scoreDelta -
+            rackPenaltyTotal +
+            consistencyBonusTotal;
 
           return {
             ...currentSession,
@@ -503,6 +521,7 @@ export const useAsyncCoopSession = ({
             sharedScore: {
               ...currentSession.sharedScore,
               total: finalScore,
+              consistencyBonusTotal,
               rackPenaltyTotal,
               finalScore,
             },
@@ -520,7 +539,7 @@ export const useAsyncCoopSession = ({
               remainingCount: refillResult.nextBag.length,
               nextTileId: refillResult.nextTileId,
             },
-            history: [...currentSession.history, nextHistoryEntry],
+            history: nextHistory,
             lastMoveSummary: nextHistoryEntry,
             boardRevision: currentSession.boardRevision + 1,
             savedAt: Date.now(),
@@ -639,10 +658,16 @@ export const useAsyncCoopSession = ({
 
         if (completesSession) {
           const rackPenaltyTotal = getRackPenaltyTotal(nextPlayers);
+          const nextHistory = [...currentSession.history, nextHistoryEntry];
+          const consistencyBonusTotal = calculateConsistencyBonusTotal({
+            turnCount: currentSession.turn.number,
+            wordHistory: buildWordHistoryFromTurns(nextHistory),
+          });
           const finalScore =
             currentSession.sharedScore.total +
             payload.turnScore -
-            rackPenaltyTotal;
+            rackPenaltyTotal +
+            consistencyBonusTotal;
 
           return {
             ...currentSession,
@@ -657,6 +682,7 @@ export const useAsyncCoopSession = ({
               scrabbleBonusTotal:
                 currentSession.sharedScore.scrabbleBonusTotal +
                 payload.scrabbleBonus,
+              consistencyBonusTotal,
               rackPenaltyTotal,
               finalScore,
             },
@@ -678,7 +704,7 @@ export const useAsyncCoopSession = ({
               remainingCount: payload.nextBag.length,
               nextTileId: payload.nextTileId,
             },
-            history: [...currentSession.history, nextHistoryEntry],
+            history: nextHistory,
             lastMoveSummary: nextHistoryEntry,
             boardRevision: currentSession.boardRevision + 1,
             savedAt: Date.now(),

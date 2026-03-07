@@ -4,7 +4,8 @@ buildscript {
         minSdkVersion = 24
         compileSdkVersion = 36
         targetSdkVersion = 36
-        ndkVersion = "27.1.12297006"
+        // Pin NDK 27.3 so libworklets (react-native-reanimated) and app share same libc++ ABI; 27.1 caused UnsatisfiedLinkError for basic_istringstream
+        ndkVersion = "27.3.13750724"
         // Use Kotlin 1.8.x so react-native-gesture-handler (and other libs) match stdlib metadata
         kotlinVersion = "1.8.0"
     }

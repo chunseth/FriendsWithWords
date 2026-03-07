@@ -1,6 +1,16 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("org.codehaus.groovy:groovy-json:3.0.9")
+    }
+}
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
+import groovy.json.JsonSlurper
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -72,6 +82,44 @@ def enableProguardInReleaseBuilds = false
  * this variant is about 6MiB larger per architecture than default.
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+def packageJson = new JsonSlurper().parse(file("../../package.json"))
+def packageVersionName = packageJson.version?.toString() ?: "0.0.0"
+
+def semverToVersionCode = { String version ->
+    def core = version.tokenize("-")[0]
+    def parts = core.tokenize(".")
+    if (parts.size() < 3) return 1
+
+    def major = parts[0].isInteger() ? parts[0].toInteger() : 0
+    def minor = parts[1].isInteger() ? parts[1].toInteger() : 0
+    def patch = parts[2].isInteger() ? parts[2].toInteger() : 0
+    return (major * 10000) + (minor * 100) + patch
+}
+
+def defaultVersionCode = semverToVersionCode(packageVersionName)
+def configuredVersionCode = (
+    project.findProperty("ANDROID_VERSION_CODE") ?: defaultVersionCode.toString()
+).toInteger()
+
+def releaseStoreFile = project.findProperty("RELEASE_STORE_FILE")
+def releaseStorePassword = project.findProperty("RELEASE_STORE_PASSWORD")
+def releaseKeyAlias = project.findProperty("RELEASE_KEY_ALIAS")
+def releaseKeyPassword = project.findProperty("RELEASE_KEY_PASSWORD")
+def hasReleaseSigning = (
+    releaseStoreFile &&
+    releaseStorePassword &&
+    releaseKeyAlias &&
+    releaseKeyPassword
+)
+
+def releaseTaskRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName.toLowerCase().contains("release")
+}
+if (releaseTaskRequested && !hasReleaseSigning) {
+    throw new GradleException(
+        "Release signing is required. Set RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, and RELEASE_KEY_PASSWORD in gradle.properties or via -P flags."
+    )
+}
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -83,8 +131,8 @@ android {
         applicationId "com.wordswithrealfriendstemp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode configuredVersionCode
+        versionName packageVersionName
         manifestPlaceholders = [usesCleartextTraffic: "true"]
     }
     signingConfigs {
@@ -94,6 +142,14 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
     }
     buildTypes {
         debug {
@@ -102,7 +158,9 @@ android {
         release {
             // Caution! In production, you need to generate your own keystore file.
             // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }

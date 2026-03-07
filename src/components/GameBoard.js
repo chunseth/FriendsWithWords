@@ -1,8 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Animated, Platform, Easing } from 'react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import LinearGradient from 'react-native-linear-gradient';
-import { runOnJS } from 'react-native-reanimated';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 1.75;
@@ -24,11 +23,14 @@ const TILE_SIZE = CELL_SIZE - 2;
 const TILE_GRADIENT_HEIGHT_PX = Math.max(1, Math.floor(TILE_SIZE * 0.5));
 // Spacing between tiles; board size is then computed from content so it exactly encapsulates
 const CELL_MARGIN = 1.5;
+const ANDROID_GESTURE_PIPELINE_V2 =
+    Platform.OS === 'android' && global.__ANDROID_GESTURE_PIPELINE_V2__ !== false;
+const OVERLAY_PAN_MIN_DISTANCE = 0;
 
 const CELL_SIZE_EFFECTIVE = TILE_SIZE + 2 * CELL_MARGIN;
 const BOARD_INDICES = Array.from({ length: BOARD_SIZE }, (_, index) => index);
 
-const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, settlingBoardTile = null, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false, allowEmptyCellPress = false }) => {
+const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, settlingBoardTile = null, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false, allowEmptyCellPress = false, submitScorePreview = null, submitScorePreviewCell = null }) => {
     const boardViewRef = useRef(null);
     const zoomWrapperRef = useRef(null);
     const [zoom, setZoom] = useState(1);
@@ -40,6 +42,7 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
     const panCurrentRef = useRef({ x: 0, y: 0 });
     const panStartRef = useRef({ x: 0, y: 0 });
     const twoTouchStart = useRef(null); // { centerX, centerY, initialMaxDist, zoom, panX, panY } when active
+    const pinchStartRef = useRef(null); // { zoom, panX, panY, focalX, focalY }
     const draggingTileFromOverlayRef = useRef(false);
     const onBoardTilePickupRef = useRef(onBoardTilePickup);
     const onBoardDragUpdateRef = useRef(onBoardDragUpdate);
@@ -194,6 +197,39 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
         twoTouchStart.current = null;
     }, []);
 
+    const handlePinchBegin = useCallback((focalX, focalY) => {
+        const focal = touchToContent(focalX, focalY);
+        const pan = panCurrentRef.current;
+        pinchStartRef.current = {
+            zoom: zoomRef.current,
+            panX: pan.x,
+            panY: pan.y,
+            focalX: focal.x,
+            focalY: focal.y,
+        };
+    }, [touchToContent]);
+
+    const handlePinchUpdate = useCallback((scale, focalX, focalY) => {
+        const start = pinchStartRef.current;
+        if (!start) return;
+        const focal = touchToContent(focalX, focalY);
+        const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, start.zoom * scale));
+        const C = GRID_SIZE / 2;
+        const focalXForPan = Number.isFinite(focal.x) ? focal.x : start.focalX;
+        const focalYForPan = Number.isFinite(focal.y) ? focal.y : start.focalY;
+        const panX = start.panX + (focalXForPan - C) * (start.zoom - nextZoom);
+        const panY = start.panY + (focalYForPan - C) * (start.zoom - nextZoom);
+        const clampedX = clampPan(panX, nextZoom);
+        const clampedY = clampPan(panY, nextZoom);
+        panCurrentRef.current = { x: clampedX, y: clampedY };
+        panAnim.setValue({ x: clampedX, y: clampedY });
+        setZoom(nextZoom);
+    }, [panAnim, touchToContent]);
+
+    const handlePinchEnd = useCallback(() => {
+        pinchStartRef.current = null;
+    }, []);
+
     const wantTwoTouch = useCallback((e) => e.nativeEvent.touches && e.nativeEvent.touches.length >= 2, []);
     const onMoveShouldSetResponderCapture = wantTwoTouch;
     const onMoveShouldSetResponder = wantTwoTouch;
@@ -219,26 +255,71 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
     // When zoomed: one Pan on overlay. On touch start, hit-test. If on a draggable tile → lift tile and drag it; else → board pan.
     // Refs for callbacks so gesture is stable across re-renders (pickup causes setState; recreating gesture would break active pan).
     // Keep the gesture itself on the UI thread and bridge only the JS controller callbacks that still require JS state.
-    const overlayPanGesture = useMemo(() => Gesture.Pan()
-        .minPointers(1)
-        .maxPointers(1)
-        .minDistance(0)
-        .onBegin((e) => {
-            runOnJS(handleOverlayBoardPickup)(e.absoluteX, e.absoluteY);
-        })
-        .onUpdate((e) => {
-            runOnJS(handleOverlayBoardMove)(
-                e.absoluteX,
-                e.absoluteY,
-                e.translationX,
-                e.translationY
-            );
-        })
-        .onEnd((e) => {
-            runOnJS(handleOverlayBoardEnd)(e.absoluteX, e.absoluteY);
-        }), []);
+    const overlayPanGesture = useMemo(() => {
+        const base = Gesture.Pan()
+            .minPointers(1)
+            .maxPointers(1)
+            .minDistance(OVERLAY_PAN_MIN_DISTANCE);
 
-    const overlayGesture = useMemo(() => overlayPanGesture, [overlayPanGesture]);
+        if (ANDROID_GESTURE_PIPELINE_V2) {
+            return base
+                .runOnJS(true)
+                .onBegin((e) => {
+                    handleOverlayBoardPickup(e.absoluteX, e.absoluteY);
+                })
+                .onUpdate((e) => {
+                    handleOverlayBoardMove(
+                        e.absoluteX,
+                        e.absoluteY,
+                        e.translationX,
+                        e.translationY
+                    );
+                })
+                .onEnd((e) => {
+                    handleOverlayBoardEnd(e.absoluteX, e.absoluteY);
+                });
+        }
+
+        return base
+            .runOnJS(true)
+            .onBegin((e) => {
+                handleOverlayBoardPickup(e.absoluteX, e.absoluteY);
+            })
+            .onUpdate((e) => {
+                handleOverlayBoardMove(
+                    e.absoluteX,
+                    e.absoluteY,
+                    e.translationX,
+                    e.translationY
+                );
+            })
+            .onEnd((e) => {
+                handleOverlayBoardEnd(e.absoluteX, e.absoluteY);
+            });
+    }, [handleOverlayBoardEnd, handleOverlayBoardMove, handleOverlayBoardPickup]);
+
+    const overlayPinchGesture = useMemo(() => {
+        if (!ANDROID_GESTURE_PIPELINE_V2) return null;
+
+        return Gesture.Pinch()
+            .runOnJS(true)
+            .onBegin((e) => {
+                handlePinchBegin(e.focalX, e.focalY);
+            })
+            .onUpdate((e) => {
+                handlePinchUpdate(e.scale, e.focalX, e.focalY);
+            })
+            .onEnd(() => {
+                handlePinchEnd();
+            });
+    }, [handlePinchBegin, handlePinchEnd, handlePinchUpdate]);
+
+    const overlayGesture = useMemo(() => {
+        if (ANDROID_GESTURE_PIPELINE_V2 && overlayPinchGesture) {
+            return Gesture.Simultaneous(overlayPanGesture, overlayPinchGesture);
+        }
+        return overlayPanGesture;
+    }, [overlayPanGesture, overlayPinchGesture]);
 
     const updateGridBounds = useCallback(() => {
         if (!boardLayoutRef || !zoomWrapperRef.current) return;
@@ -301,6 +382,10 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
         () => new Set(selectedCells.map(({ row, col }) => `${row},${col}`)),
         [selectedCells]
     );
+    const submitScorePreviewCellKey = useMemo(() => {
+        if (!submitScorePreviewCell) return null;
+        return `${submitScorePreviewCell.row},${submitScorePreviewCell.col}`;
+    }, [submitScorePreviewCell]);
 
     return (
         <View
@@ -354,6 +439,11 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                                     onBoardTileDrop={onBoardTileDrop}
                                     onCellClick={onCellClick}
                                     allowEmptyCellPress={allowEmptyCellPress}
+                                    showSubmitScorePreview={
+                                        submitScorePreview != null &&
+                                        submitScorePreviewCellKey === `${row},${col}`
+                                    }
+                                    submitScorePreview={submitScorePreview}
                                 />
                             ); })}
                         </View>
@@ -364,12 +454,36 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
             <View
                 style={styles.panOverlay}
                 pointerEvents={disableOverlayInteractions ? 'none' : 'auto'}
-                onMoveShouldSetResponder={disableOverlayInteractions ? undefined : onMoveShouldSetResponder}
-                onMoveShouldSetResponderCapture={disableOverlayInteractions ? undefined : onMoveShouldSetResponderCapture}
-                onResponderGrant={disableOverlayInteractions ? undefined : onResponderGrant}
-                onResponderMove={disableOverlayInteractions ? undefined : onResponderMove}
-                onResponderRelease={disableOverlayInteractions ? undefined : onResponderRelease}
-                onResponderTerminate={disableOverlayInteractions ? undefined : onResponderTerminate}
+                onMoveShouldSetResponder={
+                    disableOverlayInteractions || ANDROID_GESTURE_PIPELINE_V2
+                        ? undefined
+                        : onMoveShouldSetResponder
+                }
+                onMoveShouldSetResponderCapture={
+                    disableOverlayInteractions || ANDROID_GESTURE_PIPELINE_V2
+                        ? undefined
+                        : onMoveShouldSetResponderCapture
+                }
+                onResponderGrant={
+                    disableOverlayInteractions || ANDROID_GESTURE_PIPELINE_V2
+                        ? undefined
+                        : onResponderGrant
+                }
+                onResponderMove={
+                    disableOverlayInteractions || ANDROID_GESTURE_PIPELINE_V2
+                        ? undefined
+                        : onResponderMove
+                }
+                onResponderRelease={
+                    disableOverlayInteractions || ANDROID_GESTURE_PIPELINE_V2
+                        ? undefined
+                        : onResponderRelease
+                }
+                onResponderTerminate={
+                    disableOverlayInteractions || ANDROID_GESTURE_PIPELINE_V2
+                        ? undefined
+                        : onResponderTerminate
+                }
             >
                 <GestureDetector gesture={overlayGesture}>
                     <View style={StyleSheet.absoluteFill} />
@@ -472,7 +586,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         margin: CELL_MARGIN,
-        overflow: 'hidden',
+        overflow: 'visible',
     },
     cellInner: {
         width: '100%',
@@ -545,6 +659,25 @@ const styles = StyleSheet.create({
         fontSize: TILE_SIZE * 0.2,
         color: '#7f8c8d',
     },
+    submitScorePreviewBadge: {
+        position: 'absolute',
+        top: -2,
+        right: -4,
+        zIndex: 30,
+        minWidth: 12,
+        height: 10,
+        borderRadius: 3,
+        paddingHorizontal: 2,
+        backgroundColor: '#3f3f3f',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    submitScorePreviewText: {
+        fontSize: 5,
+        lineHeight: 6,
+        color: '#ffffff',
+        fontWeight: '700',
+    },
 });
 
 const PREMIUM_LABELS = { dw: 'DW', tw: 'TW', dl: 'DL', tl: 'TL', center: '★' };
@@ -552,7 +685,42 @@ const PREMIUM_LABELS = { dw: 'DW', tw: 'TW', dl: 'DL', tl: 'TL', center: '★' }
 const BoardCell = React.memo(function BoardCell({
     row, col, tile, isSelected, isDragSource, premium,
     onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, onCellClick, allowEmptyCellPress,
+    showSubmitScorePreview, submitScorePreview,
 }) {
+    const previewBadgeScale = useRef(new Animated.Value(1)).current;
+    const previousPreviewValueRef = useRef(null);
+
+    useEffect(() => {
+        if (!showSubmitScorePreview || submitScorePreview == null) {
+            previousPreviewValueRef.current = null;
+            previewBadgeScale.setValue(1);
+            return;
+        }
+
+        const shouldPulse =
+            previousPreviewValueRef.current == null ||
+            previousPreviewValueRef.current !== submitScorePreview;
+        previousPreviewValueRef.current = submitScorePreview;
+
+        if (!shouldPulse) return;
+
+        previewBadgeScale.setValue(0.86);
+        Animated.sequence([
+            Animated.timing(previewBadgeScale, {
+                toValue: 1.18,
+                duration: 110,
+                easing: Easing.out(Easing.quad),
+                useNativeDriver: true,
+            }),
+            Animated.timing(previewBadgeScale, {
+                toValue: 1,
+                duration: 120,
+                easing: Easing.inOut(Easing.quad),
+                useNativeDriver: true,
+            }),
+        ]).start();
+    }, [previewBadgeScale, showSubmitScorePreview, submitScorePreview]);
+
     const cellStyle = useMemo(() => [
         styles.cell,
         tile !== null && styles.cellOccupied,
@@ -571,6 +739,16 @@ const BoardCell = React.memo(function BoardCell({
             {showTileInCell ? (
                 <View style={styles.tile}>
                     <Text style={styles.tileLetter}>{tile.letter}</Text>
+                    {showSubmitScorePreview && (
+                        <Animated.View
+                            style={[
+                                styles.submitScorePreviewBadge,
+                                { transform: [{ scale: previewBadgeScale }] },
+                            ]}
+                        >
+                            <Text style={styles.submitScorePreviewText}>{submitScorePreview}</Text>
+                        </Animated.View>
+                    )}
                     {!tile.isBlank && <Text style={styles.tileValue}>{tile.value}</Text>}
                 </View>
             ) : (

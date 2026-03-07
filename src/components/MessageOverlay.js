@@ -1,7 +1,83 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, StyleSheet } from 'react-native';
 
 const MessageOverlay = ({ message, onClose }) => {
+    const isWordAcceptedWithTurnPoints =
+        message?.title === 'Word Accepted!' &&
+        typeof message?.turnPoints === 'number';
+    const isAnimatedWordAccepted =
+        isWordAcceptedWithTurnPoints &&
+        typeof message?.consistencyBonus === 'number' &&
+        message.consistencyBonus > 0;
+
+    const [displayPoints, setDisplayPoints] = useState({
+        turnPoints: typeof message?.turnPoints === 'number' ? message.turnPoints : 0,
+        bonusPoints: typeof message?.consistencyBonus === 'number' ? message.consistencyBonus : 0,
+    });
+    const [showBonusLabel, setShowBonusLabel] = useState(true);
+    const animationTimeoutRef = useRef(null);
+    const animationIntervalRef = useRef(null);
+    const pointsRef = useRef({
+        turnPoints: typeof message?.turnPoints === 'number' ? message.turnPoints : 0,
+        bonusPoints: typeof message?.consistencyBonus === 'number' ? message.consistencyBonus : 0,
+    });
+
+    useEffect(() => {
+        if (animationTimeoutRef.current) clearTimeout(animationTimeoutRef.current);
+        if (animationIntervalRef.current) clearInterval(animationIntervalRef.current);
+        animationTimeoutRef.current = null;
+        animationIntervalRef.current = null;
+
+        const initialTurnPoints =
+            typeof message?.turnPoints === 'number' ? message.turnPoints : 0;
+        const initialBonusPoints =
+            typeof message?.consistencyBonus === 'number' ? message.consistencyBonus : 0;
+
+        setDisplayPoints({
+            turnPoints: initialTurnPoints,
+            bonusPoints: initialBonusPoints,
+        });
+        pointsRef.current = {
+            turnPoints: initialTurnPoints,
+            bonusPoints: initialBonusPoints,
+        };
+        setShowBonusLabel(true);
+
+        if (!isAnimatedWordAccepted) {
+            return undefined;
+        }
+
+        animationTimeoutRef.current = setTimeout(() => {
+            setShowBonusLabel(false);
+            animationIntervalRef.current = setInterval(() => {
+                const { turnPoints, bonusPoints } = pointsRef.current;
+                if (bonusPoints <= 0) {
+                    if (animationIntervalRef.current) {
+                        clearInterval(animationIntervalRef.current);
+                        animationIntervalRef.current = null;
+                    }
+                    return;
+                }
+
+                const nextTurnPoints = turnPoints + 1;
+                const nextBonusPoints = bonusPoints - 1;
+                pointsRef.current = {
+                    turnPoints: nextTurnPoints,
+                    bonusPoints: nextBonusPoints,
+                };
+                setDisplayPoints({
+                    turnPoints: nextTurnPoints,
+                    bonusPoints: nextBonusPoints,
+                });
+            }, 60);
+        }, 650);
+
+        return () => {
+            if (animationTimeoutRef.current) clearTimeout(animationTimeoutRef.current);
+            if (animationIntervalRef.current) clearInterval(animationIntervalRef.current);
+        };
+    }, [isAnimatedWordAccepted, message]);
+
     if (!message) return null;
     
     return (
@@ -22,7 +98,27 @@ const MessageOverlay = ({ message, onClose }) => {
                     onPress={(e) => e.stopPropagation()}
                 >
                     <Text style={styles.title}>{message.title}</Text>
-                    <Text style={styles.text}>{message.text}</Text>
+                    {isWordAcceptedWithTurnPoints ? (
+                        <>
+                            <View style={styles.turnSummaryRow}>
+                                <View style={styles.pointsLineRow}>
+                                    <Text style={styles.pointsLineText}>{displayPoints.turnPoints}</Text>
+                                    {isAnimatedWordAccepted && displayPoints.bonusPoints > 0 && (
+                                        <Text style={styles.pointsLineBonusText}> +{displayPoints.bonusPoints}</Text>
+                                    )}
+                                    <Text style={styles.pointsLineText}> points</Text>
+                                </View>
+                                <View style={styles.comboRow}>
+                                    <Text style={styles.comboLabel}>
+                                        {isAnimatedWordAccepted && showBonusLabel ? 'Combo!' : ' '}
+                                    </Text>
+                                </View>
+                            </View>
+                            <Text style={styles.text}>{message.text}</Text>
+                        </>
+                    ) : (
+                        <Text style={styles.text}>{message.text}</Text>
+                    )}
                     <TouchableOpacity style={styles.button} onPress={onClose}>
                         <Text style={styles.buttonText}>OK</Text>
                     </TouchableOpacity>
@@ -60,6 +156,37 @@ const styles = StyleSheet.create({
         marginBottom: 20,
         textAlign: 'center',
         lineHeight: 22,
+    },
+    turnSummaryRow: {
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 10,
+    },
+    pointsLineRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    pointsLineText: {
+        fontSize: 16,
+        color: '#7f8c8d',
+        lineHeight: 22,
+    },
+    pointsLineBonusText: {
+        fontSize: 16,
+        color: '#2f6f4f',
+        lineHeight: 22,
+    },
+    comboRow: {
+        minHeight: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    comboLabel: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#2f6f4f',
     },
     button: {
         backgroundColor: '#667eea',

@@ -18,7 +18,7 @@ import {
   LayoutAnimation,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SFSymbol } from "react-native-sfsymbols";
+import SFSymbolIcon from "./components/SFSymbolIcon";
 import { useGame } from "./hooks/useGame";
 import { dictionary } from "./utils/dictionary";
 import GameBoard from "./components/GameBoard";
@@ -1605,7 +1605,7 @@ function App() {
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               >
                 {Platform.OS === "ios" ? (
-                  <SFSymbol
+                  <SFSymbolIcon
                     name="list.bullet"
                     size={24}
                     color="#2c3e50"
@@ -1658,6 +1658,12 @@ function App() {
                 onBoardTap={handleBoardTap}
                 disableOverlayInteractions={
                   draggingTile?.from === "rack" || swapAnimating
+                }
+                submitScorePreview={game.submitScorePreview}
+                submitScorePreviewCell={
+                  game.selectedCells.length > 0
+                    ? game.selectedCells[game.selectedCells.length - 1]
+                    : null
                 }
               />
               {showScrabbleBanner && (
@@ -1726,16 +1732,25 @@ function App() {
                   settlingRackPlaceholderIndex={
                     settlingTile?.destination === "rack"
                       ? settlingTile.slotIndex
+                      : draggingTile?.settlingDestination === "rack" &&
+                        draggingTile?.from === "board"
+                        ? draggingTile.settlingSlotIndex ?? null
                       : null
                   }
                   settlingRackSlotCount={
                     settlingTile?.destination === "rack"
                       ? settlingTile.slotCount
+                      : draggingTile?.settlingDestination === "rack" &&
+                        draggingTile?.from === "board"
+                        ? draggingTile.settlingSlotCount ?? null
                       : null
                   }
                   settlingRackTileId={
                     settlingTile?.destination === "rack"
                       ? settlingTile.id
+                      : draggingTile?.settlingDestination === "rack" &&
+                        draggingTile?.from === "board"
+                        ? draggingTile?.tile?.id ?? null
                       : null
                   }
                   settlingRackOrder={
@@ -1775,7 +1790,7 @@ function App() {
                     activeOpacity={0.6}
                   >
                     {Platform.OS === "ios" ? (
-                      <SFSymbol
+                      <SFSymbolIcon
                         name="arrow.down.left.arrow.up.right.square"
                         size={CONTROL_ICON_SIZE}
                         color="#fff"
@@ -1846,7 +1861,7 @@ function App() {
                   >
                     {game.selectedCells.length > 0 ? (
                       Platform.OS === "ios" ? (
-                        <SFSymbol
+                        <SFSymbolIcon
                           name="arrow.uturn.down.square"
                           size={CONTROL_ICON_SIZE}
                           color="#fff"
@@ -1858,7 +1873,7 @@ function App() {
                         <Text style={styles.controlButtonTextLarge}>Clear</Text>
                       )
                     ) : Platform.OS === "ios" ? (
-                      <SFSymbol
+                      <SFSymbolIcon
                         name="shuffle"
                         size={CONTROL_ICON_SIZE}
                         color="#fff"

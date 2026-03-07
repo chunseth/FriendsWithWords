@@ -1061,7 +1061,7 @@ PODS:
     - React-Core
   - RNCClipboard (1.16.3):
     - React-Core
-  - RNGestureHandler (2.30.0):
+  - RNGestureHandler (2.18.1):
     - glog
     - RCT-Folly (= 2022.05.16.00)
     - React-Core
@@ -1322,7 +1322,7 @@ SPEC CHECKSUMS:
   ReactCommon: 9c38e8797dc2ac72edf63cd18cf450d918575666
   RNCAsyncStorage: b44e8a4e798c3e1f56bffccd0f591f674fb9198f
   RNCClipboard: f6679d470d0da2bce2a37b0af7b9e0bf369ecda5
-  RNGestureHandler: ad7bdf3340a16d433d58023d4bddde2d633904f9
+  RNGestureHandler: 03a2c31aea5d46f51080f1c1b6659b76a9ac78c9
   RNReanimated: 7fdc3dc5bdf06ce359b54d16e911778c3b0b31b9
   RNVectorIcons: 24c506ef3aab67787a85607b8d4a312ce8f6f3b0
   SocketRocket: f32cd54efbe0f095c4d7594881e52619cfe80b17

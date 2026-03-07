@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useLayoutEffect, useState } from "react";
-import { View, Text, StyleSheet, Animated } from "react-native";
+import { View, Text, StyleSheet, Animated, Platform } from "react-native";
 
 const TILE_SIZE = 42;
 const TILE_MARGIN = 2;
@@ -9,6 +9,8 @@ const CLEAR_RETURN_ANIM_DURATION = 380;
 
 const TAP_SLOP = 14;
 const RACK_TILE_PICKUP_SLOP = 10;
+const USE_ANDROID_RESPONDER_INPUT =
+  Platform.OS === "android" && global.__ANDROID_GESTURE_PIPELINE_V2__ !== false;
 
 /**
  * Uses direct touch events so drag updates arrive immediately without gesture activation delay.
@@ -45,11 +47,12 @@ function DraggableTileInner({
   const didMoveRef = React.useRef(false);
 
   const getTouchPoint = (e) => {
-    const touch =
-      e.nativeEvent.changedTouches?.[0] ??
-      e.nativeEvent.touches?.[0] ??
-      e.nativeEvent;
-    return { pageX: touch?.pageX ?? 0, pageY: touch?.pageY ?? 0 };
+    const event = e?.nativeEvent ?? {};
+    const touch = event.changedTouches?.[0] ?? event.touches?.[0];
+    if (touch) {
+      return { pageX: touch.pageX ?? 0, pageY: touch.pageY ?? 0 };
+    }
+    return { pageX: event.pageX ?? 0, pageY: event.pageY ?? 0 };
   };
 
   const handleTouchStart = (e) => {
@@ -117,6 +120,22 @@ function DraggableTileInner({
     lastTouchRef.current = null;
   };
 
+  const handleResponderGrant = (e) => {
+    handleTouchStart(e);
+  };
+
+  const handleResponderMove = (e) => {
+    handleTouchMove(e);
+  };
+
+  const handleResponderRelease = (e) => {
+    handleTouchEnd(e);
+  };
+
+  const handleResponderTerminate = () => {
+    handleTouchCancel();
+  };
+
   const transform = [];
   if (translateX) transform.push({ translateX });
   if (displacementX) transform.push({ translateX: displacementX });
@@ -144,10 +163,20 @@ function DraggableTileInner({
         left: RACK_TILE_PICKUP_SLOP,
         right: RACK_TILE_PICKUP_SLOP,
       }}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchCancel}
+      onTouchStart={USE_ANDROID_RESPONDER_INPUT ? undefined : handleTouchStart}
+      onTouchMove={USE_ANDROID_RESPONDER_INPUT ? undefined : handleTouchMove}
+      onTouchEnd={USE_ANDROID_RESPONDER_INPUT ? undefined : handleTouchEnd}
+      onTouchCancel={USE_ANDROID_RESPONDER_INPUT ? undefined : handleTouchCancel}
+      onStartShouldSetResponder={
+        USE_ANDROID_RESPONDER_INPUT && !interactionsDisabled ? () => true : undefined
+      }
+      onMoveShouldSetResponder={
+        USE_ANDROID_RESPONDER_INPUT && !interactionsDisabled ? () => true : undefined
+      }
+      onResponderGrant={USE_ANDROID_RESPONDER_INPUT ? handleResponderGrant : undefined}
+      onResponderMove={USE_ANDROID_RESPONDER_INPUT ? handleResponderMove : undefined}
+      onResponderRelease={USE_ANDROID_RESPONDER_INPUT ? handleResponderRelease : undefined}
+      onResponderTerminate={USE_ANDROID_RESPONDER_INPUT ? handleResponderTerminate : undefined}
     >
       {animationState?.scoreText ? (
         <Animated.View

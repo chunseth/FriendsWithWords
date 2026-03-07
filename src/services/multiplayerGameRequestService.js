@@ -217,6 +217,7 @@ export const acceptMultiplayerGameRequest = async ({
   receiverUsername,
   receiverDisplayName,
   seed,
+  gameType = "seeded",
 }) => {
   const authContext = await getAuthContext();
   if (!authContext.ok) {

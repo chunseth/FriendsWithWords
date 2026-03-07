@@ -9,7 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SFSymbol } from "react-native-sfsymbols";
+import SFSymbolIcon from "./SFSymbolIcon";
 import MultiplayerPlayGamePanel from "./MultiplayerPlayGamePanel";
 import MessageOverlay from "./MessageOverlay";
 import PendingGameRequestModal from "./PendingGameRequestModal";
@@ -339,21 +339,27 @@ const MultiplayerMenuScreen = ({
                           styles.gameRequestButtonDisabled,
                       ]}
                       onPress={async () => {
-                        setPendingGameActionId(game.id);
-                        const result = await declineMultiplayerGameRequest({
-                          requestId: game.id,
-                          senderId: game.friendId,
-                        });
-                        if (!result.ok) {
+                        try {
+                          setPendingGameActionId(game.id);
+                          const result = await declineMultiplayerGameRequest({
+                            requestId: game.id,
+                            senderId: game.friendId,
+                          });
+                          if (!result.ok) {
+                            setGameRequestsError(
+                              result.errorMessage ??
+                                "Could not decline that game request."
+                            );
+                            return;
+                          }
+                          await refreshGameRequests();
+                        } catch (_error) {
                           setGameRequestsError(
-                            result.errorMessage ??
-                              "Could not decline that game request."
+                            "Could not decline that game request."
                           );
+                        } finally {
                           setPendingGameActionId(null);
-                          return;
                         }
-                        await refreshGameRequests();
-                        setPendingGameActionId(null);
                       }}
                       disabled={pendingGameActionId === game.id}
                     >
@@ -368,29 +374,36 @@ const MultiplayerMenuScreen = ({
                           styles.gameRequestButtonDisabled,
                       ]}
                       onPress={async () => {
-                        setPendingGameActionId(game.id);
-                        const result = await acceptMultiplayerGameRequest({
-                          requestId: game.id,
-                          senderId: game.friendId,
-                          senderUsername: game.friendName,
-                          senderDisplayName:
-                            game.friendDisplayName ?? game.friendName,
-                          seed: game.seed,
-                        });
-                        if (!result.ok) {
+                        try {
+                          setPendingGameActionId(game.id);
+                          const result = await acceptMultiplayerGameRequest({
+                            requestId: game.id,
+                            senderId: game.friendId,
+                            senderUsername: game.friendName,
+                            senderDisplayName:
+                              game.friendDisplayName ?? game.friendName,
+                            seed: game.seed,
+                            gameType: game.gameType,
+                          });
+                          if (!result.ok) {
+                            setGameRequestsError(
+                              result.errorMessage ??
+                                "Could not accept that game request."
+                            );
+                            return;
+                          }
+                          await refreshGameRequests();
+                          onOpenActiveGame?.({
+                            ...game,
+                            sessionId: result.sessionId ?? null,
+                          });
+                        } catch (_error) {
                           setGameRequestsError(
-                            result.errorMessage ??
-                              "Could not accept that game request."
+                            "Could not accept that game request."
                           );
+                        } finally {
                           setPendingGameActionId(null);
-                          return;
                         }
-                        await refreshGameRequests();
-                        setPendingGameActionId(null);
-                        onOpenActiveGame?.({
-                          ...game,
-                          sessionId: result.sessionId ?? null,
-                        });
                       }}
                       disabled={pendingGameActionId === game.id}
                     >
@@ -449,7 +462,7 @@ const MultiplayerMenuScreen = ({
                 void handleSearchFriends();
               }}
             >
-              <SFSymbol
+              <SFSymbolIcon
                 name="magnifyingglass"
                 size={18}
                 color="#fff"
@@ -458,6 +471,7 @@ const MultiplayerMenuScreen = ({
                 resizeMode="center"
                 multicolor={false}
                 style={styles.searchButtonIcon}
+                fallback="⌕"
               />
             </TouchableOpacity>
           </View>

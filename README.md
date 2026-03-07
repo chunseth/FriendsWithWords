@@ -139,6 +139,14 @@ WordsWithRealFriends/
 
 ## Development
 
+### Android Release Controls
+
+See Android release policy and risk tracking:
+
+- `docs/android-release-policy.md`
+- `npm run check:android-prereqs`
+- `npm run test:android-smoke`
+
 ### Running Metro Bundler
 
 ```bash

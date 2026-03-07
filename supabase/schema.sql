@@ -13,6 +13,12 @@ create table if not exists public.scores (
   turn_penalties integer not null default 0,
   rack_penalty integer not null default 0,
   scrabble_bonus integer not null default 0,
+  time_bonus integer not null default 0,
+  perfection_bonus integer not null default 0,
+  consistency_bonus integer not null default 0,
+  skill_bonus_total integer not null default 0,
+  duration_seconds integer,
+  invalid_word_attempts integer not null default 0,
   completed_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

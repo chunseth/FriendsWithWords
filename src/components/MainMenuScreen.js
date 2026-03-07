@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SFSymbol } from "react-native-sfsymbols";
+import SFSymbolIcon from "./SFSymbolIcon";
 import { validatePlayerDisplayName } from "../utils/playerProfile";
 
 const MainMenuScreen = ({
@@ -69,12 +69,13 @@ const MainMenuScreen = ({
         onPress={onOpenSettings}
         accessibilityLabel="Open settings"
       >
-        <SFSymbol
+        <SFSymbolIcon
           name="gearshape.fill"
           size={20}
           color="#22313f"
           weight="medium"
           scale="medium"
+          fallback="⚙"
         />
       </TouchableOpacity>
 

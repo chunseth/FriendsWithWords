@@ -227,6 +227,69 @@ describe("multiplayer smoke", () => {
     expect(rackLabels).toEqual(["Mock Rack (2)", "Mock Rack (2)"]);
   });
 
+  it("emits multiplayer completion payload with consistency bonus only", () => {
+    const originalSessionState = JSON.parse(JSON.stringify(mockSession));
+    Object.assign(mockSession, {
+      status: "completed",
+      sessionId: "mp-complete-1",
+      savedAt: 12345,
+      isDailySeed: false,
+      turn: {
+        ...mockSession.turn,
+        number: 5,
+      },
+      sharedScore: {
+        total: 136,
+        wordPointsTotal: 100,
+        swapPenaltyTotal: 0,
+        turnPenaltyTotal: 0,
+        rackPenaltyTotal: 12,
+        scrabbleBonusTotal: 40,
+        consistencyBonusTotal: 8,
+        finalScore: 136,
+      },
+    });
+
+    const onSessionCompleted = jest.fn();
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <MultiplayerModeScreen
+          onBack={jest.fn()}
+          onSessionCompleted={onSessionCompleted}
+        />
+      );
+    });
+
+    expect(onSessionCompleted).toHaveBeenCalledWith({
+      sessionId: "mp-complete-1",
+      seed: "async-seed-001",
+      isDailySeed: false,
+      finalScore: 136,
+      finalScoreBreakdown: {
+        pointsEarned: 100,
+        swapPenalties: 0,
+        turnPenalties: 0,
+        rackPenalty: 12,
+        scrabbleBonus: 40,
+        timeBonus: 0,
+        perfectionBonus: 0,
+        consistencyBonusTotal: 8,
+        skillBonusTotal: 48,
+        finalScore: 136,
+      },
+    });
+
+    act(() => {
+      tree.unmount();
+    });
+
+    Object.keys(mockSession).forEach((key) => {
+      delete mockSession[key];
+    });
+    Object.assign(mockSession, originalSessionState);
+  });
+
   it("routes multiplayer access through the play button on the main menu", () => {
     const onOpenPlay = jest.fn();
     let tree;

@@ -1,17 +1,17 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { Animated, Easing } from "react-native";
+import { Animated, Easing, unstable_batchedUpdates } from "react-native";
 import { SLOT_WIDTH as RACK_SLOT_WIDTH } from "../components/TileRack";
 
 const DRAG_TILE_HALF_SIZE = 21;
 const DRAG_RACK_SETTLE_DURATION = 30;
 const DRAG_BOARD_SETTLE_DURATION = 30;
 const DRAG_RACK_RETURN_DURATION = 340;
-const DRAG_RACK_RETURN_RELEASE_DELAY = 220;
 const DRAG_BOARD_PICKUP_DURATION = 1;
 const DRAG_RACK_PICKUP_DURATION = 1;
 const BOARD_TILE_PICKUP_SLOP = 35;
 const RACK_HOVER_STEP_DURATION = 18;
 const RACK_HOVER_MAX_DURATION = 90;
+const BOARD_SETTLE_CLEANUP_FALLBACK_MS = 48;
 
 export const useTileDragDropController = ({
   containerRef,
@@ -46,10 +46,13 @@ export const useTileDragDropController = ({
   const hoverIndexRef = useRef(null);
   const boardHoverRackIndexRef = useRef(null);
   const boardDragPayloadRef = useRef(null);
+  const pendingBoardDragPointRef = useRef(null);
+  const boardDragUpdateFrameRef = useRef(null);
   const pendingDropTargetRackIndexRef = useRef(null);
   const dropTargetFrameRef = useRef(null);
   const rackSettleClearTimeoutRef = useRef(null);
   const boardReturnCommitTimeoutRef = useRef(null);
+  const boardSettleCleanupTimeoutRef = useRef(null);
 
   const dragPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const dragScale = useRef(new Animated.Value(1)).current;
@@ -158,6 +161,11 @@ export const useTileDragDropController = ({
       cancelAnimationFrame(dropTargetFrameRef.current);
       dropTargetFrameRef.current = null;
     }
+    if (boardDragUpdateFrameRef.current != null) {
+      cancelAnimationFrame(boardDragUpdateFrameRef.current);
+      boardDragUpdateFrameRef.current = null;
+    }
+    pendingBoardDragPointRef.current = null;
     if (rackSettleClearTimeoutRef.current != null) {
       clearTimeout(rackSettleClearTimeoutRef.current);
       rackSettleClearTimeoutRef.current = null;
@@ -165,6 +173,10 @@ export const useTileDragDropController = ({
     if (boardReturnCommitTimeoutRef.current != null) {
       clearTimeout(boardReturnCommitTimeoutRef.current);
       boardReturnCommitTimeoutRef.current = null;
+    }
+    if (boardSettleCleanupTimeoutRef.current != null) {
+      clearTimeout(boardSettleCleanupTimeoutRef.current);
+      boardSettleCleanupTimeoutRef.current = null;
     }
     updateDraggingTile(null);
     updateSettlingTile(null);
@@ -526,7 +538,14 @@ export const useTileDragDropController = ({
   );
 
   const completeBoardDrop = useCallback(
-    (tile, settleTarget, optimistic, commit) => {
+    (
+      tile,
+      settleTarget,
+      optimistic,
+      commit,
+      options = {}
+    ) => {
+      const { deferCommit = false, useSettlingState = true } = options;
       if (!settleTarget) {
         updateDraggingTile(null);
         updateDropTargetRackIndex(null);
@@ -540,17 +559,36 @@ export const useTileDragDropController = ({
       dragReleasedDuringPickupRef.current = false;
       dragPosition.stopAnimation();
       dragScale.stopAnimation();
-      updateSettlingTile({
-        ...tile,
-        destination: "board",
-        fromRow: optimistic?.fromRow ?? null,
-        fromCol: optimistic?.fromCol ?? null,
-        row: optimistic?.row ?? null,
-        col: optimistic?.col ?? null,
-      });
+      if (useSettlingState) {
+        updateSettlingTile({
+          ...tile,
+          destination: "board",
+          fromRow: optimistic?.fromRow ?? null,
+          fromCol: optimistic?.fromCol ?? null,
+          row: optimistic?.row ?? null,
+          col: optimistic?.col ?? null,
+        });
+      }
       dragTargetRef.current = {
         x: settleTarget.x,
         y: settleTarget.y,
+      };
+      if (boardSettleCleanupTimeoutRef.current != null) {
+        clearTimeout(boardSettleCleanupTimeoutRef.current);
+        boardSettleCleanupTimeoutRef.current = null;
+      }
+      let didCleanup = false;
+      const finalizeBoardSettle = () => {
+        if (didCleanup) return;
+        didCleanup = true;
+        if (boardSettleCleanupTimeoutRef.current != null) {
+          clearTimeout(boardSettleCleanupTimeoutRef.current);
+          boardSettleCleanupTimeoutRef.current = null;
+        }
+        updateDraggingTile(null);
+        updateSettlingTile(null);
+        updateDropTargetRackIndex(null);
+        resetDragAnimation();
       };
       Animated.parallel([
         Animated.timing(dragPosition, {
@@ -564,14 +602,19 @@ export const useTileDragDropController = ({
           useNativeDriver: true,
         }),
       ]).start(() => {
-        updateDraggingTile(null);
-        updateSettlingTile(null);
-        updateDropTargetRackIndex(null);
-        resetDragAnimation();
+        finalizeBoardSettle();
       });
-      requestAnimationFrame(() => {
+      boardSettleCleanupTimeoutRef.current = setTimeout(
+        finalizeBoardSettle,
+        DRAG_BOARD_SETTLE_DURATION + BOARD_SETTLE_CLEANUP_FALLBACK_MS
+      );
+      if (deferCommit) {
+        requestAnimationFrame(() => {
+          commit?.();
+        });
+      } else {
         commit?.();
-      });
+      }
     },
     [
       dragPosition,
@@ -656,10 +699,6 @@ export const useTileDragDropController = ({
         clearTimeout(boardReturnCommitTimeoutRef.current);
         boardReturnCommitTimeoutRef.current = null;
       }
-      rackSettleClearTimeoutRef.current = setTimeout(() => {
-        rackSettleClearTimeoutRef.current = null;
-        updateSettlingTile(null);
-      }, DRAG_RACK_RETURN_RELEASE_DELAY);
       commit?.();
     },
     [
@@ -679,7 +718,8 @@ export const useTileDragDropController = ({
   );
 
   const completeBoardReturnToRack = useCallback(
-    (tile, slotIndex, slotCount, commit) => {
+    (tile, slotIndex, slotCount, commit, options = {}) => {
+      const { useSettlingState = true } = options;
       const settleTarget = getRackSlotTarget(slotIndex, slotCount);
       if (!settleTarget) {
         updateDraggingTile(null);
@@ -717,30 +757,49 @@ export const useTileDragDropController = ({
         updateSettlingTile(null);
         resetDragAnimation();
       });
-      updateSettlingTile({
-        ...tile,
-        destination: "rack",
-        slotIndex,
-        slotCount,
-        from: "board",
-        visibleRackOrder: visibleRackTiles
-          .filter((rackTile) => rackTile.id !== tile.id)
-          .map((rackTile) => rackTile.id),
-      });
-      updateDraggingTile({
-        ...(draggingTileRef.current ?? {
+      if (useSettlingState) {
+        updateSettlingTile({
+          ...tile,
+          destination: "rack",
+          slotIndex,
+          slotCount,
           from: "board",
-          row: null,
-          col: null,
-          tile: {
-            id: tile.id,
-            letter: tile.letter,
-            value: tile.value,
-            rackIndex: tile.rackIndex,
-          },
-        }),
-        settlingDestination: "rack",
-      });
+          visibleRackOrder: visibleRackTiles
+            .filter((rackTile) => rackTile.id !== tile.id)
+            .map((rackTile) => rackTile.id),
+        });
+        updateDraggingTile({
+          ...(draggingTileRef.current ?? {
+            from: "board",
+            row: null,
+            col: null,
+            tile: {
+              id: tile.id,
+              letter: tile.letter,
+              value: tile.value,
+              rackIndex: tile.rackIndex,
+            },
+          }),
+          settlingDestination: "rack",
+        });
+      } else {
+        updateDraggingTile({
+          ...(draggingTileRef.current ?? {
+            from: "board",
+            row: null,
+            col: null,
+            tile: {
+              id: tile.id,
+              letter: tile.letter,
+              value: tile.value,
+              rackIndex: tile.rackIndex,
+            },
+          }),
+          settlingDestination: "rack",
+          settlingSlotIndex: slotIndex,
+          settlingSlotCount: slotCount,
+        });
+      }
       updateDropTargetRackIndex(null);
       rackDraggingVisibleIndexValue.setValue(-1);
       rackHoverIndexValue.setValue(-1);
@@ -752,13 +811,11 @@ export const useTileDragDropController = ({
         clearTimeout(boardReturnCommitTimeoutRef.current);
         boardReturnCommitTimeoutRef.current = null;
       }
-      rackSettleClearTimeoutRef.current = setTimeout(() => {
-        rackSettleClearTimeoutRef.current = null;
-        updateSettlingTile(null);
-      }, DRAG_RACK_RETURN_RELEASE_DELAY);
       boardReturnCommitTimeoutRef.current = setTimeout(() => {
         boardReturnCommitTimeoutRef.current = null;
-        commit?.();
+        unstable_batchedUpdates(() => {
+          commit?.();
+        });
       }, 0);
     },
     [
@@ -992,9 +1049,10 @@ export const useTileDragDropController = ({
       }
       settleScale.stopAnimation();
       updateSettlingTile(null);
+      // Keep rack drags centered under the finger for a consistent pickup feel.
       dragTouchOffsetRef.current = {
-        x: touchOffsetX ?? DRAG_TILE_HALF_SIZE,
-        y: touchOffsetY ?? DRAG_TILE_HALF_SIZE,
+        x: DRAG_TILE_HALF_SIZE,
+        y: DRAG_TILE_HALF_SIZE,
       };
       setDragPositionFromScreen(x ?? 0, y ?? 0);
       hoverIndexRef.current = tile.visibleIndex;
@@ -1248,24 +1306,39 @@ export const useTileDragDropController = ({
   const handleBoardDragUpdate = useCallback(
     (x, y) => {
       if (!canInteract) return;
-      setDragPositionFromScreen(x, y);
-      let nextIndex = computeRackIndex(x, y, visibleRackTiles.length + 1, {
-        clampToEdges: false,
+      pendingBoardDragPointRef.current = { x, y };
+      if (boardDragUpdateFrameRef.current != null) {
+        return;
+      }
+      boardDragUpdateFrameRef.current = requestAnimationFrame(() => {
+        boardDragUpdateFrameRef.current = null;
+        const point = pendingBoardDragPointRef.current;
+        if (!point) return;
+        pendingBoardDragPointRef.current = null;
+        setDragPositionFromScreen(point.x, point.y);
+        let nextIndex = computeRackIndex(
+          point.x,
+          point.y,
+          visibleRackTiles.length + 1,
+          {
+            clampToEdges: false,
+          }
+        );
+        if (
+          nextIndex == null &&
+          isWithinRackDropZone(point.x, point.y) &&
+          visibleRackTiles.length + 1 > 0
+        ) {
+          nextIndex = computeRackIndex(point.x, point.y, visibleRackTiles.length + 1, {
+            clampToEdges: true,
+          });
+        }
+        boardRackPlaceholderIndexValue.setValue(nextIndex ?? -1);
+        boardHoverRackIndexRef.current = nextIndex;
+        if (nextIndex !== hoverIndexRef.current) {
+          hoverIndexRef.current = nextIndex;
+        }
       });
-      if (
-        nextIndex == null &&
-        isWithinRackDropZone(x, y) &&
-        visibleRackTiles.length + 1 > 0
-      ) {
-        nextIndex = computeRackIndex(x, y, visibleRackTiles.length + 1, {
-          clampToEdges: true,
-        });
-      }
-      boardRackPlaceholderIndexValue.setValue(nextIndex ?? -1);
-      boardHoverRackIndexRef.current = nextIndex;
-      if (nextIndex !== hoverIndexRef.current) {
-        hoverIndexRef.current = nextIndex;
-      }
     },
     [
       boardRackPlaceholderIndexValue,
@@ -1280,6 +1353,11 @@ export const useTileDragDropController = ({
   const handleBoardTileDrop = useCallback(
     (screenX, screenY) => {
       if (!canInteract) return;
+      if (boardDragUpdateFrameRef.current != null) {
+        cancelAnimationFrame(boardDragUpdateFrameRef.current);
+        boardDragUpdateFrameRef.current = null;
+      }
+      pendingBoardDragPointRef.current = null;
       const payload =
         draggingTileRef.current?.from === "board"
           ? draggingTileRef.current
@@ -1326,7 +1404,11 @@ export const useTileDragDropController = ({
             { id: tile.id, letter: tile.letter, value: tile.value, rackIndex },
             getBoardTileSettleTarget(target.row, target.col),
             null,
-            () => {}
+            () => {},
+            {
+              deferCommit: true,
+              useSettlingState: false,
+            }
           );
             return;
           }
@@ -1344,7 +1426,11 @@ export const useTileDragDropController = ({
               rackIndex,
               renderTarget: false,
             },
-            () => onMoveBoardTile(fromRow, fromCol, target.row, target.col)
+            () => onMoveBoardTile(fromRow, fromCol, target.row, target.col),
+            {
+              deferCommit: true,
+              useSettlingState: false,
+            }
           );
         }
         return;
@@ -1362,7 +1448,11 @@ export const useTileDragDropController = ({
             },
             getBoardTileSettleTarget(fromRow, fromCol),
             null,
-            () => {}
+            () => {},
+            {
+              deferCommit: true,
+              useSettlingState: false,
+            }
           );
         }
         return;
@@ -1386,7 +1476,8 @@ export const useTileDragDropController = ({
           () => {
             onRemoveBoardTile(fromRow, fromCol);
             onReorderRack(rackIndex, rackTargetIndex, rackIndex);
-          }
+          },
+          { useSettlingState: false }
         );
       }
     },

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { unstable_batchedUpdates } from "react-native";
 import { dictionary } from "../utils/dictionary";
 import {
   BLANK_LETTER,
@@ -12,9 +13,17 @@ import {
 } from "../game/shared/premiumSquares";
 import {
   buildFinalScoreBreakdown,
+  scoreSubmittedWords,
 } from "../game/shared/scoring";
 import { buildResolvedSubmitPayload } from "../game/shared/turnResolution";
 import { validateSubmitTurn } from "../game/shared/validation";
+
+const CONSISTENCY_THRESHOLD = 20;
+const CONSISTENCY_BONUS_STEP = 2;
+const PREVIEW_COMPUTE_DELAY_MS = 90;
+const PREVIEW_DICTIONARY = {
+  isValid: () => true,
+};
 
 export const useGame = () => {
   const [board, setBoard] = useState(() =>
@@ -41,6 +50,7 @@ export const useGame = () => {
   const [finalScoreBreakdown, setFinalScoreBreakdown] = useState(null);
   const [isSwapMode, setIsSwapMode] = useState(false);
   const [swapCount, setSwapCount] = useState(0);
+  const [submitScorePreview, setSubmitScorePreview] = useState(null);
 
   const randomRef = useRef(null);
   const tileBagRef = useRef([]);
@@ -50,6 +60,10 @@ export const useGame = () => {
   const tilesUsedThisTurnRef = useRef(new Set());
   const boardAtTurnStartRef = useRef(null);
   const premiumSquaresRef = useRef(createClassicPremiumSquares());
+  const gameStartedAtMsRef = useRef(null);
+  const invalidWordAttemptsRef = useRef(0);
+  const currentConsistencyStreakRef = useRef(0);
+  const consistencyBonusTotalRef = useRef(0);
 
   const drawTiles = useCallback((count) => {
     setTileRack((prev) => {
@@ -106,6 +120,10 @@ export const useGame = () => {
       tilesUsedThisTurnRef.current = new Set();
       boardAtTurnStartRef.current = null;
       premiumSquaresRef.current = createClassicPremiumSquares();
+      gameStartedAtMsRef.current = null;
+      invalidWordAttemptsRef.current = 0;
+      currentConsistencyStreakRef.current = 0;
+      consistencyBonusTotalRef.current = 0;
 
       // Clear board
       setBoard(
@@ -162,6 +180,10 @@ export const useGame = () => {
     tilesUsedThisTurnRef.current = new Set();
     boardAtTurnStartRef.current = null;
     premiumSquaresRef.current = createClassicPremiumSquares();
+    gameStartedAtMsRef.current = null;
+    invalidWordAttemptsRef.current = 0;
+    currentConsistencyStreakRef.current = 0;
+    consistencyBonusTotalRef.current = 0;
 
     setBoard(
       Array(BOARD_SIZE)
@@ -213,6 +235,9 @@ export const useGame = () => {
       const isBlank =
         tile.value === 0 &&
         (tile.letter === BLANK_LETTER || tile.letter === "");
+      if (gameStartedAtMsRef.current == null) {
+        gameStartedAtMsRef.current = Date.now();
+      }
       if (isBlank) {
         if (
           !chosenLetter ||
@@ -299,29 +324,43 @@ export const useGame = () => {
 
   const moveTileOnBoard = useCallback((fromRow, fromCol, toRow, toCol) => {
     if (fromRow === toRow && fromCol === toCol) return;
-    setBoard((prev) => {
-      const newBoard = prev.map((r) => [...r]);
-      const tile = newBoard[fromRow][fromCol];
-      if (
-        !tile ||
-        !tile.isFromRack ||
-        tile.scored ||
-        newBoard[toRow][toCol] !== null
-      )
-        return prev;
-      newBoard[fromRow][fromCol] = null;
-      newBoard[toRow][toCol] = {
-        ...tile,
-        rackIndex: tile.rackIndex,
-        isFromRack: true,
-      };
-      return newBoard;
-    });
-    setSelectedCells((prev) => {
-      const without = prev.filter(
-        (c) => !(c.row === fromRow && c.col === fromCol)
-      );
-      return [...without, { row: toRow, col: toCol }];
+    unstable_batchedUpdates(() => {
+      setBoard((prev) => {
+        const sourceRow = prev[fromRow];
+        const targetRow = prev[toRow];
+        const tile = sourceRow?.[fromCol];
+        if (
+          !tile ||
+          !tile.isFromRack ||
+          tile.scored ||
+          targetRow?.[toCol] !== null
+        ) {
+          return prev;
+        }
+
+        const next = [...prev];
+        if (fromRow === toRow) {
+          const row = [...sourceRow];
+          row[fromCol] = null;
+          row[toCol] = tile;
+          next[fromRow] = row;
+          return next;
+        }
+
+        const nextSourceRow = [...sourceRow];
+        const nextTargetRow = [...targetRow];
+        nextSourceRow[fromCol] = null;
+        nextTargetRow[toCol] = tile;
+        next[fromRow] = nextSourceRow;
+        next[toRow] = nextTargetRow;
+        return next;
+      });
+      setSelectedCells((prev) => {
+        const without = prev.filter(
+          (c) => !(c.row === fromRow && c.col === fromCol)
+        );
+        return [...without, { row: toRow, col: toCol }];
+      });
     });
   }, []);
 
@@ -467,6 +506,7 @@ export const useGame = () => {
     setSwapPenaltyTotal((prev) => prev + payload.scorePenalty);
     setSwapCount((prev) => prev + 1);
     setTurnCount((prev) => prev + 1);
+    currentConsistencyStreakRef.current = 0;
     setIsSwapMode(false);
     setSelectedTiles([]);
     return true;
@@ -493,6 +533,9 @@ export const useGame = () => {
       boardSize: BOARD_SIZE,
     });
     if (!validation.ok) {
+      if (validation?.error?.title === "Invalid Word") {
+        invalidWordAttemptsRef.current += 1;
+      }
       setMessage(validation.error);
       return null;
     }
@@ -525,6 +568,7 @@ export const useGame = () => {
     if (!payload) return false;
     const completesGame =
       payload.nextTilesRemaining === 0 && payload.resultingRack.length === 0;
+    let perTurnConsistencyBonus = 0;
 
     pendingSubmitRef.current = payload;
     setTotalScore((prev) => prev + payload.turnScore);
@@ -534,6 +578,16 @@ export const useGame = () => {
     }
     setWordCount((prev) => prev + payload.newWords.length);
     setTurnCount((prev) => prev + 1);
+    if (payload.turnScore >= CONSISTENCY_THRESHOLD) {
+      currentConsistencyStreakRef.current += 1;
+      if (currentConsistencyStreakRef.current >= 3) {
+        perTurnConsistencyBonus =
+          CONSISTENCY_BONUS_STEP * (currentConsistencyStreakRef.current - 2);
+        consistencyBonusTotalRef.current += perTurnConsistencyBonus;
+      }
+    } else {
+      currentConsistencyStreakRef.current = 0;
+    }
     setIsFirstTurn(false);
     setWordHistory((prev) => [...prev, ...payload.newHistory]);
     setTileRack(payload.remainingRack);
@@ -555,9 +609,11 @@ export const useGame = () => {
     if (!payload.earnedScrabbleBonus && !completesGame) {
       setMessage({
         title: "Word Accepted!",
-        text: `You scored ${payload.turnScore} points! Words: ${payload.newWords
+        text: `Words: ${payload.newWords
           .map((w) => w.word.toUpperCase())
           .join(", ")}`,
+        turnPoints: payload.turnScore,
+        consistencyBonus: perTurnConsistencyBonus,
       });
     }
     return true;
@@ -584,12 +640,20 @@ export const useGame = () => {
 
   const finishGame = useCallback(() => {
     if (gameOver || tilesRemaining > 0) return; // Only when bag is empty and game not already over
+    const durationMs =
+      gameStartedAtMsRef.current == null
+        ? null
+        : Math.max(0, Date.now() - gameStartedAtMsRef.current);
     const breakdown = buildFinalScoreBreakdown({
       wordPointsTotal,
       swapPenaltyTotal,
       scrabbleBonusTotal,
       turnCount,
       rackTiles: tileRack,
+      durationMs,
+      invalidWordAttempts: invalidWordAttemptsRef.current,
+      wordHistory,
+      comboBonusTotal: consistencyBonusTotalRef.current,
     });
     setFinalScoreBreakdown(breakdown);
     setFinalScore(breakdown.finalScore);
@@ -601,6 +665,7 @@ export const useGame = () => {
     tileRack,
     tilesRemaining,
     turnCount,
+    wordHistory,
     wordPointsTotal,
   ]);
 
@@ -622,6 +687,54 @@ export const useGame = () => {
     tileRack.length,
     tilesRemaining,
   ]);
+
+  useEffect(() => {
+    if (gameOver || isSwapMode) {
+      setSubmitScorePreview(null);
+      return;
+    }
+
+    if (selectedCells.length === 0) {
+      setSubmitScorePreview(null);
+      return;
+    }
+
+    // Hide stale preview immediately while recalculating for the latest board state.
+    setSubmitScorePreview(null);
+
+    let cancelled = false;
+    const timeoutId = setTimeout(() => {
+      if (cancelled) return;
+
+      const validation = validateSubmitTurn({
+        board,
+        isFirstTurn,
+        boardAtTurnStart: boardAtTurnStartRef.current,
+        dictionary: PREVIEW_DICTIONARY,
+        boardSize: BOARD_SIZE,
+      });
+
+      if (!validation.ok) {
+        setSubmitScorePreview(null);
+        return;
+      }
+
+      const previewScoring = scoreSubmittedWords({
+        board,
+        newWords: validation.newWords,
+        premiumSquares: premiumSquaresRef.current,
+        turnCount,
+        placedCells: validation.placedCells,
+      });
+
+      setSubmitScorePreview(previewScoring.turnScore);
+    }, PREVIEW_COMPUTE_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [board, gameOver, isFirstTurn, isSwapMode, selectedCells.length, turnCount]);
 
   const getStableSnapshot = useCallback(() => {
     if (!currentSeed) {
@@ -664,6 +777,10 @@ export const useGame = () => {
       nextTileId: nextTileIdRef.current,
       boardAtTurnStart: boardAtTurnStartRef.current,
       randomState: randomRef.current?.getState?.() ?? null,
+      gameStartedAtMs: gameStartedAtMsRef.current,
+      invalidWordAttempts: invalidWordAttemptsRef.current,
+      currentConsistencyStreak: currentConsistencyStreakRef.current,
+      consistencyBonusTotal: consistencyBonusTotalRef.current,
     };
   }, [
     board,
@@ -711,6 +828,22 @@ export const useGame = () => {
       snapshot.premiumSquares && typeof snapshot.premiumSquares === "object"
         ? snapshot.premiumSquares
         : createClassicPremiumSquares();
+    gameStartedAtMsRef.current =
+      typeof snapshot.gameStartedAtMs === "number"
+        ? snapshot.gameStartedAtMs
+        : null;
+    invalidWordAttemptsRef.current =
+      typeof snapshot.invalidWordAttempts === "number"
+        ? snapshot.invalidWordAttempts
+        : 0;
+    currentConsistencyStreakRef.current =
+      typeof snapshot.currentConsistencyStreak === "number"
+        ? snapshot.currentConsistencyStreak
+        : 0;
+    consistencyBonusTotalRef.current =
+      typeof snapshot.consistencyBonusTotal === "number"
+        ? snapshot.consistencyBonusTotal
+        : 0;
 
     setBoard(snapshot.board);
     setTileRack(snapshot.tileRack ?? []);
@@ -754,6 +887,7 @@ export const useGame = () => {
     gameOver,
     finalScore,
     finalScoreBreakdown,
+    submitScorePreview,
     isSwapMode,
     swapCount,
     premiumSquares: premiumSquaresRef.current,

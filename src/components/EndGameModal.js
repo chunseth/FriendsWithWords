@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SFSymbol } from "react-native-sfsymbols";
+import SFSymbolIcon from "./SFSymbolIcon";
 
 const CHARACTER_TYPING_DELAY = 28;
 const LINE_ADVANCE_DELAY = 180;
@@ -70,6 +70,39 @@ const EndGameModal = ({ visible, summary, onClose }) => {
         value: {
           type: "static",
           text: `+ ${summary.scrabbleBonus}`,
+        },
+      });
+    }
+
+    if ((summary.timeBonus ?? 0) > 0) {
+      nextRows.push({
+        operator: "+",
+        label: "Time bonus",
+        value: {
+          type: "static",
+          text: `+ ${summary.timeBonus}`,
+        },
+      });
+    }
+
+    if ((summary.perfectionBonus ?? 0) > 0) {
+      nextRows.push({
+        operator: "+",
+        label: "Perfection bonus",
+        value: {
+          type: "static",
+          text: `+ ${summary.perfectionBonus}`,
+        },
+      });
+    }
+
+    if ((summary.consistencyBonusTotal ?? 0) > 0) {
+      nextRows.push({
+        operator: "+",
+        label: "Consistency bonus",
+        value: {
+          type: "static",
+          text: `+ ${summary.consistencyBonusTotal}`,
         },
       });
     }
@@ -273,7 +306,7 @@ const EndGameModal = ({ visible, summary, onClose }) => {
             hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
           >
             {Platform.OS === "ios" ? (
-              <SFSymbol
+              <SFSymbolIcon
                 name="xmark.circle"
                 size={28}
                 color="#7f8c8d"

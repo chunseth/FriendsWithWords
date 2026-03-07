@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  Animated,
+  Modal,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -10,6 +11,7 @@ import {
   View,
 } from "react-native";
 import Clipboard from "@react-native-clipboard/clipboard";
+import SFSymbolIcon from "./SFSymbolIcon";
 
 const LeaderboardScreen = ({
   title = "Leaderboards",
@@ -42,8 +44,9 @@ const LeaderboardScreen = ({
     x: 0,
     y: 0,
   });
-  const [highlightedRowKey, setHighlightedRowKey] = useState(null);
-  const highlightOpacity = useRef(new Animated.Value(0)).current;
+  const [detailsEntry, setDetailsEntry] = useState(null);
+  const [detailsSeedCopiedVisible, setDetailsSeedCopiedVisible] = useState(false);
+  const isMultiplayerDetails = detailsEntry?.sectionLabel === "Multiplayer";
 
   const formatDailySeed = (seed) => {
     if (!seed || seed.length !== 8) {
@@ -81,6 +84,18 @@ const LeaderboardScreen = ({
     return () => clearTimeout(timeoutId);
   }, [seedCopiedVisible]);
 
+  useEffect(() => {
+    if (!detailsSeedCopiedVisible) {
+      return undefined;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setDetailsSeedCopiedVisible(false);
+    }, 1400);
+
+    return () => clearTimeout(timeoutId);
+  }, [detailsSeedCopiedVisible]);
+
   const showSeedCopiedToast = (pageX, pageY) => {
     setSeedCopiedPosition({
       x: Math.max(20, pageX - 48),
@@ -91,11 +106,49 @@ const LeaderboardScreen = ({
 
   const handleCopySeed = (seed, event) => {
     Clipboard.setString(String(seed));
+    if (detailsEntry) {
+      setDetailsSeedCopiedVisible(true);
+      return;
+    }
     if (event?.nativeEvent) {
       showSeedCopiedToast(event.nativeEvent.pageX, event.nativeEvent.pageY);
     } else {
       showSeedCopiedToast(120, 120);
     }
+  };
+
+  const openEntryDetails = (entry, rank, sectionLabel) => {
+    setDetailsEntry({
+      entry,
+      rank,
+      sectionLabel,
+    });
+  };
+
+  const getEntryDurationSeconds = (entry) => {
+    if (typeof entry?.duration_seconds === "number") {
+      return entry.duration_seconds;
+    }
+    if (typeof entry?.durationSeconds === "number") {
+      return entry.durationSeconds;
+    }
+    if (typeof entry?.duration_ms === "number") {
+      return Math.floor(entry.duration_ms / 1000);
+    }
+    return null;
+  };
+
+  const formatDuration = (durationSeconds) => {
+    if (typeof durationSeconds !== "number" || durationSeconds < 0) {
+      return null;
+    }
+
+    const hours = Math.floor(durationSeconds / 3600);
+    const minutes = Math.floor((durationSeconds % 3600) / 60);
+    const seconds = durationSeconds % 60;
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(
+      seconds
+    ).padStart(2, "0")}`;
   };
 
   return (
@@ -203,32 +256,11 @@ const LeaderboardScreen = ({
 
                 return (
                   <View key={entryKey} style={styles.rowWrapper}>
-                    {highlightedRowKey === entryKey && (
-                      <Animated.View
-                        pointerEvents="none"
-                        style={[
-                          styles.rowHighlightOverlay,
-                          { opacity: highlightOpacity },
-                        ]}
-                      />
-                    )}
                     <TouchableOpacity
                       style={styles.rowTouchable}
                       activeOpacity={0.85}
-                      onPress={(event) => {
-                        setHighlightedRowKey(entryKey);
-                        highlightOpacity.stopAnimation();
-                        highlightOpacity.setValue(1);
-                        Animated.timing(highlightOpacity, {
-                          toValue: 0,
-                          duration: 300,
-                          useNativeDriver: true,
-                        }).start(() => {
-                          setHighlightedRowKey((currentKey) =>
-                            currentKey === entryKey ? null : currentKey
-                          );
-                        });
-                        handleCopySeed(entry.seed, event);
+                      onPress={() => {
+                        openEntryDetails(entry, index + 1, "High Scores");
                       }}
                     >
                       <View style={styles.row}>
@@ -307,25 +339,33 @@ const LeaderboardScreen = ({
                 No submitted daily scores for this seed yet.
               </Text>
             ) : (
-              dailyLeaderboardEntries.map((entry, index) => (
-                <View
-                  key={`${selectedDailySeed}-${entry.display_name}-${entry.completed_at}-${index}`}
-                  style={styles.rowWrapper}
-                >
-                  <View style={styles.row}>
-                    <Text style={styles.rank}>{index + 1}</Text>
-                    <View style={styles.meta}>
-                      <Text style={styles.name}>{entry.display_name}</Text>
-                      <Text style={styles.date}>
-                        {entry.completed_at
-                          ? new Date(entry.completed_at).toLocaleDateString()
-                          : ""}
-                      </Text>
-                    </View>
-                    <Text style={styles.score}>{entry.final_score}</Text>
+              dailyLeaderboardEntries.map((entry, index) => {
+                const entryKey = `${selectedDailySeed}-${entry.display_name}-${entry.completed_at}-${index}`;
+                return (
+                  <View key={entryKey} style={styles.rowWrapper}>
+                    <TouchableOpacity
+                      style={styles.rowTouchable}
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        openEntryDetails(entry, index + 1, "Daily Seeds")
+                      }
+                    >
+                      <View style={styles.row}>
+                        <Text style={styles.rank}>{index + 1}</Text>
+                        <View style={styles.meta}>
+                          <Text style={styles.name}>{entry.display_name}</Text>
+                          <Text style={styles.date}>
+                            {entry.completed_at
+                              ? new Date(entry.completed_at).toLocaleDateString()
+                              : ""}
+                          </Text>
+                        </View>
+                        <Text style={styles.score}>{entry.final_score}</Text>
+                      </View>
+                    </TouchableOpacity>
                   </View>
-                </View>
-              ))
+                );
+              })
             )}
           </View>
         ) : (
@@ -349,32 +389,11 @@ const LeaderboardScreen = ({
 
                 return (
                   <View key={entryKey} style={styles.rowWrapper}>
-                    {highlightedRowKey === entryKey && (
-                      <Animated.View
-                        pointerEvents="none"
-                        style={[
-                          styles.rowHighlightOverlay,
-                          { opacity: highlightOpacity },
-                        ]}
-                      />
-                    )}
                     <TouchableOpacity
                       style={styles.rowTouchable}
                       activeOpacity={0.85}
-                      onPress={(event) => {
-                        setHighlightedRowKey(entryKey);
-                        highlightOpacity.stopAnimation();
-                        highlightOpacity.setValue(1);
-                        Animated.timing(highlightOpacity, {
-                          toValue: 0,
-                          duration: 300,
-                          useNativeDriver: true,
-                        }).start(() => {
-                          setHighlightedRowKey((currentKey) =>
-                            currentKey === entryKey ? null : currentKey
-                          );
-                        });
-                        handleCopySeed(entry.seed, event);
+                      onPress={() => {
+                        openEntryDetails(entry, index + 1, "Multiplayer");
                       }}
                     >
                       <View style={styles.row}>
@@ -397,6 +416,169 @@ const LeaderboardScreen = ({
           </View>
         )}
       </ScrollView>
+      <Modal
+        visible={detailsEntry != null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDetailsEntry(null)}
+      >
+        {detailsEntry && (
+          <View style={styles.detailsOverlay}>
+            <Pressable
+              style={styles.detailsBackdrop}
+              onPress={() => setDetailsEntry(null)}
+            />
+            <View style={styles.detailsCard}>
+              <View style={styles.detailsHeaderRow}>
+                <View style={styles.detailsPlacementRow}>
+                  <Text style={styles.detailsTitle}>#{detailsEntry.rank}</Text>
+                  <Text style={styles.detailsName}>{detailsEntry.entry.display_name}</Text>
+                </View>
+                <View style={styles.detailsHeaderActions}>
+                  <TouchableOpacity
+                    onPress={() => setDetailsEntry(null)}
+                    accessibilityLabel="Close details"
+                    hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
+                  >
+                    <Text style={styles.detailsClose}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            <View style={styles.detailsRow}>
+              <Text style={styles.detailsScore}>{detailsEntry.entry.final_score}</Text>
+              {typeof getEntryDurationSeconds(detailsEntry.entry) === "number" &&
+                getEntryDurationSeconds(detailsEntry.entry) > 0 && (
+                  <Text style={styles.detailsCompletedTop}>
+                    {formatDuration(getEntryDurationSeconds(detailsEntry.entry))}
+                  </Text>
+                )}
+            </View>
+            <View style={styles.detailsDivider} />
+            <View style={styles.detailsRow}>
+              <Text style={styles.detailsLabel}>Points earned</Text>
+              <Text style={styles.detailsValue}>
+                {detailsEntry.entry.points_earned ?? "-"}
+              </Text>
+            </View>
+            <View style={styles.detailsRow}>
+              <Text style={[styles.detailsLabel, styles.detailsLabelPenalty]}>
+                Turns
+              </Text>
+              <Text style={styles.detailsValue}>
+                {typeof detailsEntry.entry.turn_penalties === "number"
+                  ? detailsEntry.entry.turn_penalties / 2
+                  : "-"}
+              </Text>
+            </View>
+            {(detailsEntry.entry.swap_penalties ?? 0) > 0 && (
+              <View style={styles.detailsRow}>
+                <Text style={[styles.detailsLabel, styles.detailsLabelPenalty]}>
+                  Swap penalties
+                </Text>
+                <Text style={styles.detailsValue}>
+                  {detailsEntry.entry.swap_penalties}
+                </Text>
+              </View>
+            )}
+            {(detailsEntry.entry.rack_penalty ?? 0) > 0 && (
+              <View style={styles.detailsRow}>
+                <Text style={[styles.detailsLabel, styles.detailsLabelPenalty]}>
+                  Rack penalty
+                </Text>
+                <Text style={styles.detailsValue}>
+                  {detailsEntry.entry.rack_penalty}
+                </Text>
+              </View>
+            )}
+            {!isMultiplayerDetails &&
+              ((detailsEntry.entry.time_bonus ?? 0) > 0 ||
+                (detailsEntry.entry.timeBonus ?? 0) > 0) && (
+              <View style={styles.detailsRow}>
+                <Text style={[styles.detailsLabel, styles.detailsLabelPositive]}>
+                  Time bonus
+                </Text>
+                <Text style={styles.detailsValue}>
+                  {detailsEntry.entry.time_bonus ?? detailsEntry.entry.timeBonus}
+                </Text>
+              </View>
+            )}
+            {((detailsEntry.entry.consistency_bonus ?? 0) > 0 ||
+              (detailsEntry.entry.consistencyBonusTotal ?? 0) > 0) && (
+              <View style={styles.detailsRow}>
+                <Text style={[styles.detailsLabel, styles.detailsLabelPositive]}>
+                  Consistency bonus
+                </Text>
+                <Text style={styles.detailsValue}>
+                  {detailsEntry.entry.consistency_bonus ??
+                    detailsEntry.entry.consistencyBonusTotal}
+                </Text>
+              </View>
+            )}
+            {((detailsEntry.entry.scrabble_bonus ?? 0) > 0 ||
+              (detailsEntry.entry.scrabbleBonus ?? 0) > 0) && (
+              <View style={styles.detailsRow}>
+                <Text
+                  style={[
+                    styles.detailsLabel,
+                    styles.detailsLabelPositive,
+                    styles.detailsLabelEmphasis,
+                  ]}
+                >
+                  Scrabble bonus
+                </Text>
+                <Text style={styles.detailsValue}>
+                  {detailsEntry.entry.scrabble_bonus ??
+                    detailsEntry.entry.scrabbleBonus}
+                </Text>
+              </View>
+            )}
+            {!isMultiplayerDetails &&
+              ((detailsEntry.entry.perfection_bonus ?? 0) > 0 ||
+                (detailsEntry.entry.perfectionBonus ?? 0) > 0) && (
+              <View style={styles.detailsRow}>
+                <Text
+                  style={[
+                    styles.detailsLabel,
+                    styles.detailsLabelPositive,
+                    styles.detailsLabelEmphasis,
+                  ]}
+                >
+                  Perfection bonus
+                </Text>
+                <Text style={styles.detailsValue}>
+                  {detailsEntry.entry.perfection_bonus ??
+                    detailsEntry.entry.perfectionBonus}
+                </Text>
+              </View>
+            )}
+            <View style={styles.detailsSeedRow}>
+              <Text style={styles.detailsSeedTop}>{detailsEntry.entry.seed}</Text>
+              <TouchableOpacity
+                style={styles.copySeedButton}
+                onPress={(event) => handleCopySeed(detailsEntry.entry.seed, event)}
+                accessibilityLabel="Copy seed"
+                activeOpacity={0.8}
+              >
+                {Platform.OS === "ios" ? (
+                  <SFSymbolIcon
+                    name="doc.on.doc"
+                    size={16}
+                    color="#2f6f4f"
+                    weight="regular"
+                    scale="medium"
+                  />
+                ) : (
+                  <Text style={styles.copySeedButtonFallback}>Copy</Text>
+                )}
+              </TouchableOpacity>
+              {detailsSeedCopiedVisible && (
+                <Text style={styles.detailsSeedCopiedText}>Seed copied</Text>
+              )}
+            </View>
+            </View>
+          </View>
+        )}
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -579,11 +761,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 14,
   },
-  rowHighlightOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(239, 224, 191, 0.2)",
-    zIndex: 2,
-  },
   rank: {
     width: 24,
     textAlign: "center",
@@ -608,6 +785,139 @@ const styles = StyleSheet.create({
     color: "#2f6f4f",
     fontSize: 20,
     fontWeight: "900",
+  },
+  detailsOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 30,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  detailsBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  detailsCard: {
+    width: "72%",
+    maxWidth: 280,
+    minWidth: 240,
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#eadfcd",
+    padding: 18,
+    gap: 8,
+  },
+  detailsHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  },
+  detailsPlacementRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  detailsHeaderActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  detailsTitle: {
+    color: "#22313f",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  detailsClose: {
+    color: "#9a6b2f",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  detailsSeedTop: {
+    color: "#2f6f4f",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  detailsSeedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    gap: 8,
+    marginTop: 10,
+  },
+  detailsSeedCopiedText: {
+    color: "#2f6f4f",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  detailsName: {
+    color: "#22313f",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  detailsScore: {
+    color: "#2f6f4f",
+    fontSize: 30,
+    fontWeight: "900",
+  },
+  detailsCompletedTop: {
+    color: "#7f8c8d",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  detailsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  detailsLabel: {
+    color: "#7f8c8d",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  detailsLabelPenalty: {
+    color: "#b91c1c",
+  },
+  detailsLabelPositive: {
+    color: "#2f6f4f",
+  },
+  detailsLabelEmphasis: {
+    fontWeight: "900",
+  },
+  detailsValue: {
+    color: "#22313f",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  detailsSeedActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  copySeedButton: {
+    minWidth: 32,
+    minHeight: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#d7e7de",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  copySeedButtonFallback: {
+    color: "#2f6f4f",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  detailsDivider: {
+    marginTop: 4,
+    marginBottom: 4,
+    height: 1,
+    backgroundColor: "#eadfcd",
   },
 });
 

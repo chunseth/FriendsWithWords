@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SFSymbol } from "react-native-sfsymbols";
+import SFSymbolIcon from "./SFSymbolIcon";
 import GameBoard from "./GameBoard";
 import TileRack from "./TileRack";
 import MessageOverlay from "./MessageOverlay";
@@ -289,6 +289,12 @@ const MultiplayerModeScreen = ({
         turnPenalties: session.sharedScore.turnPenaltyTotal ?? 0,
         rackPenalty: session.sharedScore.rackPenaltyTotal ?? 0,
         scrabbleBonus: session.sharedScore.scrabbleBonusTotal ?? 0,
+        timeBonus: 0,
+        perfectionBonus: 0,
+        consistencyBonusTotal: session.sharedScore.consistencyBonusTotal ?? 0,
+        skillBonusTotal:
+          (session.sharedScore.scrabbleBonusTotal ?? 0) +
+          (session.sharedScore.consistencyBonusTotal ?? 0),
         finalScore: session.sharedScore.finalScore,
       },
     });
@@ -301,6 +307,7 @@ const MultiplayerModeScreen = ({
     session.sharedScore.finalScore,
     session.sharedScore.rackPenaltyTotal,
     session.sharedScore.scrabbleBonusTotal,
+    session.sharedScore.consistencyBonusTotal,
     session.sharedScore.swapPenaltyTotal,
     session.sharedScore.turnPenaltyTotal,
     session.sharedScore.wordPointsTotal,
@@ -1307,7 +1314,7 @@ const MultiplayerModeScreen = ({
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           >
             {Platform.OS === "ios" ? (
-              <SFSymbol
+              <SFSymbolIcon
                 name="list.bullet"
                 size={24}
                 color="#2c3e50"
@@ -1497,7 +1504,7 @@ const MultiplayerModeScreen = ({
                 accessibilityLabel="Swap tiles"
               >
                 {Platform.OS === "ios" ? (
-                  <SFSymbol
+                  <SFSymbolIcon
                     name="arrow.down.left.arrow.up.right.square"
                     size={CONTROL_ICON_SIZE}
                     color="#fff"
@@ -1553,7 +1560,7 @@ const MultiplayerModeScreen = ({
               >
                 {selectedCells.length > 0 ? (
                   Platform.OS === "ios" ? (
-                    <SFSymbol
+                    <SFSymbolIcon
                       name="arrow.uturn.down.square"
                       size={CONTROL_ICON_SIZE}
                       color="#fff"
@@ -1565,7 +1572,7 @@ const MultiplayerModeScreen = ({
                     <Text style={styles.controlButtonTextLarge}>Clear</Text>
                   )
                 ) : Platform.OS === "ios" ? (
-                  <SFSymbol
+                  <SFSymbolIcon
                     name="shuffle"
                     size={CONTROL_ICON_SIZE}
                     color="#fff"

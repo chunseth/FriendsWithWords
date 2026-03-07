@@ -2271,6 +2271,7 @@ const VALID_IRREGULAR_VERB_FORMS = new Set([
 
 // Wrong regularized -ed (and similar) forms that must be rejected.
 const INVALID_IRREGULAR_INFLECTIONS = new Set([
+  "evokered",
   "arised",
   "awaked",
   "beated",
@@ -2373,6 +2374,156 @@ const INVALID_IRREGULAR_INFLECTIONS = new Set([
   "winned",
   "winded",
   "writed",
+]);
+
+// Words that are explicitly allowed to apply an additional suffix
+// to a base form that already ends in -en or -er.
+const VALID_SECOND_SUFFIX_ON_EN_ER = new Set([]);
+
+// Valid y+er forms that do not use the usual y->ier comparative transform.
+const VALID_Y_ER_SUFFIX_EXCEPTIONS = new Set([
+  "adlayer",
+  "annoyer",
+  "arkansawyer",
+  "arrayer",
+  "assayer",
+  "ballplayer",
+  "belayer",
+  "betrayer",
+  "bewrayer",
+  "bilayer",
+  "bowyer",
+  "brayer",
+  "bricklayer",
+  "butterflyer",
+  "buyer",
+  "caloyer",
+  "cardplayer",
+  "clyer",
+  "conveyer",
+  "cosplayer",
+  "coyer",
+  "crayer",
+  "cryer",
+  "decayer",
+  "delayer",
+  "destroyer",
+  "disobeyer",
+  "doomsayer",
+  "doomsdayer",
+  "dryer",
+  "dyer",
+  "employer",
+  "enjoyer",
+  "erlenmeyer",
+  "essayer",
+  "eyer",
+  "fayer",
+  "feyer",
+  "flyer",
+  "follyer",
+  "forayer",
+  "foyer",
+  "fryer",
+  "funkyer",
+  "gainsayer",
+  "gayer",
+  "grayer",
+  "greyer",
+  "gunlayer",
+  "hairdryer",
+  "hayer",
+  "highflyer",
+  "holidayer",
+  "homebuyer",
+  "horseplayer",
+  "inlayer",
+  "interlayer",
+  "journeyer",
+  "keyer",
+  "kromayer",
+  "laemmergeyer",
+  "lammergeyer",
+  "lawyer",
+  "layer",
+  "leaftyer",
+  "leboyer",
+  "limeyer",
+  "livyer",
+  "lobbyer",
+  "mabyer",
+  "manslayer",
+  "marryer",
+  "mayer",
+  "metayer",
+  "minelayer",
+  "moneyer",
+  "monolayer",
+  "motleyer",
+  "multiemployer",
+  "multilayer",
+  "multiplayer",
+  "naysayer",
+  "netlayer",
+  "nonlawyer",
+  "obeyer",
+  "overdryer",
+  "overlayer",
+  "oyer",
+  "parleyer",
+  "partyer",
+  "payer",
+  "peyer",
+  "pipelayer",
+  "plaidoyer",
+  "platelayer",
+  "player",
+  "plyer",
+  "portrayer",
+  "prayer",
+  "preyer",
+  "pryer",
+  "ratepayer",
+  "rayer",
+  "resawyer",
+  "riceyer",
+  "ripsawyer",
+  "sawyer",
+  "sayer",
+  "scryer",
+  "shillyshallyer",
+  "shoreyer",
+  "shyer",
+  "skryer",
+  "skyer",
+  "slayer",
+  "sleyer",
+  "slyer",
+  "soothsayer",
+  "spielmeyer",
+  "sprayer",
+  "spryer",
+  "stayer",
+  "strayer",
+  "superlawyer",
+  "superplayer",
+  "swayer",
+  "swordplayer",
+  "taxpayer",
+  "tilyer",
+  "tourneyer",
+  "toyer",
+  "tracklayer",
+  "tutoyer",
+  "twyer",
+  "tyer",
+  "uncoyer",
+  "underlayer",
+  "volleyer",
+  "volyer",
+  "weanyer",
+  "willeyer",
+  "wryer",
 ]);
 
 const INVALID_SHORT_WORDS = new Set(["dbe"]);
@@ -2486,8 +2637,23 @@ class Dictionary {
     return this.words.size;
   }
 
-  hasKnownBaseForm(candidates) {
-    return candidates.some((candidate) => this.words.has(candidate));
+  hasKnownBaseForm(candidates, derivedWord = "", options = {}) {
+    const { allowSecondSuffixOnEnEr = false } = options;
+    return candidates.some((candidate) => {
+      if (!candidate) return false;
+
+      // Prevent double suffix chains like "evoker" + "ed" => "evokered"
+      // unless the resulting word is explicitly allowlisted.
+      if (
+        (candidate.endsWith("en") || candidate.endsWith("er")) &&
+        !allowSecondSuffixOnEnEr &&
+        !VALID_SECOND_SUFFIX_ON_EN_ER.has(derivedWord)
+      ) {
+        return false;
+      }
+
+      return this.words.has(candidate);
+    });
   }
 
   isLikelyInflectedForm(word) {
@@ -2496,7 +2662,7 @@ class Dictionary {
     }
 
     if (word.endsWith("ies") && word.length > 4) {
-      return this.hasKnownBaseForm([`${word.slice(0, -3)}y`]);
+      return this.hasKnownBaseForm([`${word.slice(0, -3)}y`], word);
     }
 
     if (
@@ -2510,11 +2676,11 @@ class Dictionary {
     // Plurals of nouns ending in f/fe: life→lives, calf→calves, wolf→wolves, knife→knives, wife→wives
     if (word.endsWith("ves") && word.length > 4) {
       const base = word.slice(0, -3);
-      return this.hasKnownBaseForm([`${base}f`, `${base}fe`]);
+      return this.hasKnownBaseForm([`${base}f`, `${base}fe`], word);
     }
 
     if (word.endsWith("s") && !word.endsWith("ss")) {
-      return this.hasKnownBaseForm([word.slice(0, -1)]);
+      return this.hasKnownBaseForm([word.slice(0, -1)], word);
     }
 
     if (word.endsWith("ing") && word.length > 5) {
@@ -2524,11 +2690,11 @@ class Dictionary {
         `${base}e`,
         base.endsWith("y") ? `${base.slice(0, -1)}ie` : "",
         this.removeDoubledTrailingConsonant(base),
-      ]);
+      ], word);
     }
 
     if (word.endsWith("ied") && word.length > 4) {
-      return this.hasKnownBaseForm([`${word.slice(0, -3)}y`]);
+      return this.hasKnownBaseForm([`${word.slice(0, -3)}y`], word);
     }
 
     if (word.endsWith("ed") && word.length > 4) {
@@ -2537,7 +2703,7 @@ class Dictionary {
         base,
         `${base}e`,
         this.removeDoubledTrailingConsonant(base),
-      ]);
+      ], word);
     }
 
     if (word.endsWith("en") && word.length > 4) {
@@ -2546,20 +2712,31 @@ class Dictionary {
         base,
         `${base}e`,
         this.removeDoubledTrailingConsonant(base),
-      ]);
+      ], word);
     }
 
     if (word.endsWith("ier") && word.length > 4) {
-      return this.hasKnownBaseForm([`${word.slice(0, -3)}y`]);
+      return this.hasKnownBaseForm([`${word.slice(0, -3)}y`], word);
     }
 
     if (word.endsWith("er") && word.length > 4) {
       const base = word.slice(0, -2);
+      // Comparative forms ending in y should use -ier (happy -> happier),
+      // not y + er (happyer).
+      if (base.endsWith("y")) {
+        const hasVowelBeforeY = /[aeiou]y$/.test(base);
+        if (
+          !hasVowelBeforeY &&
+          !VALID_Y_ER_SUFFIX_EXCEPTIONS.has(word)
+        ) {
+          return false;
+        }
+      }
       return this.hasKnownBaseForm([
         base,
         `${base}e`,
         this.removeDoubledTrailingConsonant(base),
-      ]);
+      ], word);
     }
 
     // Adverbs: adjective + -ly (quickly, gently, happily, nationally, economically)
@@ -2576,7 +2753,9 @@ class Dictionary {
       if (word.endsWith("ally") && !word.endsWith("ically")) {
         candidates.push(word.slice(0, -2)); // national→nationally
       }
-      return this.hasKnownBaseForm(candidates);
+      return this.hasKnownBaseForm(candidates, word, {
+        allowSecondSuffixOnEnEr: true,
+      });
     }
 
     return false;

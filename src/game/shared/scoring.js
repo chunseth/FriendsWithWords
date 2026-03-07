@@ -1,5 +1,12 @@
 import { SCRABBLE_BONUS } from "./premiumSquares";
 
+const TIME_BONUS_UNDER_40_MIN = 15;
+const TIME_BONUS_UNDER_60_MIN = 10;
+const TIME_BONUS_UNDER_90_MIN = 5;
+const PERFECTION_BONUS = 50;
+const CONSISTENCY_THRESHOLD = 20;
+const CONSISTENCY_BONUS_STEP = 2;
+
 export const calculateWordScore = ({ board, wordData, premiumSquares }) => {
   let score = 0;
   let wordMultiplier = 1;
@@ -68,21 +75,84 @@ export const scoreSubmittedWords = ({
   };
 };
 
+export const calculateTimeBonus = (durationMs) => {
+  if (typeof durationMs !== "number" || durationMs < 0) {
+    return 0;
+  }
+
+  const elapsedMinutes = durationMs / (60 * 1000);
+  if (elapsedMinutes < 40) return TIME_BONUS_UNDER_40_MIN;
+  if (elapsedMinutes < 60) return TIME_BONUS_UNDER_60_MIN;
+  if (elapsedMinutes < 90) return TIME_BONUS_UNDER_90_MIN;
+  return 0;
+};
+
+export const calculateConsistencyBonusTotal = ({
+  wordHistory = [],
+  turnCount = 0,
+}) => {
+  if (!Array.isArray(wordHistory) || turnCount <= 0) {
+    return 0;
+  }
+
+  const turnScores = new Map();
+  wordHistory.forEach((entry) => {
+    const turn = entry?.turn;
+    const score = entry?.score ?? 0;
+    if (typeof turn !== "number" || !Number.isFinite(turn)) return;
+    turnScores.set(turn, (turnScores.get(turn) ?? 0) + score);
+  });
+
+  let streak = 0;
+  let bonusTotal = 0;
+
+  for (let turn = 1; turn <= turnCount; turn += 1) {
+    const turnScore = turnScores.get(turn) ?? 0;
+    if (turnScore < CONSISTENCY_THRESHOLD) {
+      streak = 0;
+      continue;
+    }
+
+    streak += 1;
+    if (streak >= 3) {
+      bonusTotal += CONSISTENCY_BONUS_STEP * (streak - 2);
+    }
+  }
+
+  return bonusTotal;
+};
+
 export const buildFinalScoreBreakdown = ({
   wordPointsTotal,
   swapPenaltyTotal,
   scrabbleBonusTotal,
   turnCount,
   rackTiles,
+  durationMs = null,
+  invalidWordAttempts = 0,
+  wordHistory = [],
+  comboBonusTotal = null,
 }) => {
   const turnPenalties = turnCount * 2;
   const rackPenalty = rackTiles.reduce((sum, tile) => sum + (tile?.value ?? 0), 0);
+  const timeBonus = calculateTimeBonus(durationMs);
+  const perfectionBonus =
+    invalidWordAttempts === 0 ? PERFECTION_BONUS : 0;
+  const consistencyBonusTotal =
+    typeof comboBonusTotal === "number"
+      ? comboBonusTotal
+      : calculateConsistencyBonusTotal({ wordHistory, turnCount });
+  const skillBonusTotal =
+    scrabbleBonusTotal + timeBonus + perfectionBonus + consistencyBonusTotal;
   const finalScore =
     wordPointsTotal -
     swapPenaltyTotal -
     turnPenalties -
     rackPenalty +
-    scrabbleBonusTotal;
+    scrabbleBonusTotal +
+    timeBonus +
+    perfectionBonus +
+    consistencyBonusTotal;
 
   return {
     pointsEarned: wordPointsTotal,
@@ -90,6 +160,15 @@ export const buildFinalScoreBreakdown = ({
     turnPenalties,
     rackPenalty,
     scrabbleBonus: scrabbleBonusTotal,
+    timeBonus,
+    perfectionBonus,
+    consistencyBonusTotal,
+    durationSeconds:
+      typeof durationMs === "number" && durationMs >= 0
+        ? Math.floor(durationMs / 1000)
+        : null,
+    invalidWordAttempts,
+    skillBonusTotal,
     finalScore,
   };
 };
