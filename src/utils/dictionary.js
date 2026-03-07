@@ -138,6 +138,7 @@ const VALID_THREE_LETTER_WORDS = new Set([
   "xis",
   "zek",
   "zit",
+  "zap"
 ]);
 
 const VALID_CUSTOM_WORDS = new Set(["fave", "vape", "vibe"]);

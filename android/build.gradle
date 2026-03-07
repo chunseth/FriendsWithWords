@@ -5,17 +5,29 @@ buildscript {
         compileSdkVersion = 36
         targetSdkVersion = 36
         ndkVersion = "27.1.12297006"
-        kotlinVersion = "2.1.20"
+        // Use Kotlin 1.8.x so react-native-gesture-handler (and other libs) match stdlib metadata
+        kotlinVersion = "1.8.0"
     }
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        classpath("com.android.tools.build:gradle")
+        // Pin AGP 8.6+ so androidx.core 1.16.x (required by some deps) is satisfied
+        classpath("com.android.tools.build:gradle:8.6.1")
         classpath("com.facebook.react:react-native-gradle-plugin")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
     }
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+// Force Kotlin 1.8.x for all modules so react-native-gesture-handler (and others) match stdlib metadata
+allprojects {
+    configurations.all {
+        resolutionStrategy {
+            force "org.jetbrains.kotlin:kotlin-stdlib:1.8.0"
+            force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0"
+        }
+    }
+}
