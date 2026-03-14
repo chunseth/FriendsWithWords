@@ -15,6 +15,13 @@ const mockAcceptMultiplayerGameRequest = jest.fn();
 const mockDeclineMultiplayerGameRequest = jest.fn();
 const mockCancelMultiplayerGameRequest = jest.fn();
 const mockDeleteAcceptedMultiplayerGame = jest.fn();
+const mockFetchUnreadMultiplayerNotifications = jest.fn();
+const mockMarkMultiplayerNotificationsRead = jest.fn();
+const mockCreateMultiplayerRematch = jest.fn();
+const mockArchiveMultiplayerSessionForUser = jest.fn();
+const mockSubscribeToMultiplayerInbox = jest.fn();
+const mockUpsertPresence = jest.fn();
+const mockTrackMultiplayerEvent = jest.fn();
 
 jest.mock("../../services/profileService", () => ({
   searchProfilesByUsername: (...args) => mockSearchProfilesByUsername(...args),
@@ -41,6 +48,24 @@ jest.mock("../../services/multiplayerGameRequestService", () => ({
     mockCancelMultiplayerGameRequest(...args),
   deleteAcceptedMultiplayerGame: (...args) =>
     mockDeleteAcceptedMultiplayerGame(...args),
+}));
+
+jest.mock("../../services/multiplayerInboxService", () => ({
+  fetchUnreadMultiplayerNotifications: (...args) =>
+    mockFetchUnreadMultiplayerNotifications(...args),
+  markMultiplayerNotificationsRead: (...args) =>
+    mockMarkMultiplayerNotificationsRead(...args),
+  createMultiplayerRematch: (...args) =>
+    mockCreateMultiplayerRematch(...args),
+  archiveMultiplayerSessionForUser: (...args) =>
+    mockArchiveMultiplayerSessionForUser(...args),
+  subscribeToMultiplayerInbox: (...args) =>
+    mockSubscribeToMultiplayerInbox(...args),
+  upsertPresence: (...args) => mockUpsertPresence(...args),
+}));
+
+jest.mock("../../services/analyticsService", () => ({
+  trackMultiplayerEvent: (...args) => mockTrackMultiplayerEvent(...args),
 }));
 
 jest.mock("../MultiplayerPlayGamePanel", () => {
@@ -169,6 +194,33 @@ describe("multiplayer menu smoke", () => {
     mockDeleteAcceptedMultiplayerGame.mockResolvedValue({
       ok: true,
       reason: "game_deleted",
+    });
+    mockFetchUnreadMultiplayerNotifications.mockResolvedValue({
+      ok: true,
+      notifications: [],
+    });
+    mockMarkMultiplayerNotificationsRead.mockResolvedValue({
+      ok: true,
+      updatedCount: 0,
+    });
+    mockCreateMultiplayerRematch.mockResolvedValue({
+      ok: true,
+      sessionId: "session-rematch-1",
+    });
+    mockArchiveMultiplayerSessionForUser.mockResolvedValue({
+      ok: true,
+      reason: "session_archived",
+    });
+    mockSubscribeToMultiplayerInbox.mockResolvedValue({
+      ok: true,
+      unsubscribe: jest.fn(),
+    });
+    mockUpsertPresence.mockResolvedValue({
+      ok: true,
+      reason: "presence_updated",
+    });
+    mockTrackMultiplayerEvent.mockResolvedValue({
+      ok: true,
     });
   });
 

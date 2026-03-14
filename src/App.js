@@ -5,6 +5,7 @@ import React, {
   useCallback,
 } from "react";
 import {
+  AppState,
   View,
   Text,
   TouchableOpacity,
@@ -31,6 +32,8 @@ import LeaderboardScreen from "./components/LeaderboardScreen";
 import StatsScreen from "./components/StatsScreen";
 import MultiplayerMenuScreen from "./components/MultiplayerMenuScreen";
 import MultiplayerModeScreen from "./components/MultiplayerModeScreen";
+import MultiplayerInboxScreen from "./components/MultiplayerInboxScreen";
+import MultiplayerNotificationSettingsScreen from "./components/MultiplayerNotificationSettingsScreen";
 import ConfirmLeaveGameModal from "./components/ConfirmLeaveGameModal";
 import MessageOverlay from "./components/MessageOverlay";
 import LetterPickerModal from "./components/LetterPickerModal";
@@ -81,6 +84,15 @@ import {
   saveLeaderboardConsentStatus,
 } from "./utils/leaderboardConsentStorage";
 import { clearMultiplayerSession } from "./utils/multiplayerSessionStorage";
+import {
+  fetchUnreadMultiplayerNotifications,
+  markMultiplayerNotificationsRead,
+  upsertPresence,
+} from "./services/multiplayerInboxService";
+import {
+  initializePushNotifications,
+  setApplicationBadgeCount,
+} from "./services/pushNotificationService";
 
 const CONTROL_ICON_SIZE = 22;
 const RACK_DROP_EXPANSION_TOP = 200;
@@ -169,6 +181,8 @@ function App() {
   const [gameStarted, setGameStarted] = useState(false);
   const [savedGamePayload, setSavedGamePayload] = useState(null);
   const [homeScreen, setHomeScreen] = useState("main");
+  const [multiplayerMenuInitialTab, setMultiplayerMenuInitialTab] =
+    useState("games");
   const [leaderboardInitialPage, setLeaderboardInitialPage] = useState(
     "highScores"
   );
@@ -193,6 +207,9 @@ function App() {
     useState(false);
   const [deleteAccountLoading, setDeleteAccountLoading] = useState(false);
   const [accountMessage, setAccountMessage] = useState(null);
+  const [globalMultiplayerMessage, setGlobalMultiplayerMessage] = useState(null);
+  const [globalUnreadMultiplayerCount, setGlobalUnreadMultiplayerCount] =
+    useState(0);
   const [pendingLeaderboardSubmission, setPendingLeaderboardSubmission] =
     useState(null);
   const [mainMenuUsernamePromptToken, setMainMenuUsernamePromptToken] =
@@ -254,6 +271,69 @@ function App() {
     Platform.OS === "ios" && Platform.isPad
       ? RACK_DROP_EXPANSION_TOP + IPAD_RACK_DROP_EXPANSION_TOP_EXTRA
       : RACK_DROP_EXPANSION_TOP;
+
+  useEffect(() => {
+    let unsubscribePush = () => {};
+    void (async () => {
+      const result = await initializePushNotifications({
+      appBuild: "1.3.1",
+      deviceId: "local-device",
+        onForegroundNotification: (event) => {
+          setGlobalMultiplayerMessage({
+            title: event?.title ?? "Multiplayer Update",
+            text: event?.body ?? "You have a multiplayer update.",
+          });
+        },
+      });
+
+      if (result?.ok && typeof result.unsubscribe === "function") {
+        unsubscribePush = result.unsubscribe;
+      }
+    })();
+
+    return () => {
+      unsubscribePush();
+    };
+  }, []);
+
+  useEffect(() => {
+    const refreshUnreadNotifications = async () => {
+      const result = await fetchUnreadMultiplayerNotifications(20);
+      if (!result.ok) {
+        return;
+      }
+
+      const unreadCount = result.notifications.length;
+      setGlobalUnreadMultiplayerCount(unreadCount);
+      void setApplicationBadgeCount(unreadCount);
+
+      if (unreadCount > 0) {
+        setGlobalMultiplayerMessage({
+          title: "Multiplayer Updates",
+          text: `${unreadCount} unread multiplayer notification${
+            unreadCount === 1 ? "" : "s"
+          }.`,
+        });
+      }
+    };
+
+    void upsertPresence({ status: "online", lastSessionId: null });
+    void refreshUnreadNotifications();
+
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void upsertPresence({ status: "online", lastSessionId: null });
+        void refreshUnreadNotifications();
+      } else if (state === "background") {
+        void upsertPresence({ status: "away", lastSessionId: null });
+      }
+    });
+
+    return () => {
+      appStateSubscription.remove();
+      void upsertPresence({ status: "offline", lastSessionId: null });
+    };
+  }, []);
 
   const isRackTileUsed = useCallback(
     (tile, index) =>
@@ -1298,7 +1378,16 @@ function App() {
 
   const handleOpenMultiplayerMenu = useCallback(() => {
     setPlayModeModalVisible(false);
+    setMultiplayerMenuInitialTab("games");
     setHomeScreen("multiplayer-menu");
+  }, []);
+
+  const handleOpenMultiplayerInbox = useCallback(() => {
+    setHomeScreen("multiplayer-inbox");
+  }, []);
+
+  const handleOpenMultiplayerNotificationSettings = useCallback(() => {
+    setHomeScreen("multiplayer-notification-settings");
   }, []);
 
   const handleBackToMainMenu = useCallback(() => {
@@ -1931,8 +2020,13 @@ function App() {
             ) : homeScreen === "multiplayer-menu" ? (
               <MultiplayerMenuScreen
                 dailySeed={dailySeed}
+                initialTab={multiplayerMenuInitialTab}
                 onBack={handleBackToMainMenu}
                 onOpenLeaderboard={handleOpenMultiplayerLeaderboard}
+                onOpenInbox={handleOpenMultiplayerInbox}
+                onOpenNotificationSettings={
+                  handleOpenMultiplayerNotificationSettings
+                }
                 onOpenActiveGame={(game) => {
                   setActiveMultiplayerSessionId(
                     game?.sessionId ?? "local-multiplayer-prototype"
@@ -1945,6 +2039,24 @@ function App() {
                   );
                   setHomeScreen("multiplayer");
                 }}
+              />
+            ) : homeScreen === "multiplayer-inbox" ? (
+              <MultiplayerInboxScreen
+                onBack={() => setHomeScreen("multiplayer-menu")}
+                onOpenFriends={() => {
+                  setMultiplayerMenuInitialTab("friends");
+                  setHomeScreen("multiplayer-menu");
+                }}
+                onOpenSession={(sessionId) => {
+                  setActiveMultiplayerSessionId(
+                    sessionId ?? "local-multiplayer-prototype"
+                  );
+                  setHomeScreen("multiplayer");
+                }}
+              />
+            ) : homeScreen === "multiplayer-notification-settings" ? (
+              <MultiplayerNotificationSettingsScreen
+                onBack={() => setHomeScreen("multiplayer-menu")}
               />
             ) : homeScreen === "multiplayer" ? (
               <MultiplayerModeScreen
@@ -2059,6 +2171,22 @@ function App() {
         <MessageOverlay
           message={accountMessage}
           onClose={() => setAccountMessage(null)}
+        />
+        <MessageOverlay
+          message={globalMultiplayerMessage}
+          onClose={async () => {
+            setGlobalMultiplayerMessage(null);
+            if (globalUnreadMultiplayerCount > 0) {
+              const unread = await fetchUnreadMultiplayerNotifications(50);
+              if (unread.ok && unread.notifications.length > 0) {
+                await markMultiplayerNotificationsRead(
+                  unread.notifications.map((notification) => notification.id)
+                );
+              }
+              setGlobalUnreadMultiplayerCount(0);
+              void setApplicationBadgeCount(0);
+            }
+          }}
         />
         <View style={styles.dragOverlayContainer} pointerEvents="none">
         <Animated.View

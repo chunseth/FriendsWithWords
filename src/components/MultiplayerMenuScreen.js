@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
+  AppState,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -29,6 +30,57 @@ import {
   loadMultiplayerGameRequests,
   sendMultiplayerGameRequest,
 } from "../services/multiplayerGameRequestService";
+import {
+  archiveMultiplayerSessionForUser,
+  createMultiplayerRematch,
+  fetchUnreadMultiplayerNotifications,
+  markMultiplayerNotificationsRead,
+  subscribeToMultiplayerInbox,
+  upsertPresence,
+} from "../services/multiplayerInboxService";
+import { trackMultiplayerEvent } from "../services/analyticsService";
+
+const buildPresenceLabel = (status) => {
+  if (status === "online") return "Online now";
+  if (status === "away") return "Active recently";
+  if (status === "offline") return "Offline";
+  return null;
+};
+
+const groupAndSortGames = (games = [], activeFilter = "all") => {
+  const filtered = games.filter((game) => {
+    if (activeFilter === "needs_action") {
+      return game.needsAction || game.direction === "incoming";
+    }
+    if (activeFilter === "pending") {
+      return game.status === "pending";
+    }
+    if (activeFilter === "archived") {
+      return game.archived === true;
+    }
+    return true;
+  });
+
+  const yourTurn = filtered
+    .filter((game) => game.status === "accepted" && game.needsAction)
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const waiting = filtered
+    .filter(
+      (game) =>
+        game.status === "accepted" &&
+        !game.needsAction &&
+        game.archived !== true
+    )
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const pending = filtered
+    .filter((game) => game.status === "pending")
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const archived = filtered
+    .filter((game) => game.archived === true)
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+
+  return { yourTurn, waiting, pending, archived };
+};
 
 const MultiplayerMenuScreen = ({
   dailySeed,
@@ -36,8 +88,13 @@ const MultiplayerMenuScreen = ({
   onOpenLeaderboard,
   onOpenActiveGame,
   onOpenNewMultiplayerGame,
+  onOpenInbox,
+  onOpenNotificationSettings,
+  initialTab = "games",
 }) => {
-  const [activeTab, setActiveTab] = useState("games");
+  const [activeTab, setActiveTab] = useState(
+    initialTab === "friends" ? "friends" : "games"
+  );
   const [activeGames, setActiveGames] = useState([]);
   const [friends, setFriends] = useState([]);
   const [incomingRequests, setIncomingRequests] = useState([]);
@@ -61,6 +118,16 @@ const MultiplayerMenuScreen = ({
     useState(null);
   const [selectedActiveGameForDeletion, setSelectedActiveGameForDeletion] =
     useState(null);
+  const [activeGameFilter, setActiveGameFilter] = useState("all");
+  const [unreadNotifications, setUnreadNotifications] = useState([]);
+  const [latestInboxMessage, setLatestInboxMessage] = useState(null);
+
+  const unreadCount = unreadNotifications.length;
+  const pendingIncomingCount = activeGames.filter(
+    (game) => game.status === "pending" && game.direction === "incoming"
+  ).length;
+  const gamesTabBadgeCount = pendingIncomingCount + unreadCount;
+  const friendsTabBadgeCount = incomingRequests.length;
 
   const refreshFriendState = useCallback(async () => {
     setFriendsLoading(true);
@@ -100,6 +167,19 @@ const MultiplayerMenuScreen = ({
     setGameRequestsLoading(false);
   }, []);
 
+  const refreshUnreadNotifications = useCallback(async () => {
+    const result = await fetchUnreadMultiplayerNotifications(20);
+    if (!result.ok) {
+      return;
+    }
+
+    setUnreadNotifications(result.notifications);
+  }, []);
+
+  useEffect(() => {
+    setActiveTab(initialTab === "friends" ? "friends" : "games");
+  }, [initialTab]);
+
   useEffect(() => {
     if (activeTab !== "games") {
       return;
@@ -115,6 +195,52 @@ const MultiplayerMenuScreen = ({
 
     void refreshFriendState();
   }, [activeTab, refreshFriendState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe = () => {};
+
+    void upsertPresence({ status: "online", lastSessionId: null });
+    void refreshUnreadNotifications();
+
+    void (async () => {
+      const result = await subscribeToMultiplayerInbox({
+        onNotification: () => {
+          if (cancelled) return;
+          void refreshUnreadNotifications();
+        },
+        onGameRequest: () => {
+          if (cancelled) return;
+          void refreshGameRequests();
+        },
+        onSessionChange: () => {
+          if (cancelled) return;
+          void refreshGameRequests();
+        },
+      });
+
+      if (result.ok) {
+        unsubscribe = result.unsubscribe;
+      }
+    })();
+
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void upsertPresence({ status: "online", lastSessionId: null });
+        void refreshUnreadNotifications();
+        void refreshGameRequests();
+      } else if (state === "background") {
+        void upsertPresence({ status: "away", lastSessionId: null });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      appStateSubscription.remove();
+      unsubscribe();
+      void upsertPresence({ status: "offline", lastSessionId: null });
+    };
+  }, [refreshGameRequests, refreshUnreadNotifications]);
 
   const handleSearchFriends = async () => {
     const trimmedQuery = friendSearch.trim();
@@ -225,6 +351,221 @@ const MultiplayerMenuScreen = ({
     setPendingFriendActionId(null);
   };
 
+  const groupedGames = groupAndSortGames(activeGames, activeGameFilter);
+
+  const handleOpenGame = async (game) => {
+    if (!game) return;
+    const sessionNotificationIds = unreadNotifications
+      .filter((notification) => notification?.payload?.sessionId === game.sessionId)
+      .map((notification) => notification.id);
+    if (sessionNotificationIds.length > 0) {
+      await markMultiplayerNotificationsRead(sessionNotificationIds);
+      await refreshUnreadNotifications();
+    }
+    await trackMultiplayerEvent("mp_notification_opened", {
+      sessionId: game.sessionId,
+    });
+    await trackMultiplayerEvent("mp_turn_started", {
+      sessionId: game.sessionId,
+      source: "menu_open_game",
+    });
+    onOpenActiveGame?.(game);
+  };
+
+  const renderGameCard = (game) => (
+    <Pressable
+      key={game.id}
+      style={styles.card}
+      onPress={() => {
+        if (game.status === "pending" && game.direction === "outgoing") {
+          setSelectedOutgoingGameRequest(game);
+          return;
+        }
+
+        if (game.status === "accepted" && game.archived !== true) {
+          void handleOpenGame(game);
+        }
+      }}
+      onLongPress={() => {
+        if (game.status === "accepted") {
+          setSelectedActiveGameForDeletion(game);
+        }
+      }}
+      delayLongPress={350}
+    >
+      <View style={styles.cardRow}>
+        <Text style={styles.cardTitle}>{game.friendName}</Text>
+        <Text style={styles.cardBadge}>
+          {game.status === "pending"
+            ? game.direction === "incoming"
+              ? "Request"
+              : "Pending"
+            : game.needsAction
+              ? "Your Turn"
+              : game.archived
+                ? "Archived"
+                : "Waiting"}
+        </Text>
+      </View>
+      {buildPresenceLabel(game.presenceStatus) ? (
+        <Text style={styles.cardPresenceText}>{buildPresenceLabel(game.presenceStatus)}</Text>
+      ) : null}
+      <Text style={styles.cardMeta}>Seed {game.seed}</Text>
+      <Text style={styles.cardSummary}>{game.summary}</Text>
+      {game.hasUnreadSessionUpdate ? (
+        <Text style={styles.cardUnreadText}>New activity</Text>
+      ) : null}
+      {game.status === "pending" && game.direction === "incoming" ? (
+        <View style={styles.cardActionRow}>
+          <TouchableOpacity
+            style={[
+              styles.gameRequestDeclineButton,
+              pendingGameActionId === game.id && styles.gameRequestButtonDisabled,
+            ]}
+            onPress={async () => {
+              try {
+                setPendingGameActionId(game.id);
+                const result = await declineMultiplayerGameRequest({
+                  requestId: game.id,
+                  senderId: game.friendId,
+                });
+                if (!result.ok) {
+                  setGameRequestsError(
+                    result.errorMessage ?? "Could not decline that game request."
+                  );
+                  return;
+                }
+                await refreshGameRequests();
+              } catch (_error) {
+                setGameRequestsError("Could not decline that game request.");
+              } finally {
+                setPendingGameActionId(null);
+              }
+            }}
+            disabled={pendingGameActionId === game.id}
+          >
+            <Text style={styles.gameRequestButtonText}>
+              {pendingGameActionId === game.id ? "Rejecting" : "Reject"}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.gameRequestAcceptButton,
+              pendingGameActionId === game.id && styles.gameRequestButtonDisabled,
+            ]}
+            onPress={async () => {
+              try {
+                setPendingGameActionId(game.id);
+                const result = await acceptMultiplayerGameRequest({
+                  requestId: game.id,
+                  senderId: game.friendId,
+                  senderUsername: game.friendName,
+                  senderDisplayName: game.friendDisplayName ?? game.friendName,
+                  seed: game.seed,
+                  gameType: game.gameType,
+                });
+                if (!result.ok) {
+                  setGameRequestsError(
+                    result.errorMessage ?? "Could not accept that game request."
+                  );
+                  return;
+                }
+                await refreshGameRequests();
+                onOpenActiveGame?.({
+                  ...game,
+                  sessionId: result.sessionId ?? null,
+                });
+                await trackMultiplayerEvent("mp_request_accepted", {
+                  requestId: game.id,
+                  sessionId: result.sessionId ?? null,
+                });
+              } catch (_error) {
+                setGameRequestsError("Could not accept that game request.");
+              } finally {
+                setPendingGameActionId(null);
+              }
+            }}
+            disabled={pendingGameActionId === game.id}
+          >
+            <Text style={styles.gameRequestButtonText}>
+              {pendingGameActionId === game.id ? "Accepting" : "Accept"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : game.status === "accepted" ? (
+        <>
+          {game.archived ? (
+            <TouchableOpacity
+              style={styles.primaryInlineButton}
+              onPress={async () => {
+                const nextSessionId = `mp_${Date.now()}_${Math.random()
+                  .toString(36)
+                  .slice(2, 10)}`;
+                const rematchResult = await createMultiplayerRematch({
+                  sessionId: game.sessionId,
+                  newSessionId: nextSessionId,
+                  seed: game.seed,
+                  gameType: game.gameType ?? "seeded",
+                });
+                if (!rematchResult.ok) {
+                  setGameRequestsError("Could not create a rematch right now.");
+                  return;
+                }
+                await trackMultiplayerEvent("mp_rematch_created", {
+                  fromSessionId: game.sessionId,
+                  newSessionId: rematchResult.sessionId ?? nextSessionId,
+                });
+                onOpenNewMultiplayerGame?.({
+                  ...game,
+                  sessionId: rematchResult.sessionId ?? nextSessionId,
+                });
+              }}
+            >
+              <Text style={styles.primaryInlineButtonText}>Rematch</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={styles.primaryInlineButton}
+                onPress={() => {
+                  void handleOpenGame(game);
+                }}
+              >
+                <Text style={styles.primaryInlineButtonText}>Open Game</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryInlineButton}
+                onPress={async () => {
+                  const result = await archiveMultiplayerSessionForUser({
+                    sessionId: game.sessionId,
+                  });
+                if (!result.ok) {
+                  setGameRequestsError(
+                    "Could not archive that multiplayer game right now."
+                  );
+                  return;
+                }
+                await trackMultiplayerEvent("mp_session_archived", {
+                  sessionId: game.sessionId,
+                });
+                await refreshGameRequests();
+              }}
+            >
+                <Text style={styles.secondaryInlineButtonText}>Archive</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </>
+      ) : (
+        <Text style={styles.cardAction}>
+          {game.direction === "outgoing"
+            ? "Waiting for response"
+            : "Request pending"}
+        </Text>
+      )}
+    </Pressable>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -246,33 +587,65 @@ const MultiplayerMenuScreen = ({
         </TouchableOpacity>
       </View>
       <Text style={styles.subtitle}>Start or resume games with friends.</Text>
+      <View style={styles.quickActionsRow}>
+        <TouchableOpacity
+          style={styles.quickActionButton}
+          onPress={onOpenInbox}
+          accessibilityLabel="Open multiplayer inbox"
+        >
+          <Text style={styles.quickActionText}>
+            Inbox {unreadCount > 0 ? `(${unreadCount})` : ""}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickActionButton}
+          onPress={onOpenNotificationSettings}
+          accessibilityLabel="Open multiplayer notification settings"
+        >
+          <Text style={styles.quickActionText}>Notification Settings</Text>
+        </TouchableOpacity>
+      </View>
 
       <View style={styles.tabRow}>
         <TouchableOpacity
           style={[styles.tabButton, activeTab === "games" && styles.tabButtonActive]}
           onPress={() => setActiveTab("games")}
         >
-          <Text
-            style={[
-              styles.tabButtonText,
-              activeTab === "games" && styles.tabButtonTextActive,
-            ]}
-          >
-            Active Games
-          </Text>
+          <View style={styles.tabLabelRow}>
+            <Text
+              style={[
+                styles.tabButtonText,
+                activeTab === "games" && styles.tabButtonTextActive,
+              ]}
+            >
+              Active Games
+            </Text>
+            {gamesTabBadgeCount > 0 ? (
+              <View style={styles.tabBadge}>
+                <Text style={styles.tabBadgeText}>{gamesTabBadgeCount}</Text>
+              </View>
+            ) : null}
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tabButton, activeTab === "friends" && styles.tabButtonActive]}
           onPress={() => setActiveTab("friends")}
         >
-          <Text
-            style={[
-              styles.tabButtonText,
-              activeTab === "friends" && styles.tabButtonTextActive,
-            ]}
-          >
-            Friends
-          </Text>
+          <View style={styles.tabLabelRow}>
+            <Text
+              style={[
+                styles.tabButtonText,
+                activeTab === "friends" && styles.tabButtonTextActive,
+              ]}
+            >
+              Friends
+            </Text>
+            {friendsTabBadgeCount > 0 ? (
+              <View style={styles.tabBadge}>
+                <Text style={styles.tabBadgeText}>{friendsTabBadgeCount}</Text>
+              </View>
+            ) : null}
+          </View>
         </TouchableOpacity>
       </View>
 
@@ -282,6 +655,96 @@ const MultiplayerMenuScreen = ({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          <View style={styles.filterChipRow}>
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                activeGameFilter === "all" && styles.filterChipActive,
+              ]}
+              onPress={() => setActiveGameFilter("all")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  activeGameFilter === "all" && styles.filterChipTextActive,
+                ]}
+              >
+                All
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                activeGameFilter === "needs_action" && styles.filterChipActive,
+              ]}
+              onPress={() => setActiveGameFilter("needs_action")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  activeGameFilter === "needs_action" &&
+                    styles.filterChipTextActive,
+                ]}
+              >
+                Needs Action
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                activeGameFilter === "pending" && styles.filterChipActive,
+              ]}
+              onPress={() => setActiveGameFilter("pending")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  activeGameFilter === "pending" && styles.filterChipTextActive,
+                ]}
+              >
+                Pending
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                activeGameFilter === "archived" && styles.filterChipActive,
+              ]}
+              onPress={() => setActiveGameFilter("archived")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  activeGameFilter === "archived" && styles.filterChipTextActive,
+                ]}
+              >
+                Archived
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {unreadNotifications.length > 0 ? (
+            <TouchableOpacity
+              style={styles.inlineStatusCard}
+              onPress={async () => {
+                const unreadIds = unreadNotifications.map((notification) => notification.id);
+                await markMultiplayerNotificationsRead(unreadIds);
+                await refreshUnreadNotifications();
+                const newest = unreadNotifications[0];
+                if (newest) {
+                  setLatestInboxMessage({
+                    title: "Notifications",
+                    text: "Marked multiplayer notifications as read.",
+                  });
+                }
+              }}
+            >
+              <Text style={styles.inlineStatusText}>
+                {`${unreadCount} unread multiplayer notification${
+                  unreadCount === 1 ? "" : "s"
+                }`}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
           {gameRequestsLoading ? (
             <View style={styles.emptyStateCard}>
               <Text style={styles.emptyStateTitle}>Loading Games</Text>
@@ -302,135 +765,43 @@ const MultiplayerMenuScreen = ({
               </Text>
             </View>
           ) : (
-            activeGames.map((game) => (
-              <Pressable
-                key={game.id}
-                style={styles.card}
-                onPress={() => {
-                  if (game.status === "pending" && game.direction === "outgoing") {
-                    setSelectedOutgoingGameRequest(game);
-                  }
-                }}
-                onLongPress={() => {
-                  if (game.status === "accepted") {
-                    setSelectedActiveGameForDeletion(game);
-                  }
-                }}
-                delayLongPress={350}
-              >
-                <View style={styles.cardRow}>
-                  <Text style={styles.cardTitle}>{game.friendName}</Text>
-                  <Text style={styles.cardBadge}>
-                    {game.status === "pending"
-                      ? game.direction === "incoming"
-                        ? "Request"
-                        : "Pending"
-                      : "Ready"}
+            <>
+              {groupedGames.yourTurn.length > 0 ? (
+                <View style={styles.sectionBlock}>
+                  <Text style={styles.sectionTitle}>Your Turn</Text>
+                  {groupedGames.yourTurn.map((game) => renderGameCard(game))}
+                </View>
+              ) : null}
+              {groupedGames.waiting.length > 0 ? (
+                <View style={styles.sectionBlock}>
+                  <Text style={styles.sectionTitle}>Waiting</Text>
+                  {groupedGames.waiting.map((game) => renderGameCard(game))}
+                </View>
+              ) : null}
+              {groupedGames.pending.length > 0 ? (
+                <View style={styles.sectionBlock}>
+                  <Text style={styles.sectionTitle}>Pending Requests</Text>
+                  {groupedGames.pending.map((game) => renderGameCard(game))}
+                </View>
+              ) : null}
+              {groupedGames.archived.length > 0 ? (
+                <View style={styles.sectionBlock}>
+                  <Text style={styles.sectionTitle}>Completed / Archived</Text>
+                  {groupedGames.archived.map((game) => renderGameCard(game))}
+                </View>
+              ) : null}
+              {groupedGames.yourTurn.length === 0 &&
+              groupedGames.waiting.length === 0 &&
+              groupedGames.pending.length === 0 &&
+              groupedGames.archived.length === 0 ? (
+                <View style={styles.emptyStateCard}>
+                  <Text style={styles.emptyStateTitle}>No Games In Filter</Text>
+                  <Text style={styles.emptyStateText}>
+                    Try another filter to see your multiplayer games.
                   </Text>
                 </View>
-                <Text style={styles.cardMeta}>Seed {game.seed}</Text>
-                <Text style={styles.cardSummary}>{game.summary}</Text>
-                {game.status === "pending" && game.direction === "incoming" ? (
-                  <View style={styles.cardActionRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.gameRequestDeclineButton,
-                        pendingGameActionId === game.id &&
-                          styles.gameRequestButtonDisabled,
-                      ]}
-                      onPress={async () => {
-                        try {
-                          setPendingGameActionId(game.id);
-                          const result = await declineMultiplayerGameRequest({
-                            requestId: game.id,
-                            senderId: game.friendId,
-                          });
-                          if (!result.ok) {
-                            setGameRequestsError(
-                              result.errorMessage ??
-                                "Could not decline that game request."
-                            );
-                            return;
-                          }
-                          await refreshGameRequests();
-                        } catch (_error) {
-                          setGameRequestsError(
-                            "Could not decline that game request."
-                          );
-                        } finally {
-                          setPendingGameActionId(null);
-                        }
-                      }}
-                      disabled={pendingGameActionId === game.id}
-                    >
-                      <Text style={styles.gameRequestButtonText}>
-                        {pendingGameActionId === game.id ? "Rejecting" : "Reject"}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[
-                        styles.gameRequestAcceptButton,
-                        pendingGameActionId === game.id &&
-                          styles.gameRequestButtonDisabled,
-                      ]}
-                      onPress={async () => {
-                        try {
-                          setPendingGameActionId(game.id);
-                          const result = await acceptMultiplayerGameRequest({
-                            requestId: game.id,
-                            senderId: game.friendId,
-                            senderUsername: game.friendName,
-                            senderDisplayName:
-                              game.friendDisplayName ?? game.friendName,
-                            seed: game.seed,
-                            gameType: game.gameType,
-                          });
-                          if (!result.ok) {
-                            setGameRequestsError(
-                              result.errorMessage ??
-                                "Could not accept that game request."
-                            );
-                            return;
-                          }
-                          await refreshGameRequests();
-                          onOpenActiveGame?.({
-                            ...game,
-                            sessionId: result.sessionId ?? null,
-                          });
-                        } catch (_error) {
-                          setGameRequestsError(
-                            "Could not accept that game request."
-                          );
-                        } finally {
-                          setPendingGameActionId(null);
-                        }
-                      }}
-                      disabled={pendingGameActionId === game.id}
-                    >
-                      <Text style={styles.gameRequestButtonText}>
-                        {pendingGameActionId === game.id ? "Accepting" : "Accept"}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : game.status === "accepted" ? (
-                  <>
-                    <TouchableOpacity
-                      style={styles.primaryInlineButton}
-                      onPress={() => onOpenActiveGame?.(game)}
-                    >
-                      <Text style={styles.primaryInlineButtonText}>Open Game</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.cardHint}>Tap and hold to delete</Text>
-                  </>
-                ) : (
-                  <Text style={styles.cardAction}>
-                    {game.direction === "outgoing"
-                      ? "Waiting for response"
-                      : "Request pending"}
-                  </Text>
-                )}
-              </Pressable>
-            ))
+              ) : null}
+            </>
           )}
         </ScrollView>
       ) : (
@@ -724,6 +1095,11 @@ const MultiplayerMenuScreen = ({
               );
               return;
             }
+            await trackMultiplayerEvent("mp_request_sent", {
+              receiverId: nextFriend.id,
+              gameType: "daily",
+              seed: dailySeed,
+            });
             setFriendActionMessage({
               title: "Game Request Sent",
               text: `Your Daily Game request to @${nextFriend.name} is waiting for them to accept.`,
@@ -751,6 +1127,11 @@ const MultiplayerMenuScreen = ({
               );
               return;
             }
+            await trackMultiplayerEvent("mp_request_sent", {
+              receiverId: nextFriend.id,
+              gameType: "random",
+              seed: randomSeed,
+            });
             setFriendActionMessage({
               title: "Game Request Sent",
               text: `Your New Game request to @${nextFriend.name} is waiting for them to accept.`,
@@ -777,6 +1158,11 @@ const MultiplayerMenuScreen = ({
               );
               return;
             }
+            await trackMultiplayerEvent("mp_request_sent", {
+              receiverId: nextFriend.id,
+              gameType: "seeded",
+              seed,
+            });
             setFriendActionMessage({
               title: "Game Request Sent",
               text: `Your seeded game request to @${nextFriend.name} is waiting for them to accept.`,
@@ -789,6 +1175,10 @@ const MultiplayerMenuScreen = ({
       <MessageOverlay
         message={friendActionMessage}
         onClose={() => setFriendActionMessage(null)}
+      />
+      <MessageOverlay
+        message={latestInboxMessage}
+        onClose={() => setLatestInboxMessage(null)}
       />
       <PendingGameRequestModal
         visible={selectedOutgoingGameRequest != null}
@@ -920,7 +1310,25 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 21,
     color: "#6a736f",
+    marginBottom: 10,
+  },
+  quickActionsRow: {
+    flexDirection: "row",
+    gap: 8,
     marginBottom: 12,
+  },
+  quickActionButton: {
+    borderRadius: 999,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#d9ccb6",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  quickActionText: {
+    color: "#2f6f4f",
+    fontSize: 12,
+    fontWeight: "800",
   },
   leaderboardButton: {
     marginBottom: 0,
@@ -950,6 +1358,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: "center",
   },
+  tabLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   tabButtonActive: {
     backgroundColor: "#2f6f4f",
     borderColor: "#2f6f4f",
@@ -960,6 +1373,45 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   tabButtonTextActive: {
+    color: "#fff",
+  },
+  tabBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#ef4444",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  tabBadgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  filterChipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  filterChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#d9ccb6",
+    backgroundColor: "#fff",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  filterChipActive: {
+    borderColor: "#2f6f4f",
+    backgroundColor: "#2f6f4f",
+  },
+  filterChipText: {
+    color: "#374151",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  filterChipTextActive: {
     color: "#fff",
   },
   scrollView: {
@@ -1002,6 +1454,18 @@ const styles = StyleSheet.create({
     marginTop: 6,
     color: "#5a5248",
     fontSize: 15,
+  },
+  cardPresenceText: {
+    marginTop: 4,
+    color: "#2f6f4f",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  cardUnreadText: {
+    marginTop: 8,
+    color: "#b45309",
+    fontSize: 12,
+    fontWeight: "800",
   },
   cardAction: {
     marginTop: 12,
@@ -1100,6 +1564,23 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 15,
     fontWeight: "800",
+  },
+  secondaryInlineButton: {
+    minWidth: 96,
+    minHeight: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#d7c9af",
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    marginTop: 8,
+  },
+  secondaryInlineButtonText: {
+    color: "#374151",
+    fontSize: 13,
+    fontWeight: "700",
   },
   gameRequestAcceptButton: {
     minWidth: 96,

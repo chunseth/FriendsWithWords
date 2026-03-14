@@ -91,6 +91,9 @@ const mockSetLocalPlayerId = jest.fn();
 const mockSubmitResolvedPlay = jest.fn();
 const mockSubmitSwapTurn = jest.fn(() => ({ ok: true }));
 const mockPassTurn = jest.fn();
+const mockMarkSessionSeen = jest.fn();
+const mockUpsertPresence = jest.fn();
+const mockTrackMultiplayerEvent = jest.fn();
 const mockRefreshContainerWindowPosition = jest.fn();
 const mockUpdateRackLayout = jest.fn();
 const mockResetController = jest.fn();
@@ -108,6 +111,15 @@ jest.mock("../../hooks/useAsyncCoopSession", () => ({
     submitSwapTurn: mockSubmitSwapTurn,
     passTurn: mockPassTurn,
   }),
+}));
+
+jest.mock("../../services/multiplayerInboxService", () => ({
+  markSessionSeen: (...args) => mockMarkSessionSeen(...args),
+  upsertPresence: (...args) => mockUpsertPresence(...args),
+}));
+
+jest.mock("../../services/analyticsService", () => ({
+  trackMultiplayerEvent: (...args) => mockTrackMultiplayerEvent(...args),
 }));
 
 jest.mock("../../hooks/useTileDragDropController", () => ({
@@ -193,6 +205,9 @@ describe("multiplayer smoke", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPassTurn.mockResolvedValue({ ok: true });
+    mockMarkSessionSeen.mockResolvedValue({ ok: true });
+    mockUpsertPresence.mockResolvedValue({ ok: true });
+    mockTrackMultiplayerEvent.mockResolvedValue({ ok: true });
   });
 
   it("renders the multiplayer screen shell", () => {

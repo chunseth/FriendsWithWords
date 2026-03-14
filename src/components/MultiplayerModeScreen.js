@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  Modal,
   Platform,
   SafeAreaView,
   StyleSheet,
@@ -20,6 +21,9 @@ import { buildResolvedSubmitPayload } from "../game/shared/turnResolution";
 import { validateSubmitTurn } from "../game/shared/validation";
 import { BLANK_LETTER } from "../game/shared/bag";
 import { dictionary } from "../utils/dictionary";
+import { markSessionSeen, upsertPresence } from "../services/multiplayerInboxService";
+import { setSessionReminderMute } from "../services/multiplayerNotificationSettingsService";
+import { trackMultiplayerEvent } from "../services/analyticsService";
 
 const DRAG_TILE_HALF_SIZE = 21;
 const BOARD_SIZE = 15;
@@ -237,6 +241,8 @@ const MultiplayerModeScreen = ({
   const [isSubmitAnimating, setIsSubmitAnimating] = useState(false);
   const [isSwapMode, setIsSwapMode] = useState(false);
   const [remoteUpdateBannerText, setRemoteUpdateBannerText] = useState("");
+  const [conflictModalVisible, setConflictModalVisible] = useState(false);
+  const [conflictDraft, setConflictDraft] = useState(null);
   const rackTileAnimationsRef = useRef({});
   const waitingRackTileAnimationsRef = useRef({});
   const waitingRackRef = useRef(waitingRack);
@@ -246,6 +252,33 @@ const MultiplayerModeScreen = ({
   const completionEventHandledRef = useRef(null);
   const remoteUpdateBannerOpacity = useRef(new Animated.Value(0)).current;
   const remoteUpdateBannerTranslateY = useRef(new Animated.Value(-10)).current;
+
+  const cloneBoard = useCallback(
+    (board) => (board ?? []).map((row) => row.map((cell) => (cell ? { ...cell } : null))),
+    []
+  );
+  const cloneRack = useCallback((rack) => (rack ?? []).map((tile) => ({ ...tile })), []);
+
+  const captureConflictDraft = useCallback(
+    (intent, options = {}) => {
+      const payload = {
+        intent,
+        draftBoard: cloneBoard(draftBoard),
+        draftRack: cloneRack(draftRack),
+        selectedCells: [...selectedCells],
+        selectedTiles: [...selectedTiles],
+        createdAt: Date.now(),
+        ...options,
+      };
+      setConflictDraft(payload);
+      return payload;
+    },
+    [cloneBoard, cloneRack, draftBoard, draftRack, selectedCells, selectedTiles]
+  );
+
+  const openConflictModal = useCallback(() => {
+    setConflictModalVisible(true);
+  }, []);
 
   useEffect(() => {
     console.log("[multiplayer-lifecycle] MultiplayerModeScreen mounted", {
@@ -264,6 +297,31 @@ const MultiplayerModeScreen = ({
   useEffect(() => {
     dictionary.load();
   }, []);
+
+  useEffect(() => {
+    void upsertPresence({
+      status: "online",
+      lastSessionId: session.sessionId ?? sessionId,
+    });
+
+    return () => {
+      void upsertPresence({
+        status: "away",
+        lastSessionId: session.sessionId ?? sessionId,
+      });
+    };
+  }, [session.sessionId, sessionId]);
+
+  useEffect(() => {
+    if (!session?.sessionId) {
+      return;
+    }
+
+    void markSessionSeen({
+      sessionId: session.sessionId,
+      seenRevision: session.boardRevision ?? 0,
+    });
+  }, [session.boardRevision, session.sessionId]);
 
   useEffect(() => {
     if (
@@ -328,6 +386,14 @@ const MultiplayerModeScreen = ({
       return undefined;
     }
 
+    if (remoteUpdateEvent.action === "conflict") {
+      void trackMultiplayerEvent("mp_turn_conflict", {
+        sessionId: session.sessionId,
+        source: "remote_event",
+      });
+      openConflictModal();
+    }
+
     const leadWord =
       Array.isArray(remoteUpdateEvent.words) &&
       remoteUpdateEvent.words.length > 0 &&
@@ -384,7 +450,13 @@ const MultiplayerModeScreen = ({
     return () => {
       animation.stop();
     };
-  }, [remoteUpdateBannerOpacity, remoteUpdateBannerTranslateY, remoteUpdateEvent]);
+  }, [
+    openConflictModal,
+    remoteUpdateBannerOpacity,
+    remoteUpdateBannerTranslateY,
+    remoteUpdateEvent,
+    session.sessionId,
+  ]);
 
   useEffect(() => {
     const targetWaitingRack =
@@ -1168,22 +1240,33 @@ const MultiplayerModeScreen = ({
       return next;
     });
     setSelectedCells([]);
+    captureConflictDraft("play", {
+      selectedCells: [...validation.placedCells],
+      selectedTiles: [],
+    });
 
     if (payload.drawnTiles.length === 0) {
       setDraftRack(payload.remainingRack);
       const result = await submitResolvedPlay(payload);
       if (!result?.ok) {
-        setMessage({
-          title: "Submit Turn",
-          text:
-            result?.reason === "revision_conflict"
-              ? "Session updated on another device. Your draft was not applied."
-              : result?.reason === "not_active_player"
+        await trackMultiplayerEvent("mp_turn_conflict", {
+          sessionId: session.sessionId,
+          source: "submit_without_animation",
+          reason: result?.reason ?? "unknown",
+        });
+        if (result?.reason === "revision_conflict") {
+          openConflictModal();
+        } else {
+          setMessage({
+            title: "Submit Turn",
+            text:
+              result?.reason === "not_active_player"
                 ? "It's no longer your turn."
                 : result?.reason === "session_not_active"
                   ? "This multiplayer run is no longer active."
                   : "Could not submit turn right now.",
-        });
+          });
+        }
       }
       return;
     }
@@ -1195,17 +1278,24 @@ const MultiplayerModeScreen = ({
       await animateRackInsertSequence(payload.drawnTiles);
       const result = await submitResolvedPlay(payload);
       if (!result?.ok) {
-        setMessage({
-          title: "Submit Turn",
-          text:
-            result?.reason === "revision_conflict"
-              ? "Session updated on another device. Your draft was not applied."
-              : result?.reason === "not_active_player"
+        await trackMultiplayerEvent("mp_turn_conflict", {
+          sessionId: session.sessionId,
+          source: "submit_with_animation",
+          reason: result?.reason ?? "unknown",
+        });
+        if (result?.reason === "revision_conflict") {
+          openConflictModal();
+        } else {
+          setMessage({
+            title: "Submit Turn",
+            text:
+              result?.reason === "not_active_player"
                 ? "It's no longer your turn."
                 : result?.reason === "session_not_active"
                   ? "This multiplayer run is no longer active."
                   : "Could not submit turn right now.",
-        });
+          });
+        }
       }
       await waitForNextFrame();
     } finally {
@@ -1226,6 +1316,8 @@ const MultiplayerModeScreen = ({
     session.sharedPremiumSquares,
     session.turn.number,
     submitResolvedPlay,
+    captureConflictDraft,
+    openConflictModal,
     waitForNextFrame,
   ]);
 
@@ -1271,10 +1363,16 @@ const MultiplayerModeScreen = ({
       return;
     }
 
+    captureConflictDraft("swap");
     const result = await Promise.resolve(
       submitSwapTurn({ selectedRackIndices: selectedTiles })
     );
-    if (!result?.ok) {
+      if (!result?.ok) {
+      await trackMultiplayerEvent("mp_turn_conflict", {
+        sessionId: session.sessionId,
+        source: "swap",
+        reason: result?.reason ?? "unknown",
+      });
       setMessage({
         title: "Swap Tiles",
         text:
@@ -1283,13 +1381,16 @@ const MultiplayerModeScreen = ({
           : result?.reason === "bag_empty"
             ? "The bag is empty."
             : result?.reason === "revision_conflict"
-              ? "Session updated on another device. Your swap was not applied."
+              ? "Session updated on another device. Your draft was not applied."
               : result?.reason === "not_active_player"
                 ? "It's no longer your turn."
                 : result?.reason === "session_not_active"
                   ? "This multiplayer run is no longer active."
                   : "Could not swap tiles right now.",
       });
+      if (result?.reason === "revision_conflict") {
+        openConflictModal();
+      }
       return;
     }
 
@@ -1303,6 +1404,8 @@ const MultiplayerModeScreen = ({
     selectedTiles,
     session.bag.remainingCount,
     submitSwapTurn,
+    captureConflictDraft,
+    openConflictModal,
   ]);
 
   const handlePassButtonPress = useCallback(async () => {
@@ -1318,19 +1421,28 @@ const MultiplayerModeScreen = ({
       clearSelection();
     }
 
+    captureConflictDraft("pass");
     const result = await passTurn();
     if (!result?.ok) {
+      await trackMultiplayerEvent("mp_turn_conflict", {
+        sessionId: session.sessionId,
+        source: "pass",
+        reason: result?.reason ?? "unknown",
+      });
       setMessage({
         title: "Pass Turn",
         text:
           result?.reason === "revision_conflict"
-            ? "Session updated on another device. Your pass was not applied."
+            ? "Session updated on another device. Your draft was not applied."
             : result?.reason === "not_active_player"
               ? "It's no longer your turn."
               : result?.reason === "session_not_active"
                 ? "This multiplayer run is no longer active."
                 : "Could not pass your turn right now.",
       });
+      if (result?.reason === "revision_conflict") {
+        openConflictModal();
+      }
     }
   }, [
     canLocalPlayerAct,
@@ -1339,7 +1451,146 @@ const MultiplayerModeScreen = ({
     isSwapMode,
     passTurn,
     selectedCells.length,
+    captureConflictDraft,
+    openConflictModal,
   ]);
+
+  const handleReplayConflictDraft = useCallback(async () => {
+    if (!conflictDraft) {
+      setConflictModalVisible(false);
+      return;
+    }
+    await trackMultiplayerEvent("mp_conflict_replay_attempted", {
+      sessionId: session.sessionId,
+      intent: conflictDraft.intent,
+    });
+
+    if (session.status !== "active") {
+      await trackMultiplayerEvent("mp_conflict_replay_failed", {
+        sessionId: session.sessionId,
+        reason: "session_not_active",
+      });
+      setConflictModalVisible(false);
+      setMessage({
+        title: "Draft Replay",
+        text: "Replay unavailable because this session is no longer active.",
+      });
+      return;
+    }
+
+    if (!canLocalPlayerAct) {
+      await trackMultiplayerEvent("mp_conflict_replay_failed", {
+        sessionId: session.sessionId,
+        reason: "not_active_player",
+      });
+      setConflictModalVisible(false);
+      setMessage({
+        title: "Draft Replay",
+        text: "Replay unavailable because it is no longer your turn.",
+      });
+      return;
+    }
+
+    if (conflictDraft.intent === "swap") {
+      setSelectedTiles(conflictDraft.selectedTiles ?? []);
+      setIsSwapMode(true);
+      setConflictModalVisible(false);
+      await trackMultiplayerEvent("mp_conflict_replay_applied", {
+        sessionId: session.sessionId,
+        intent: "swap",
+      });
+      return;
+    }
+
+    if (conflictDraft.intent === "pass") {
+      const result = await passTurn();
+      setConflictModalVisible(false);
+      if (!result?.ok) {
+        await trackMultiplayerEvent("mp_conflict_replay_failed", {
+          sessionId: session.sessionId,
+          reason: result?.reason ?? "unknown",
+        });
+        setMessage({
+          title: "Pass Turn",
+          text: "Could not replay the pass action right now.",
+        });
+        return;
+      }
+      await trackMultiplayerEvent("mp_conflict_replay_applied", {
+        sessionId: session.sessionId,
+        intent: "pass",
+      });
+      return;
+    }
+
+    const replayCells = conflictDraft.selectedCells ?? [];
+    const boardHasConflict = replayCells.some(({ row, col }) => {
+      const liveCell = session.sharedBoard?.[row]?.[col] ?? null;
+      return liveCell != null;
+    });
+
+    if (boardHasConflict) {
+      await trackMultiplayerEvent("mp_conflict_replay_failed", {
+        sessionId: session.sessionId,
+        reason: "draft_invalidated",
+      });
+      setConflictModalVisible(false);
+      setMessage({
+        title: "Draft Replay",
+        text: "Replay failed because one or more draft cells are now occupied.",
+      });
+      return;
+    }
+
+    setDraftBoard(cloneBoard(conflictDraft.draftBoard));
+    setDraftRack(cloneRack(conflictDraft.draftRack));
+    setSelectedCells([...replayCells]);
+    setIsSwapMode(false);
+    setSelectedTiles([]);
+    setConflictModalVisible(false);
+    await trackMultiplayerEvent("mp_conflict_replay_applied", {
+      sessionId: session.sessionId,
+      intent: "play",
+    });
+  }, [
+    canLocalPlayerAct,
+    cloneBoard,
+    cloneRack,
+    conflictDraft,
+    passTurn,
+    session.sessionId,
+    session.sharedBoard,
+    session.status,
+  ]);
+
+  const applySessionMute = useCallback(
+    async (hours) => {
+      const mutedUntil =
+        hours == null
+          ? null
+          : new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+      const result = await setSessionReminderMute({
+        sessionId: session.sessionId,
+        mutedUntil,
+      });
+      if (!result.ok) {
+        setMessage({
+          title: "Notification Mute",
+          text: "Could not update reminder mute right now.",
+        });
+        return;
+      }
+
+      setMessage({
+        title: "Notification Mute",
+        text:
+          hours == null
+            ? "Reminders enabled for this session."
+            : `Reminders muted for ${hours} hour${hours === 1 ? "" : "s"}.`,
+      });
+    },
+    [session.sessionId]
+  );
 
   const handleChooseBlankLetter = useCallback(
     (letter) => {
@@ -1427,6 +1678,43 @@ const MultiplayerModeScreen = ({
             <Text style={styles.completedBannerText}>
               Final score {session.sharedScore.finalScore ?? 0}
             </Text>
+          </View>
+        ) : null}
+        {session.status === "active" ? (
+          <View style={styles.sessionMuteRow}>
+            <Text style={styles.sessionMuteLabel}>Reminders:</Text>
+            <TouchableOpacity
+              style={styles.sessionMuteChip}
+              onPress={() => {
+                void applySessionMute(12);
+              }}
+            >
+              <Text style={styles.sessionMuteChipText}>12h</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.sessionMuteChip}
+              onPress={() => {
+                void applySessionMute(24);
+              }}
+            >
+              <Text style={styles.sessionMuteChipText}>24h</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.sessionMuteChip}
+              onPress={() => {
+                void applySessionMute(72);
+              }}
+            >
+              <Text style={styles.sessionMuteChipText}>3d</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.sessionMuteChip}
+              onPress={() => {
+                void applySessionMute(null);
+              }}
+            >
+              <Text style={styles.sessionMuteChipText}>Unmute</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
 
@@ -1677,6 +1965,37 @@ const MultiplayerModeScreen = ({
         onCancel={() => setPendingBlankPlacement(null)}
       />
       <MessageOverlay message={message} onClose={() => setMessage(null)} />
+      <Modal
+        visible={conflictModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setConflictModalVisible(false)}
+      >
+        <View style={styles.conflictOverlay}>
+          <View style={styles.conflictCard}>
+            <Text style={styles.conflictTitle}>Session Updated</Text>
+            <Text style={styles.conflictText}>
+              Session updated on another device. Your draft was not applied.
+            </Text>
+            <View style={styles.conflictActions}>
+              <TouchableOpacity
+                style={styles.conflictActionSecondary}
+                onPress={() => setConflictModalVisible(false)}
+              >
+                <Text style={styles.conflictActionSecondaryText}>Discard Draft</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.conflictActionPrimary}
+                onPress={() => {
+                  void handleReplayConflictDraft();
+                }}
+              >
+                <Text style={styles.conflictActionPrimaryText}>Replay Draft</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
       <InGameMenu
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
@@ -1846,6 +2165,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
   },
+  sessionMuteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingHorizontal: 10,
+    flexWrap: "wrap",
+  },
+  sessionMuteLabel: {
+    fontSize: 12,
+    color: "#4b5563",
+    fontWeight: "700",
+    marginRight: 4,
+  },
+  sessionMuteChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    backgroundColor: "#ffffff",
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  sessionMuteChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#374151",
+  },
   scoreSection: {
     width: "100%",
     alignItems: "center",
@@ -1981,6 +2329,58 @@ const styles = StyleSheet.create({
   controlIcon: {
     width: CONTROL_ICON_SIZE,
     height: CONTROL_ICON_SIZE,
+  },
+  conflictOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  conflictCard: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    padding: 18,
+    gap: 12,
+  },
+  conflictTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  conflictText: {
+    fontSize: 14,
+    color: "#374151",
+    lineHeight: 20,
+  },
+  conflictActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  conflictActionPrimary: {
+    borderRadius: 8,
+    backgroundColor: "#2563eb",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  conflictActionPrimaryText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  conflictActionSecondary: {
+    borderRadius: 8,
+    backgroundColor: "#e5e7eb",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  conflictActionSecondaryText: {
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "700",
   },
   dragOverlayContainer: {
     position: "absolute",

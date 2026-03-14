@@ -7,6 +7,9 @@ import {
 
 const GAME_REQUESTS_TABLE = "multiplayer_game_requests";
 const PROFILES_TABLE = "profiles";
+const SESSIONS_TABLE = "multiplayer_sessions";
+const SESSION_USER_STATE_TABLE = "multiplayer_user_session_state";
+const PRESENCE_TABLE = "user_presence";
 
 const getAuthContext = async () => {
   if (!isBackendConfigured()) {
@@ -39,6 +42,9 @@ const buildRequestSummary = ({
   request,
   otherProfile,
   currentUserId,
+  sessionRow = null,
+  sessionUserStateRow = null,
+  presenceRow = null,
 }) => ({
   id: request.id,
   direction: request.sender_id === currentUserId ? "outgoing" : "incoming",
@@ -49,6 +55,23 @@ const buildRequestSummary = ({
   gameType: request.game_type,
   status: request.status,
   sessionId: request.session_id ?? null,
+  archived:
+    request.status === "accepted"
+      ? (sessionRow?.status ?? "active") === "archived"
+      : false,
+  hasUnreadSessionUpdate:
+    request.status === "accepted" &&
+    typeof sessionRow?.board_revision === "number"
+      ? sessionRow.board_revision >
+        (sessionUserStateRow?.last_seen_revision ?? 0)
+      : false,
+  needsAction:
+    (request.status === "pending" && request.receiver_id === currentUserId) ||
+    (request.status === "accepted" &&
+      sessionRow?.active_player_id === currentUserId &&
+      (sessionRow?.status ?? "active") === "active"),
+  presenceStatus: presenceRow?.status ?? null,
+  presenceLastActiveAt: presenceRow?.last_active_at ?? null,
   createdAt: request.created_at,
   updatedAt: request.updated_at,
   summary:
@@ -121,6 +144,71 @@ export const loadMultiplayerGameRequests = async () => {
     (profiles ?? []).map((profile) => [profile.id, profile])
   );
 
+  const acceptedSessionIds = Array.from(
+    new Set(
+      (requestRows ?? [])
+        .filter((request) => request.status === "accepted" && request.session_id)
+        .map((request) => request.session_id)
+    )
+  );
+
+  let sessionMap = new Map();
+  if (acceptedSessionIds.length > 0) {
+    const { data: sessions, error: sessionsError } = await supabase
+      .from(SESSIONS_TABLE)
+      .select("session_id, board_revision, active_player_id, status")
+      .in("session_id", acceptedSessionIds);
+
+    if (sessionsError) {
+      return {
+        ok: false,
+        reason: "fetch_failed",
+        error: sessionsError,
+        errorMessage: "Could not load multiplayer games right now.",
+        requests: [],
+      };
+    }
+
+    sessionMap = new Map((sessions ?? []).map((session) => [session.session_id, session]));
+  }
+
+  let sessionUserStateMap = new Map();
+  if (acceptedSessionIds.length > 0) {
+    const { data: sessionStates, error: sessionStatesError } = await supabase
+      .from(SESSION_USER_STATE_TABLE)
+      .select("session_id, last_seen_revision")
+      .eq("user_id", userId)
+      .in("session_id", acceptedSessionIds);
+
+    if (sessionStatesError) {
+      return {
+        ok: false,
+        reason: "fetch_failed",
+        error: sessionStatesError,
+        errorMessage: "Could not load multiplayer games right now.",
+        requests: [],
+      };
+    }
+
+    sessionUserStateMap = new Map(
+      (sessionStates ?? []).map((entry) => [entry.session_id, entry])
+    );
+  }
+
+  let presenceMap = new Map();
+  if (otherIds.length > 0) {
+    const { data: presenceRows, error: presenceError } = await supabase
+      .from(PRESENCE_TABLE)
+      .select("user_id, status, last_active_at")
+      .in("user_id", otherIds);
+
+    if (!presenceError) {
+      presenceMap = new Map(
+        (presenceRows ?? []).map((entry) => [entry.user_id, entry])
+      );
+    }
+  }
+
   return {
     ok: true,
     requests: (requestRows ?? []).map((request) => {
@@ -130,6 +218,9 @@ export const loadMultiplayerGameRequests = async () => {
         request,
         otherProfile: profileMap.get(otherId),
         currentUserId: userId,
+        sessionRow: sessionMap.get(request.session_id ?? ""),
+        sessionUserStateRow: sessionUserStateMap.get(request.session_id ?? ""),
+        presenceRow: presenceMap.get(otherId) ?? null,
       });
     }),
   };
