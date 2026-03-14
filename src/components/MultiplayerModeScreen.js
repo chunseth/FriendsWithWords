@@ -213,6 +213,7 @@ const MultiplayerModeScreen = ({
     remoteUpdateEvent,
     submitResolvedPlay,
     submitSwapTurn,
+    passTurn,
   } = useAsyncCoopSession({ sessionId });
 
   const containerRef = useRef(null);
@@ -1170,7 +1171,20 @@ const MultiplayerModeScreen = ({
 
     if (payload.drawnTiles.length === 0) {
       setDraftRack(payload.remainingRack);
-      submitResolvedPlay(payload);
+      const result = await submitResolvedPlay(payload);
+      if (!result?.ok) {
+        setMessage({
+          title: "Submit Turn",
+          text:
+            result?.reason === "revision_conflict"
+              ? "Session updated on another device. Your draft was not applied."
+              : result?.reason === "not_active_player"
+                ? "It's no longer your turn."
+                : result?.reason === "session_not_active"
+                  ? "This multiplayer run is no longer active."
+                  : "Could not submit turn right now.",
+        });
+      }
       return;
     }
 
@@ -1179,7 +1193,20 @@ const MultiplayerModeScreen = ({
 
     try {
       await animateRackInsertSequence(payload.drawnTiles);
-      submitResolvedPlay(payload);
+      const result = await submitResolvedPlay(payload);
+      if (!result?.ok) {
+        setMessage({
+          title: "Submit Turn",
+          text:
+            result?.reason === "revision_conflict"
+              ? "Session updated on another device. Your draft was not applied."
+              : result?.reason === "not_active_player"
+                ? "It's no longer your turn."
+                : result?.reason === "session_not_active"
+                  ? "This multiplayer run is no longer active."
+                  : "Could not submit turn right now.",
+        });
+      }
       await waitForNextFrame();
     } finally {
       rackTileAnimationsRef.current = {};
@@ -1253,9 +1280,15 @@ const MultiplayerModeScreen = ({
         text:
           result?.reason === "no_tiles_selected"
             ? "Choose at least one tile to swap."
-            : result?.reason === "bag_empty"
-              ? "The bag is empty."
-            : "Could not swap tiles right now.",
+          : result?.reason === "bag_empty"
+            ? "The bag is empty."
+            : result?.reason === "revision_conflict"
+              ? "Session updated on another device. Your swap was not applied."
+              : result?.reason === "not_active_player"
+                ? "It's no longer your turn."
+                : result?.reason === "session_not_active"
+                  ? "This multiplayer run is no longer active."
+                  : "Could not swap tiles right now.",
       });
       return;
     }
@@ -1270,6 +1303,42 @@ const MultiplayerModeScreen = ({
     selectedTiles,
     session.bag.remainingCount,
     submitSwapTurn,
+  ]);
+
+  const handlePassButtonPress = useCallback(async () => {
+    if (!canLocalPlayerAct || isSubmitAnimating) {
+      return;
+    }
+
+    if (isSwapMode) {
+      setSelectedTiles([]);
+      setIsSwapMode(false);
+    }
+    if (selectedCells.length > 0) {
+      clearSelection();
+    }
+
+    const result = await passTurn();
+    if (!result?.ok) {
+      setMessage({
+        title: "Pass Turn",
+        text:
+          result?.reason === "revision_conflict"
+            ? "Session updated on another device. Your pass was not applied."
+            : result?.reason === "not_active_player"
+              ? "It's no longer your turn."
+              : result?.reason === "session_not_active"
+                ? "This multiplayer run is no longer active."
+                : "Could not pass your turn right now.",
+      });
+    }
+  }, [
+    canLocalPlayerAct,
+    clearSelection,
+    isSubmitAnimating,
+    isSwapMode,
+    passTurn,
+    selectedCells.length,
   ]);
 
   const handleChooseBlankLetter = useCallback(
@@ -1515,6 +1584,19 @@ const MultiplayerModeScreen = ({
                 ) : (
                   <Text style={styles.controlButtonTextLarge}>Swap</Text>
                 )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.controlButtonNarrow,
+                  (!canLocalPlayerAct || isSubmitAnimating) &&
+                    styles.controlButtonDisabled,
+                ]}
+                disabled={!canLocalPlayerAct || isSubmitAnimating}
+                onPress={handlePassButtonPress}
+                accessibilityLabel="Pass turn"
+              >
+                <Text style={styles.controlButtonTextLarge}>Pass</Text>
               </TouchableOpacity>
 
               <TouchableOpacity

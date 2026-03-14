@@ -2670,7 +2670,11 @@ class Dictionary {
       /(s|x|z|ch|sh|o)es$/.test(word) &&
       word.length > 4
     ) {
-      return this.hasKnownBaseForm([word.slice(0, -2)]);
+      // Try both: box->boxes (drop -es) and amaze->amazes (drop -s only)
+      return this.hasKnownBaseForm(
+        [word.slice(0, -2), word.slice(0, -1)],
+        word
+      );
     }
 
     // Plurals of nouns ending in f/fe: life→lives, calf→calves, wolf→wolves, knife→knives, wife→wives

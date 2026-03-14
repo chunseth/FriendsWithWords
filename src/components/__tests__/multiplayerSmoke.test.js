@@ -192,6 +192,7 @@ jest.mock("../../utils/dictionary", () => ({
 describe("multiplayer smoke", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPassTurn.mockResolvedValue({ ok: true });
   });
 
   it("renders the multiplayer screen shell", () => {
@@ -225,6 +226,25 @@ describe("multiplayer smoke", () => {
     expect(texts).toContain("Score");
     expect(texts).toContain("Mock Game Board");
     expect(rackLabels).toEqual(["Mock Rack (2)", "Mock Rack (2)"]);
+  });
+
+  it("wires pass turn button to the multiplayer hook action", async () => {
+    let tree;
+    await act(async () => {
+      tree = renderer.create(<MultiplayerModeScreen onBack={jest.fn()} />);
+    });
+
+    const passButton = tree.root.find(
+      (node) =>
+        node.type === TouchableOpacity &&
+        node.props.accessibilityLabel === "Pass turn"
+    );
+
+    await act(async () => {
+      await passButton.props.onPress();
+    });
+
+    expect(mockPassTurn).toHaveBeenCalledTimes(1);
   });
 
   it("emits multiplayer completion payload with consistency bonus only", () => {

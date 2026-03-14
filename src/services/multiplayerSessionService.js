@@ -4,9 +4,7 @@ import { isBackendConfigured } from "../config/backend";
 const MULTIPLAYER_SESSIONS_TABLE = "multiplayer_sessions";
 const getMultiplayerSessionChannelName = (sessionId) =>
   `multiplayer-session:${sessionId}`;
-const hasRealtimeBroadcastEncodingSupport = () =>
-  typeof globalThis?.TextEncoder === "function" &&
-  typeof globalThis?.TextDecoder === "function";
+const SESSION_UPDATE_DEBOUNCE_MS = 150;
 
 const buildSessionRow = (session) => ({
   session_id: session.sessionId,
@@ -90,24 +88,52 @@ export const subscribeToRemoteMultiplayerSession = async (
     };
   }
 
+  let refetchTimeoutId = null;
+  let isFetching = false;
+  let shouldRefetchAgain = false;
+
   const emitLatestSession = async () => {
+    if (isFetching) {
+      shouldRefetchAgain = true;
+      return;
+    }
+
+    isFetching = true;
     console.log("[multiplayer-realtime] refetching latest session", {
       sessionId,
     });
-    const latestSessionResult = await loadRemoteMultiplayerSession(sessionId);
-    if (
-      latestSessionResult.ok &&
-      latestSessionResult.session &&
-      typeof onSession === "function"
-    ) {
-      console.log("[multiplayer-realtime] received latest session", {
-        sessionId,
-        boardRevision: latestSessionResult.session.boardRevision ?? 0,
-        savedAt: latestSessionResult.session.savedAt ?? null,
-      });
-      onSession(latestSessionResult.session);
+    try {
+      const latestSessionResult = await loadRemoteMultiplayerSession(sessionId);
+      if (
+        latestSessionResult.ok &&
+        latestSessionResult.session &&
+        typeof onSession === "function"
+      ) {
+        console.log("[multiplayer-realtime] received latest session", {
+          sessionId,
+          boardRevision: latestSessionResult.session.boardRevision ?? 0,
+          savedAt: latestSessionResult.session.savedAt ?? null,
+        });
+        onSession(latestSessionResult.session);
+      }
+    } finally {
+      isFetching = false;
+      if (shouldRefetchAgain) {
+        shouldRefetchAgain = false;
+        void emitLatestSession();
+      }
+    }
+  };
+
+  const scheduleEmitLatestSession = () => {
+    if (refetchTimeoutId != null) {
       return;
     }
+
+    refetchTimeoutId = setTimeout(() => {
+      refetchTimeoutId = null;
+      void emitLatestSession();
+    }, SESSION_UPDATE_DEBOUNCE_MS);
   };
 
   console.log("[multiplayer-realtime] starting session subscription", {
@@ -116,20 +142,6 @@ export const subscribeToRemoteMultiplayerSession = async (
   const channel = supabase
     .channel(getMultiplayerSessionChannelName(sessionId))
     .on(
-      "broadcast",
-      { event: "session_updated" },
-      async (payload) => {
-        if (payload?.payload?.sessionId !== sessionId) {
-          return;
-        }
-        console.log("[multiplayer-realtime] broadcast update received", {
-          sessionId,
-          boardRevision: payload?.payload?.boardRevision ?? null,
-        });
-        await emitLatestSession();
-      }
-    )
-    .on(
       "postgres_changes",
       {
         event: "*",
@@ -137,11 +149,11 @@ export const subscribeToRemoteMultiplayerSession = async (
         table: MULTIPLAYER_SESSIONS_TABLE,
         filter: `session_id=eq.${sessionId}`,
       },
-      async () => {
+      () => {
         console.log("[multiplayer-realtime] postgres change received", {
           sessionId,
         });
-        await emitLatestSession();
+        scheduleEmitLatestSession();
       }
     )
     .subscribe((status) => {
@@ -151,7 +163,7 @@ export const subscribeToRemoteMultiplayerSession = async (
       });
       onStatusChange?.(status);
       if (status === "SUBSCRIBED") {
-        void emitLatestSession();
+        scheduleEmitLatestSession();
       }
       if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
         console.warn(
@@ -168,62 +180,40 @@ export const subscribeToRemoteMultiplayerSession = async (
       console.log("[multiplayer-realtime] removing session subscription", {
         sessionId,
       });
+      if (refetchTimeoutId != null) {
+        clearTimeout(refetchTimeoutId);
+      }
       supabase.removeChannel(channel);
     },
   };
 };
 
-const broadcastRemoteMultiplayerSessionUpdate = async ({
-  sessionId,
-  boardRevision,
-}) => {
+const saveRemoteMultiplayerSessionSnapshot = async (session) => {
   const supabase = getSupabaseClient();
-  if (!supabase || !sessionId || !hasRealtimeBroadcastEncodingSupport()) {
-    return;
+  if (!supabase) {
+    return { ok: false, reason: "backend_not_configured", session: null };
   }
 
-  console.log("[multiplayer-realtime] broadcasting session update", {
-    sessionId,
-    boardRevision,
+  console.log("[multiplayer-realtime] saving remote session", {
+    sessionId: session.sessionId,
+    boardRevision: session.boardRevision ?? 0,
+    activePlayerId: session.turn?.activePlayerId ?? null,
   });
-  const channel = supabase.channel(getMultiplayerSessionChannelName(sessionId));
+  const row = buildSessionRow(session);
+  const { data, error } = await supabase
+    .from(MULTIPLAYER_SESSIONS_TABLE)
+    .upsert(row, { onConflict: "session_id" })
+    .select("session_payload")
+    .single();
 
-  await new Promise((resolve) => {
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      supabase.removeChannel(channel);
-      resolve();
-    };
+  if (error) {
+    return { ok: false, reason: "write_failed", error, session: null };
+  }
 
-    channel.subscribe(async (status) => {
-      if (status === "SUBSCRIBED") {
-        try {
-          await channel.send({
-            type: "broadcast",
-            event: "session_updated",
-            payload: {
-              sessionId,
-              boardRevision,
-            },
-          });
-        } catch (error) {
-          console.warn(
-            "Failed to broadcast multiplayer session update",
-            sessionId,
-            error
-          );
-        }
-        finish();
-        return;
-      }
-
-      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        finish();
-      }
-    });
-  });
+  return {
+    ok: true,
+    session: data?.session_payload ?? session,
+  };
 };
 
 export const saveRemoteMultiplayerSession = async (session) => {
@@ -250,30 +240,70 @@ export const saveRemoteMultiplayerSession = async (session) => {
     };
   }
 
-  console.log("[multiplayer-realtime] saving remote session", {
-    sessionId: session.sessionId,
-    boardRevision: session.boardRevision ?? 0,
-    activePlayerId: session.turn?.activePlayerId ?? null,
-  });
-  const row = buildSessionRow(session);
-  const { data, error } = await supabase
-    .from(MULTIPLAYER_SESSIONS_TABLE)
-    .upsert(row, { onConflict: "session_id" })
-    .select("session_payload")
-    .single();
+  return saveRemoteMultiplayerSessionSnapshot(session);
+};
 
-  if (error) {
-    return { ok: false, reason: "write_failed", error, session: null };
+export const commitRemoteMultiplayerTurn = async ({
+  sessionId,
+  expectedRevision,
+  action,
+  nextSession,
+}) => {
+  if (!isBackendConfigured()) {
+    return { ok: false, reason: "backend_not_configured", session: null };
   }
 
-  await broadcastRemoteMultiplayerSessionUpdate({
-    sessionId: session.sessionId,
-    boardRevision: session.boardRevision ?? 0,
+  if (
+    !sessionId ||
+    typeof sessionId !== "string" ||
+    !Number.isInteger(expectedRevision) ||
+    !action ||
+    !nextSession
+  ) {
+    return { ok: false, reason: "invalid_payload", session: null };
+  }
+
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { ok: false, reason: "backend_not_configured", session: null };
+  }
+
+  const sessionResult = await ensureSupabaseSession();
+  if (!sessionResult.ok) {
+    return {
+      ok: false,
+      reason: sessionResult.reason ?? "auth_failed",
+      error: sessionResult.error ?? null,
+      session: null,
+    };
+  }
+
+  const { data, error } = await supabase.rpc("multiplayer_commit_turn", {
+    p_session_id: sessionId,
+    p_expected_revision: expectedRevision,
+    p_action: action,
+    p_session_payload: nextSession,
   });
+
+  if (error) {
+    return { ok: false, reason: "rpc_failed", error, session: null };
+  }
+
+  if (!data?.ok) {
+    return {
+      ok: false,
+      reason: data?.reason ?? "commit_failed",
+      session: data?.session ?? null,
+      currentRevision:
+        typeof data?.current_revision === "number" ? data.current_revision : null,
+      status: data?.status ?? null,
+      activePlayerId: data?.active_player_id ?? null,
+    };
+  }
 
   return {
     ok: true,
-    session: data?.session_payload ?? session,
+    session: data.session ?? null,
   };
 };
 

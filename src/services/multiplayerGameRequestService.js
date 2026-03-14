@@ -3,7 +3,6 @@ import { isBackendConfigured } from "../config/backend";
 import { createInitialSession } from "../hooks/useAsyncCoopSession";
 import {
   archiveRemoteMultiplayerSession,
-  saveRemoteMultiplayerSession,
 } from "./multiplayerSessionService";
 
 const GAME_REQUESTS_TABLE = "multiplayer_game_requests";
@@ -230,7 +229,6 @@ export const acceptMultiplayerGameRequest = async ({
   }
 
   const { supabase, userId } = authContext;
-  const timestamp = new Date().toISOString();
   const sessionId = `mp_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2, 10)}`;
@@ -269,39 +267,44 @@ export const acceptMultiplayerGameRequest = async ({
     ],
   });
 
-  const saveSessionResult = await saveRemoteMultiplayerSession(session);
-  if (!saveSessionResult.ok) {
-    return {
-      ok: false,
-      reason: saveSessionResult.reason ?? "session_write_failed",
-      error: saveSessionResult.error ?? null,
-      errorMessage: "Could not accept that game request.",
-    };
-  }
+  const participantPlayerIds = Array.isArray(session.players)
+    ? session.players.map((player) => player.id).filter(Boolean)
+    : [];
 
-  const { error } = await supabase
-    .from(GAME_REQUESTS_TABLE)
-    .update({
-      status: "accepted",
-      session_id: sessionId,
-      responded_at: timestamp,
-      updated_at: timestamp,
-    })
-    .eq("id", requestId)
-    .eq("receiver_id", userId)
-    .eq("sender_id", senderId)
-    .eq("status", "pending");
+  const { data, error } = await supabase.rpc("accept_multiplayer_game_request", {
+    p_request_id: requestId,
+    p_session_id: sessionId,
+    p_mode_id: session.modeId,
+    p_seed: seed,
+    p_game_type: gameType,
+    p_active_player_id: session.turn?.activePlayerId ?? senderId ?? null,
+    p_participant_player_ids: participantPlayerIds,
+    p_session_payload: session,
+  });
 
   if (error) {
     return {
       ok: false,
-      reason: "write_failed",
+      reason: "rpc_failed",
       error,
       errorMessage: "Could not accept that game request.",
     };
   }
 
-  return { ok: true, reason: "request_accepted", sessionId };
+  if (!data?.ok) {
+    return {
+      ok: false,
+      reason: data?.reason ?? "request_accept_failed",
+      error: data ?? null,
+      errorMessage: "Could not accept that game request.",
+    };
+  }
+
+  return {
+    ok: true,
+    reason: data?.reason ?? "request_accepted",
+    sessionId: data?.session_id ?? sessionId,
+  };
 };
 
 export const declineMultiplayerGameRequest = async ({ requestId, senderId }) => {

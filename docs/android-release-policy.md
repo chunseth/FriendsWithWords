@@ -43,6 +43,7 @@ Example:
 - `1.1.1` -> `10101`
 - `1.2.0` -> `10200`
 - `1.3.0` -> `10300`
+- `1.3.1` -> `10301`
 
 ## Release Signing Policy
 - Debug keystore must never be used for release builds
