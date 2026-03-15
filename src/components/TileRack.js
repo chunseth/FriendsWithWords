@@ -28,6 +28,7 @@ function getDisplacementOffset(rackIndex, fromIdx, toIdx) {
 function DraggableTileInner({
   index,
   tile,
+  tileTheme,
   onDragStart,
   onDragUpdate,
   onDrop,
@@ -144,8 +145,21 @@ function DraggableTileInner({
   if (clearReturnScale) transform.push({ scale: clearReturnScale });
   const tileStyle = [
     styles.tile,
+    tileTheme
+      ? {
+          backgroundColor: tileTheme.tileBackground,
+          borderColor: tileTheme.tileBorder,
+        }
+      : null,
     isUsed && styles.tileUsed,
+    isUsed && tileTheme ? { backgroundColor: tileTheme.tileUsedBackground } : null,
     isSwapSelected && styles.tileSwapSelected,
+    isSwapSelected && tileTheme
+      ? {
+          borderColor: tileTheme.tileSwapBorder,
+          backgroundColor: tileTheme.tileSwapBackground,
+        }
+      : null,
     isDragging && styles.tileDragging,
     collapseInRack && styles.tileCollapsed,
     animationState?.opacity ? { opacity: animationState.opacity } : null,
@@ -213,10 +227,15 @@ function DraggableTileInner({
           ) : null}
         </Animated.View>
       ) : null}
-      {tile.value > 0 && <Text style={styles.tileValue}>{tile.value}</Text>}
+      {tile.value > 0 && (
+        <Text style={[styles.tileValue, tileTheme ? { color: tileTheme.tileValue } : null]}>
+          {tile.value}
+        </Text>
+      )}
       <Text
         style={[
           styles.tileLetter,
+          tileTheme ? { color: tileTheme.tileLetter } : null,
           (tile.letter === " " || tile.letter === "") && styles.tileLetterBlank,
         ]}
       >
@@ -252,6 +271,7 @@ function tilePropsEqual(a, b) {
     a.onPress !== b.onPress
   )
     return false;
+  if (a.tileTheme !== b.tileTheme) return false;
   const ta = a.tile;
   const tb = b.tile;
   return (
@@ -269,6 +289,7 @@ const DraggableTile = React.memo(DraggableTileInner, tilePropsEqual);
 
 const TileRack = ({
   tiles,
+  isDarkMode = false,
   onDragStart,
   onDragUpdate,
   onDrop,
@@ -296,6 +317,7 @@ const TileRack = ({
   interactionsDisabled = false,
   swapMultiplier = 1,
 }) => {
+  const tileTheme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const lastOrderRef = useRef([]);
   const prevShuffleTriggerRef = useRef(0);
   const animatedValuesRef = useRef(null);
@@ -598,10 +620,16 @@ const TileRack = ({
   return (
     <View
       ref={rackRootRef}
-      style={[styles.container, isSwapMode && styles.containerSwapMode]}
+      style={[
+        styles.container,
+        {
+          backgroundColor: tileTheme.rackBackground,
+          borderColor: isSwapMode ? tileTheme.swapBorder : "transparent",
+        },
+      ]}
     >
       {isSwapMode && !interactionsDisabled && (
-        <Text style={styles.swapLabel}>
+        <Text style={[styles.swapLabel, { color: tileTheme.swapLabel }]}>
           {`click tiles to swap! (- ${swapMultiplier.toFixed(1)}x)`}
         </Text>
       )}
@@ -640,6 +668,7 @@ const TileRack = ({
                       : draggingRackIndex === tile.rackIndex)
                   }
                   animationState={tileAnimationStates[tile.id]}
+                  tileTheme={tileTheme}
                   interactionsDisabled={interactionsDisabled}
                   translateX={getAnimatedValue(tile.id)}
                   displacementX={
@@ -654,6 +683,32 @@ const TileRack = ({
       </View>
     </View>
   );
+};
+
+const LIGHT_THEME = {
+  rackBackground: "#f5f6f7",
+  swapBorder: "#2980b9",
+  swapLabel: "#2980b9",
+  tileBackground: "#f5ebe0",
+  tileBorder: "#bdc3c7",
+  tileUsedBackground: "#ebe0d5",
+  tileSwapBorder: "#2980b9",
+  tileSwapBackground: "#e8f4fc",
+  tileLetter: "#2c3e50",
+  tileValue: "#7f8c8d",
+};
+
+const DARK_THEME = {
+  rackBackground: "#4b5563",
+  swapBorder: "#1d4ed8",
+  swapLabel: "#dbeafe",
+  tileBackground: "#e2e8f0",
+  tileBorder: "#94a3b8",
+  tileUsedBackground: "#cfd8e3",
+  tileSwapBorder: "#1d4ed8",
+  tileSwapBackground: "#c7dcfb",
+  tileLetter: "#111827",
+  tileValue: "#374151",
 };
 
 const styles = StyleSheet.create({

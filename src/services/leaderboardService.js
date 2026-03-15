@@ -17,6 +17,7 @@ export const submitCompletedScore = async ({
   finalScoreBreakdown,
   isDailySeed = false,
   scoreMode = LEADERBOARD_SCORE_MODE_SOLO,
+  displayNameOverride = null,
 }) => {
   if (!isBackendConfigured()) {
     return { ok: false, reason: "backend_not_configured" };
@@ -51,6 +52,10 @@ export const submitCompletedScore = async ({
   }
 
   const playerProfile = await loadOrCreatePlayerProfile();
+  const resolvedDisplayName =
+    typeof displayNameOverride === "string" && displayNameOverride.trim().length > 0
+      ? displayNameOverride.trim()
+      : playerProfile.displayName;
   const normalizedScoreMode = normalizeScoreMode(scoreMode);
   const scrabbleBonus = finalScoreBreakdown.scrabbleBonus ?? 0;
   const consistencyBonus = finalScoreBreakdown.consistencyBonusTotal ?? 0;
@@ -70,7 +75,7 @@ export const submitCompletedScore = async ({
 
   const submission = {
     player_id: authUserId,
-    display_name: playerProfile.displayName,
+    display_name: resolvedDisplayName,
     seed,
     score_mode: normalizedScoreMode,
     is_daily_seed: isDailySeed,

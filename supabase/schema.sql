@@ -107,6 +107,52 @@ begin
 end
 $$;
 
+do $$
+begin
+  if exists (
+    select 1
+    from pg_publication
+    where pubname = 'supabase_realtime'
+  ) and to_regclass('public.friend_requests') is not null and not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'friend_requests'
+  ) then
+    alter publication supabase_realtime add table public.friend_requests;
+  end if;
+
+  if exists (
+    select 1
+    from pg_publication
+    where pubname = 'supabase_realtime'
+  ) and to_regclass('public.multiplayer_notifications') is not null and not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'multiplayer_notifications'
+  ) then
+    alter publication supabase_realtime add table public.multiplayer_notifications;
+  end if;
+
+  if exists (
+    select 1
+    from pg_publication
+    where pubname = 'supabase_realtime'
+  ) and to_regclass('public.multiplayer_game_requests') is not null and not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'multiplayer_game_requests'
+  ) then
+    alter publication supabase_realtime add table public.multiplayer_game_requests;
+  end if;
+end
+$$;
+
 drop policy if exists "multiplayer_sessions_read_authenticated" on public.multiplayer_sessions;
 create policy "multiplayer_sessions_read_authenticated"
   on public.multiplayer_sessions
@@ -265,6 +311,13 @@ create policy "friends_insert_participant"
   for insert
   to authenticated
   with check (auth.uid() = player_low_id or auth.uid() = player_high_id);
+
+drop policy if exists "friends_delete_participant" on public.friends;
+create policy "friends_delete_participant"
+  on public.friends
+  for delete
+  to authenticated
+  using (auth.uid() = player_low_id or auth.uid() = player_high_id);
 
 create table if not exists public.multiplayer_game_requests (
   id uuid primary key default gen_random_uuid(),
@@ -732,6 +785,17 @@ begin
       'session',
       current_session.session_payload
     );
+  end if;
+
+  if p_action in ('finish_request', 'finish_accept', 'finish_decline') then
+    if coalesce((p_session_payload #>> '{bag,remainingCount}')::integer, 1) <> 0 then
+      return jsonb_build_object(
+        'ok',
+        false,
+        'reason',
+        'bag_not_empty'
+      );
+    end if;
   end if;
 
   next_revision := p_expected_revision + 1;
@@ -1449,6 +1513,8 @@ begin
       jsonb_build_object(
         'sessionId',
         new.session_id,
+        'friendId',
+        old.active_player_id,
         'route',
         'multiplayer',
         'version',

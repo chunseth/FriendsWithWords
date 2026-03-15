@@ -13,6 +13,7 @@ import Clipboard from "@react-native-clipboard/clipboard";
 
 const PlayGameMenu = ({
   visible,
+  isDarkMode = false,
   canDismiss,
   currentSeed,
   dailySeed,
@@ -26,6 +27,7 @@ const PlayGameMenu = ({
   onNewGameWithSeed,
   onResetSeed,
 }) => {
+  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const [seedInput, setSeedInput] = useState("");
 
   const trimmedSeed = useMemo(() => seedInput.trim(), [seedInput]);
@@ -84,15 +86,26 @@ const PlayGameMenu = ({
         activeOpacity={1}
         onPress={handleBackdropPress}
       >
-        <View style={styles.modal} onStartShouldSetResponder={() => true}>
+        <View
+          style={[
+            styles.modal,
+            {
+              backgroundColor: theme.modalBackground,
+              borderColor: theme.modalBorder,
+            },
+          ]}
+          onStartShouldSetResponder={() => true}
+        >
           <ScrollView
             style={styles.scrollView}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.eyebrow}>Friends With Words</Text>
-            <Text style={styles.title}>Play Game</Text>
-            <Text style={styles.subtitle}>
+            <Text style={[styles.eyebrow, { color: theme.eyebrow }]}>
+              Friends With Words
+            </Text>
+            <Text style={[styles.title, { color: theme.title }]}>Play Game</Text>
+            <Text style={[styles.subtitle, { color: theme.subtitle }]}>
               Choose a board and start playing.
             </Text>
 
@@ -112,12 +125,20 @@ const PlayGameMenu = ({
 
             {hasSavedGame && (
               <TouchableOpacity
-                style={styles.secondaryButton}
+                style={[
+                  styles.secondaryButton,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                ]}
                 onPress={handleResumeSavedGame}
               >
                 <View style={styles.buttonRow}>
-                  <Text style={styles.secondaryButtonText}>Resume Game</Text>
-                  <Text style={styles.secondaryButtonMeta}>
+                  <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                    Resume Game
+                  </Text>
+                  <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
                     {savedGameSeed ? `Seed ${savedGameSeed}` : "Saved board"}
                   </Text>
                 </View>
@@ -125,24 +146,51 @@ const PlayGameMenu = ({
             )}
 
             <TouchableOpacity
-              style={styles.secondaryButton}
+              style={[
+                styles.secondaryButton,
+                {
+                  backgroundColor: theme.surface,
+                  borderColor: theme.surfaceBorder,
+                },
+              ]}
               onPress={handleNewGameRandom}
             >
               <View style={styles.buttonRow}>
-                <Text style={styles.secondaryButtonText}>New Game</Text>
-                <Text style={styles.secondaryButtonMeta}>Random seed</Text>
+                <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                  New Game
+                </Text>
+                <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
+                  Random seed
+                </Text>
               </View>
             </TouchableOpacity>
 
-            <View style={styles.seedSection}>
-              <Text style={styles.seedSectionLabel}>Seeded run</Text>
+            <View
+              style={[
+                styles.seedSection,
+                {
+                  backgroundColor: theme.surface,
+                  borderColor: theme.surfaceBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.seedSectionLabel, { color: theme.title }]}>
+                Seeded run
+              </Text>
               <View style={styles.seedRow}>
                 <TextInput
-                  style={styles.seedInput}
+                  style={[
+                    styles.seedInput,
+                    {
+                      borderColor: theme.inputBorder,
+                      color: theme.title,
+                      backgroundColor: theme.inputBackground,
+                    },
+                  ]}
                   value={seedInput}
                   onChangeText={setSeedInput}
                   placeholder="000000"
-                  placeholderTextColor="#95a5a6"
+                  placeholderTextColor={theme.inputPlaceholder}
                   keyboardType={
                     Platform.OS === "ios" ? "number-pad" : "numeric"
                   }
@@ -165,9 +213,17 @@ const PlayGameMenu = ({
             </View>
 
             {canDismiss && currentSeed != null && currentSeed !== "" && (
-              <View style={styles.seedDisplayRow}>
-                <Text style={styles.seedLabel}>Current seed</Text>
-                <Text style={styles.seedValue} numberOfLines={1}>
+              <View
+                style={[
+                  styles.seedDisplayRow,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.seedLabel, { color: theme.meta }]}>Current seed</Text>
+                <Text style={[styles.seedValue, { color: theme.title }]} numberOfLines={1}>
                   {String(currentSeed)}
                 </Text>
                 <TouchableOpacity
@@ -181,10 +237,16 @@ const PlayGameMenu = ({
 
             {canDismiss && (
               <TouchableOpacity
-                style={styles.tertiaryButton}
+                style={[
+                  styles.tertiaryButton,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                ]}
                 onPress={handleResetSeed}
               >
-                <Text style={styles.tertiaryButtonText}>
+                <Text style={[styles.tertiaryButtonText, { color: theme.title }]}>
                   Reset Current Seed
                 </Text>
               </TouchableOpacity>
@@ -195,13 +257,45 @@ const PlayGameMenu = ({
               onPress={onClose}
               hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
             >
-              <Text style={styles.closeButtonText}>Cancel</Text>
+              <Text style={[styles.closeButtonText, { color: theme.closeText }]}>
+                Cancel
+              </Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
       </TouchableOpacity>
     </Modal>
   );
+};
+
+const LIGHT_THEME = {
+  modalBackground: "#fffaf2",
+  modalBorder: "#eadfcd",
+  surface: "#fff",
+  surfaceBorder: "#e2d3bb",
+  eyebrow: "#9a6b2f",
+  title: "#2c3e50",
+  subtitle: "#6b7280",
+  meta: "#7f8c8d",
+  inputBorder: "#cbb89a",
+  inputBackground: "#fffdf8",
+  inputPlaceholder: "#95a5a6",
+  closeText: "#9a6b2f",
+};
+
+const DARK_THEME = {
+  modalBackground: "#1a2431",
+  modalBorder: "#334155",
+  surface: "#0f172a",
+  surfaceBorder: "#334155",
+  eyebrow: "#fdba74",
+  title: "#f8fafc",
+  subtitle: "#cbd5e1",
+  meta: "#94a3b8",
+  inputBorder: "#334155",
+  inputBackground: "#111b2c",
+  inputPlaceholder: "#94a3b8",
+  closeText: "#fdba74",
 };
 
 const styles = StyleSheet.create({

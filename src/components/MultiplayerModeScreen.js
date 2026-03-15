@@ -15,14 +15,26 @@ import TileRack from "./TileRack";
 import MessageOverlay from "./MessageOverlay";
 import LetterPickerModal from "./LetterPickerModal";
 import InGameMenu from "./InGameMenu";
+import PendingGameRequestModal from "./PendingGameRequestModal";
 import { useAsyncCoopSession } from "../hooks/useAsyncCoopSession";
 import { useTileDragDropController } from "../hooks/useTileDragDropController";
 import { buildResolvedSubmitPayload } from "../game/shared/turnResolution";
 import { validateSubmitTurn } from "../game/shared/validation";
+import { scoreSubmittedWords } from "../game/shared/scoring";
 import { BLANK_LETTER } from "../game/shared/bag";
 import { dictionary } from "../utils/dictionary";
-import { markSessionSeen, upsertPresence } from "../services/multiplayerInboxService";
-import { setSessionReminderMute } from "../services/multiplayerNotificationSettingsService";
+import {
+  loadMultiplayerSessionLastSeenScore,
+  saveMultiplayerSessionLastSeenScore,
+} from "../utils/multiplayerSessionStorage";
+import {
+  fetchUnreadMultiplayerNotifications,
+  markMultiplayerNotificationsRead,
+  markSessionSeen,
+  upsertPresence,
+  archiveMultiplayerSessionForUser,
+} from "../services/multiplayerInboxService";
+import { deleteAcceptedMultiplayerGame } from "../services/multiplayerGameRequestService";
 import { trackMultiplayerEvent } from "../services/analyticsService";
 
 const DRAG_TILE_HALF_SIZE = 21;
@@ -34,16 +46,35 @@ const RACK_INSERT_STEP_DELAY = 70;
 const REMOTE_UPDATE_BANNER_IN_DURATION = 180;
 const REMOTE_UPDATE_BANNER_VISIBLE_DURATION = 1700;
 const REMOTE_UPDATE_BANNER_OUT_DURATION = 220;
-const SCORE_STEP_DURATION = 85;
+const SCORE_STEP_DURATION = 42;
+const INITIAL_LOAD_SCORE_DELAY = 1120;
 const REMOTE_BOARD_REVEAL_STEP_DURATION = 260;
 const REMOTE_SCORE_DELAY =
   REMOTE_UPDATE_BANNER_IN_DURATION +
   REMOTE_UPDATE_BANNER_VISIBLE_DURATION +
   REMOTE_UPDATE_BANNER_OUT_DURATION;
+const TURN_NOTIFICATION_TYPES = new Set(["turn_ready", "reminder"]);
+
+const getNotificationSessionId = (notification) => {
+  if (!notification || typeof notification !== "object") {
+    return null;
+  }
+  const payload = notification.payload ?? {};
+  return (
+    payload.sessionId ??
+    payload.session_id ??
+    notification.entity_id ??
+    null
+  );
+};
 
 const AnimatedScoreDisplay = React.memo(function AnimatedScoreDisplay({
   totalScore,
   remoteUpdateEventId,
+  previewScoreDelta = 0,
+  initialScore = null,
+  initialScoreReady = false,
+  isDarkMode = false,
 }) {
   const [displayScore, setDisplayScore] = useState(totalScore ?? 0);
   const [pendingScoreDelta, setPendingScoreDelta] = useState(0);
@@ -100,6 +131,7 @@ const AnimatedScoreDisplay = React.memo(function AnimatedScoreDisplay({
       setPendingScoreDelta(remainingDelta);
 
       if (remainingDelta === 0) {
+        setPendingScoreDelta(0);
         scoreAnimationTimeoutRef.current = null;
         return;
       }
@@ -123,7 +155,24 @@ const AnimatedScoreDisplay = React.memo(function AnimatedScoreDisplay({
     }
 
     if (!scoreInitializedRef.current) {
+      if (!initialScoreReady) {
+        return undefined;
+      }
       scoreInitializedRef.current = true;
+      if (
+        typeof initialScore === "number" &&
+        Number.isFinite(initialScore) &&
+        initialScore !== targetScore
+      ) {
+        displayScoreRef.current = initialScore;
+        setDisplayScore(initialScore);
+        setPendingScoreDelta(0);
+        scoreDelayTimeoutRef.current = setTimeout(() => {
+          scoreDelayTimeoutRef.current = null;
+          startScoreAnimation(targetScore);
+        }, INITIAL_LOAD_SCORE_DELAY);
+        return undefined;
+      }
       displayScoreRef.current = targetScore;
       setDisplayScore(targetScore);
       setPendingScoreDelta(0);
@@ -152,28 +201,35 @@ const AnimatedScoreDisplay = React.memo(function AnimatedScoreDisplay({
         scoreDelayTimeoutRef.current = null;
       }
     };
-  }, [startScoreAnimation, totalScore]);
+  }, [initialScore, initialScoreReady, startScoreAnimation, totalScore]);
+
+  const visibleScoreDelta =
+    pendingScoreDelta !== 0 ? pendingScoreDelta : previewScoreDelta;
 
   return (
     <View style={styles.scoreSection}>
       <View style={styles.scoreValueRow}>
-        <Text style={styles.scoreValue}>{displayScore}</Text>
-        {pendingScoreDelta !== 0 ? (
+        <Text
+          style={[styles.scoreValue, isDarkMode ? styles.scoreValueDark : null]}
+        >
+          {displayScore}
+        </Text>
+        {visibleScoreDelta !== 0 ? (
           <Text
             style={[
               styles.scoreDelta,
-              pendingScoreDelta > 0
+              visibleScoreDelta > 0
                 ? styles.scoreDeltaPositive
                 : styles.scoreDeltaNegative,
             ]}
           >
-            {`${pendingScoreDelta > 0 ? "+" : "-"}${Math.abs(
-              pendingScoreDelta
-            )}`}
+            {`${visibleScoreDelta > 0 ? "+" : "-"}${Math.abs(visibleScoreDelta)}`}
           </Text>
         ) : null}
       </View>
-      <Text style={styles.scoreLabel}>Score</Text>
+      <Text style={[styles.scoreLabel, isDarkMode ? styles.scoreLabelDark : null]}>
+        Score
+      </Text>
     </View>
   );
 });
@@ -181,11 +237,19 @@ const AnimatedScoreDisplay = React.memo(function AnimatedScoreDisplay({
 const WaitingRackDisplay = React.memo(function WaitingRackDisplay({
   tiles,
   tileAnimationStates,
+  isDarkMode = false,
+  matchLocalRackOpacity = false,
 }) {
   return (
-    <View style={styles.waitingRackSection}>
+    <View
+      style={[
+        styles.waitingRackSection,
+        matchLocalRackOpacity ? styles.waitingRackSectionMatchLocal : null,
+      ]}
+    >
       <TileRack
         tiles={tiles}
+        isDarkMode={isDarkMode}
         interactionsDisabled
         onMeasureLayout={undefined}
         onDragStart={undefined}
@@ -202,14 +266,19 @@ const WaitingRackDisplay = React.memo(function WaitingRackDisplay({
 
 const MultiplayerModeScreen = ({
   onBack = null,
+  onReturnToMultiplayerMenu = null,
   sessionId = "local-multiplayer-prototype",
   onSessionCompleted = null,
+  isDarkMode = false,
 }) => {
+  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const screenInstanceIdRef = useRef(
     `screen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   );
   const {
     session,
+    isHydrated,
+    hydrateError,
     localPlayerId,
     localPlayer,
     activePlayer,
@@ -217,7 +286,9 @@ const MultiplayerModeScreen = ({
     remoteUpdateEvent,
     submitResolvedPlay,
     submitSwapTurn,
-    passTurn,
+    requestFinish,
+    acceptFinishRequest,
+    declineFinishRequest,
   } = useAsyncCoopSession({ sessionId });
 
   const containerRef = useRef(null);
@@ -239,10 +310,16 @@ const MultiplayerModeScreen = ({
   const [waitingRackTileAnimationStates, setWaitingRackTileAnimationStates] =
     useState({});
   const [isSubmitAnimating, setIsSubmitAnimating] = useState(false);
+  const [preSubmitScoreDelta, setPreSubmitScoreDelta] = useState(0);
   const [isSwapMode, setIsSwapMode] = useState(false);
   const [remoteUpdateBannerText, setRemoteUpdateBannerText] = useState("");
   const [conflictModalVisible, setConflictModalVisible] = useState(false);
   const [conflictDraft, setConflictDraft] = useState(null);
+  const [finishRequestModalVisible, setFinishRequestModalVisible] = useState(false);
+  const [confirmGameActionType, setConfirmGameActionType] = useState(null);
+  const [initialScoreBaseline, setInitialScoreBaseline] = useState(null);
+  const [initialScoreBaselineReady, setInitialScoreBaselineReady] =
+    useState(false);
   const rackTileAnimationsRef = useRef({});
   const waitingRackTileAnimationsRef = useRef({});
   const waitingRackRef = useRef(waitingRack);
@@ -252,12 +329,46 @@ const MultiplayerModeScreen = ({
   const completionEventHandledRef = useRef(null);
   const remoteUpdateBannerOpacity = useRef(new Animated.Value(0)).current;
   const remoteUpdateBannerTranslateY = useRef(new Animated.Value(-10)).current;
+  const lastInitialTeammatePlayBannerKeyRef = useRef(null);
 
   const cloneBoard = useCallback(
     (board) => (board ?? []).map((row) => row.map((cell) => (cell ? { ...cell } : null))),
     []
   );
   const cloneRack = useCallback((rack) => (rack ?? []).map((tile) => ({ ...tile })), []);
+  const isArchivedSession = session.status === "archived";
+  const showActionControls = !isArchivedSession;
+  const clearSessionTurnNotifications = useCallback(async () => {
+    if (!session?.sessionId) {
+      return;
+    }
+
+    const unreadResult = await fetchUnreadMultiplayerNotifications(50);
+    if (!unreadResult?.ok) {
+      return;
+    }
+
+    const sessionNotificationIds = (unreadResult.notifications ?? [])
+      .filter((notification) => {
+        const normalizedType = String(notification?.type ?? "").toLowerCase();
+        if (!TURN_NOTIFICATION_TYPES.has(normalizedType)) {
+          return false;
+        }
+        const notificationSessionId = getNotificationSessionId(notification);
+        return (
+          notificationSessionId != null &&
+          String(notificationSessionId) === String(session.sessionId)
+        );
+      })
+      .map((notification) => notification.id)
+      .filter((id) => typeof id === "string" && id.length > 0);
+
+    if (sessionNotificationIds.length === 0) {
+      return;
+    }
+
+    await markMultiplayerNotificationsRead(sessionNotificationIds);
+  }, [session?.sessionId]);
 
   const captureConflictDraft = useCallback(
     (intent, options = {}) => {
@@ -280,6 +391,52 @@ const MultiplayerModeScreen = ({
     setConflictModalVisible(true);
   }, []);
 
+  const runRemoteUpdateBannerAnimation = useCallback(
+    (text) => {
+      if (!text || typeof text !== "string") {
+        return null;
+      }
+
+      setRemoteUpdateBannerText(text);
+      remoteUpdateBannerOpacity.stopAnimation();
+      remoteUpdateBannerTranslateY.stopAnimation();
+      remoteUpdateBannerOpacity.setValue(0);
+      remoteUpdateBannerTranslateY.setValue(-10);
+
+      const animation = Animated.sequence([
+        Animated.parallel([
+          Animated.timing(remoteUpdateBannerOpacity, {
+            toValue: 1,
+            duration: REMOTE_UPDATE_BANNER_IN_DURATION,
+            useNativeDriver: true,
+          }),
+          Animated.timing(remoteUpdateBannerTranslateY, {
+            toValue: 0,
+            duration: REMOTE_UPDATE_BANNER_IN_DURATION,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.delay(REMOTE_UPDATE_BANNER_VISIBLE_DURATION),
+        Animated.parallel([
+          Animated.timing(remoteUpdateBannerOpacity, {
+            toValue: 0,
+            duration: REMOTE_UPDATE_BANNER_OUT_DURATION,
+            useNativeDriver: true,
+          }),
+          Animated.timing(remoteUpdateBannerTranslateY, {
+            toValue: -10,
+            duration: REMOTE_UPDATE_BANNER_OUT_DURATION,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]);
+
+      animation.start();
+      return animation;
+    },
+    [remoteUpdateBannerOpacity, remoteUpdateBannerTranslateY]
+  );
+
   useEffect(() => {
     console.log("[multiplayer-lifecycle] MultiplayerModeScreen mounted", {
       screenInstanceId: screenInstanceIdRef.current,
@@ -297,6 +454,26 @@ const MultiplayerModeScreen = ({
   useEffect(() => {
     dictionary.load();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isHydrated || hydrateError || !session?.sessionId) {
+      return undefined;
+    }
+    setInitialScoreBaselineReady(false);
+    void (async () => {
+      const previousScore = await loadMultiplayerSessionLastSeenScore(
+        session.sessionId
+      );
+      if (!cancelled) {
+        setInitialScoreBaseline(previousScore);
+        setInitialScoreBaselineReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrateError, isHydrated, session?.sessionId]);
 
   useEffect(() => {
     void upsertPresence({
@@ -325,6 +502,67 @@ const MultiplayerModeScreen = ({
 
   useEffect(() => {
     if (
+      !session?.sessionId ||
+      session.status !== "active" ||
+      canLocalPlayerAct !== true
+    ) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      await clearSessionTurnNotifications();
+      if (cancelled) {
+        return;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    canLocalPlayerAct,
+    clearSessionTurnNotifications,
+    remoteUpdateEvent?.id,
+    session.boardRevision,
+    session.sessionId,
+    session.status,
+  ]);
+
+  useEffect(() => {
+    if (!isHydrated || hydrateError || !session?.sessionId) {
+      return;
+    }
+    const currentTotal =
+      session.sharedScore?.finalScore ?? session.sharedScore?.total ?? 0;
+    void saveMultiplayerSessionLastSeenScore({
+      sessionId: session.sessionId,
+      score: currentTotal,
+    });
+  }, [
+    hydrateError,
+    isHydrated,
+    session?.sessionId,
+    session.sharedScore?.finalScore,
+    session.sharedScore?.total,
+  ]);
+
+  useEffect(() => {
+    const pending = session.finishRequest;
+    if (
+      session.status === "active" &&
+      pending?.status === "pending" &&
+      pending.requestedBy &&
+      pending.requestedBy !== localPlayerId
+    ) {
+      setFinishRequestModalVisible(true);
+      return;
+    }
+    setFinishRequestModalVisible(false);
+  }, [localPlayerId, session.finishRequest, session.status]);
+
+  useEffect(() => {
+    if (
       session.status !== "completed" ||
       typeof session.sharedScore.finalScore !== "number"
     ) {
@@ -337,27 +575,72 @@ const MultiplayerModeScreen = ({
     }
     completionEventHandledRef.current = completionKey;
 
+    const turnsPlayed = Math.max(0, (session.turn?.number ?? 1) - 1);
+    const turnPenalties = turnsPlayed * 2;
+    const rackPenalty = (session.players ?? []).reduce(
+      (total, player) =>
+        total +
+        (player?.rack ?? []).reduce(
+          (playerTotal, tile) => playerTotal + (tile?.value ?? 0),
+          0
+        ),
+      0
+    );
+    const pointsEarned = session.sharedScore.wordPointsTotal ?? 0;
+    const swapPenalties = session.sharedScore.swapPenaltyTotal ?? 0;
+    const scrabbleBonus = session.sharedScore.scrabbleBonusTotal ?? 0;
+    const consistencyBonusTotal =
+      session.sharedScore.consistencyBonusTotal ?? 0;
+    const calculatedFinalScore =
+      pointsEarned -
+      swapPenalties -
+      turnPenalties -
+      rackPenalty +
+      scrabbleBonus +
+      consistencyBonusTotal;
+    const participantIds = (session.players ?? [])
+      .map((player) => player?.id)
+      .filter((id) => typeof id === "string" && id.length > 0)
+      .sort((a, b) => a.localeCompare(b));
+    const canonicalSubmitterId = participantIds[0] ?? localPlayerId;
+    const shouldSubmitLeaderboard =
+      !canonicalSubmitterId || canonicalSubmitterId === localPlayerId;
+    const leaderboardDisplayName = (session.players ?? [])
+      .map((player) => {
+        const username =
+          typeof player?.username === "string" ? player.username.trim() : "";
+        const displayName =
+          typeof player?.displayName === "string"
+            ? player.displayName.trim()
+            : "";
+        return username || displayName || "Player";
+      })
+      .slice(0, 2)
+      .join("\n");
+
     onSessionCompleted?.({
       sessionId: session.sessionId,
       seed: session.seed,
       isDailySeed: session.isDailySeed === true,
-      finalScore: session.sharedScore.finalScore,
+      shouldSubmitLeaderboard,
+      leaderboardDisplayName,
+      finalScore: calculatedFinalScore,
       finalScoreBreakdown: {
-        pointsEarned: session.sharedScore.wordPointsTotal ?? 0,
-        swapPenalties: session.sharedScore.swapPenaltyTotal ?? 0,
-        turnPenalties: session.sharedScore.turnPenaltyTotal ?? 0,
-        rackPenalty: session.sharedScore.rackPenaltyTotal ?? 0,
-        scrabbleBonus: session.sharedScore.scrabbleBonusTotal ?? 0,
+        pointsEarned,
+        swapPenalties,
+        turnPenalties,
+        rackPenalty,
+        scrabbleBonus,
         timeBonus: 0,
         perfectionBonus: 0,
-        consistencyBonusTotal: session.sharedScore.consistencyBonusTotal ?? 0,
-        skillBonusTotal:
-          (session.sharedScore.scrabbleBonusTotal ?? 0) +
-          (session.sharedScore.consistencyBonusTotal ?? 0),
-        finalScore: session.sharedScore.finalScore,
+        consistencyBonusTotal,
+        skillBonusTotal: scrabbleBonus + consistencyBonusTotal,
+        finalScore: calculatedFinalScore,
       },
     });
+    void archiveMultiplayerSessionForUser({ sessionId: session.sessionId });
   }, [
+    archiveMultiplayerSessionForUser,
     onSessionCompleted,
     session.isDailySeed,
     session.savedAt,
@@ -405,57 +688,76 @@ const MultiplayerModeScreen = ({
         ? `played${leadWord}`
         : remoteUpdateEvent.action === "swap"
           ? "swapped tiles"
-          : remoteUpdateEvent.action === "pass"
-            ? "passed"
+          : remoteUpdateEvent.action === "finish_request"
+            ? "requested to finish the game"
+            : remoteUpdateEvent.action === "finish_accept"
+              ? "accepted game finish"
+              : remoteUpdateEvent.action === "finish_decline"
+                ? "declined game finish"
             : "finished a turn";
 
-    setRemoteUpdateBannerText(
+    const animation = runRemoteUpdateBannerAnimation(
       `${remoteUpdateEvent.actorLabel} ${actionText}`
     );
-    remoteUpdateBannerOpacity.stopAnimation();
-    remoteUpdateBannerTranslateY.stopAnimation();
-    remoteUpdateBannerOpacity.setValue(0);
-    remoteUpdateBannerTranslateY.setValue(-10);
-
-    const animation = Animated.sequence([
-      Animated.parallel([
-        Animated.timing(remoteUpdateBannerOpacity, {
-          toValue: 1,
-          duration: REMOTE_UPDATE_BANNER_IN_DURATION,
-          useNativeDriver: true,
-        }),
-        Animated.timing(remoteUpdateBannerTranslateY, {
-          toValue: 0,
-          duration: REMOTE_UPDATE_BANNER_IN_DURATION,
-          useNativeDriver: true,
-        }),
-      ]),
-      Animated.delay(REMOTE_UPDATE_BANNER_VISIBLE_DURATION),
-      Animated.parallel([
-        Animated.timing(remoteUpdateBannerOpacity, {
-          toValue: 0,
-          duration: REMOTE_UPDATE_BANNER_OUT_DURATION,
-          useNativeDriver: true,
-        }),
-        Animated.timing(remoteUpdateBannerTranslateY, {
-          toValue: -10,
-          duration: REMOTE_UPDATE_BANNER_OUT_DURATION,
-          useNativeDriver: true,
-        }),
-      ]),
-    ]);
-
-    animation.start();
 
     return () => {
-      animation.stop();
+      animation?.stop();
     };
   }, [
     openConflictModal,
-    remoteUpdateBannerOpacity,
-    remoteUpdateBannerTranslateY,
     remoteUpdateEvent,
+    runRemoteUpdateBannerAnimation,
     session.sessionId,
+  ]);
+
+  useEffect(() => {
+    if (!isHydrated || hydrateError || !session?.sessionId || !localPlayerId) {
+      return;
+    }
+
+    const sessionRevision = session.boardRevision ?? 0;
+    const bannerKey = `${session.sessionId}:${sessionRevision}`;
+    if (bannerKey === lastInitialTeammatePlayBannerKeyRef.current) {
+      return;
+    }
+
+    const lastMove = session.lastMoveSummary;
+    const teammatePlayedWord =
+      session.status === "active" &&
+      session.turn?.activePlayerId === localPlayerId &&
+      lastMove?.action === "play" &&
+      !!lastMove?.actorId &&
+      lastMove.actorId !== localPlayerId;
+
+    if (!teammatePlayedWord) {
+      return;
+    }
+
+    const actor = session.players.find((player) => player.id === lastMove.actorId);
+    const actorLabel = actor?.username
+      ? `@${actor.username}`
+      : actor?.displayName ?? lastMove.actorName ?? "Your teammate";
+    const leadWord =
+      Array.isArray(lastMove.words) &&
+      lastMove.words.length > 0 &&
+      lastMove.words[0]?.word
+        ? ` ${String(lastMove.words[0].word).toUpperCase()}`
+        : "";
+
+    lastInitialTeammatePlayBannerKeyRef.current = bannerKey;
+    const animation = runRemoteUpdateBannerAnimation(
+      `${actorLabel} played${leadWord}`
+    );
+
+    return () => {
+      animation?.stop();
+    };
+  }, [
+    hydrateError,
+    isHydrated,
+    localPlayerId,
+    runRemoteUpdateBannerAnimation,
+    session,
   ]);
 
   useEffect(() => {
@@ -473,7 +775,7 @@ const MultiplayerModeScreen = ({
         rackIndex,
       })));
     }
-    setDraftRack((localPlayer?.rack ?? []).map((tile, rackIndex) => ({
+    setDraftRack((isArchivedSession ? [] : localPlayer?.rack ?? []).map((tile, rackIndex) => ({
       ...tile,
       rackIndex,
     })));
@@ -493,6 +795,7 @@ const MultiplayerModeScreen = ({
     session.sharedBoard,
     session.players,
     session.turn.activePlayerId,
+    isArchivedSession,
   ]);
 
   const syncRackTileAnimationStates = useCallback(() => {
@@ -689,12 +992,14 @@ const MultiplayerModeScreen = ({
   const targetWaitingRack = useMemo(
     () =>
       (
-        session.players.find((player) => player.id !== localPlayerId)?.rack ?? []
+        isArchivedSession
+          ? []
+          : session.players.find((player) => player.id !== localPlayerId)?.rack ?? []
       ).map((tile, rackIndex) => ({
         ...tile,
         rackIndex,
       })),
-    [localPlayerId, session.players]
+    [isArchivedSession, localPlayerId, session.players]
   );
 
   const waitingRackTiles = useMemo(
@@ -706,6 +1011,56 @@ const MultiplayerModeScreen = ({
       })),
     [waitingRack]
   );
+
+  const submitScorePreview = useMemo(() => {
+    if (isSwapMode || selectedCells.length === 0) {
+      return null;
+    }
+
+    const validation = validateSubmitTurn({
+      board: draftBoard,
+      isFirstTurn: session.sharedBoard.every((row) => row.every((cell) => cell == null)),
+      boardAtTurnStart: boardAtTurnStartRef.current,
+      dictionary,
+      boardSize: BOARD_SIZE,
+    });
+
+    if (!validation.ok) {
+      return null;
+    }
+
+    const previewScoring = scoreSubmittedWords({
+      board: draftBoard,
+      newWords: validation.newWords,
+      premiumSquares: session.sharedPremiumSquares,
+      turnCount: session.turn.number - 1,
+      placedCells: validation.placedCells,
+    });
+
+    return previewScoring.turnScore ?? null;
+  }, [
+    draftBoard,
+    isSwapMode,
+    selectedCells.length,
+    session.sharedBoard,
+    session.sharedPremiumSquares,
+    session.turn.number,
+  ]);
+  const displayedWaitingRackTiles = isArchivedSession ? [] : waitingRackTiles;
+  const hasPendingTilesOnBoard = useMemo(
+    () =>
+      (draftBoard ?? []).some((row) =>
+        (row ?? []).some(
+          (tile) =>
+            tile?.isFromRack === true &&
+            tile?.scored !== true &&
+            tile?.ownerId === localPlayerId
+        )
+      ),
+    [draftBoard, localPlayerId]
+  );
+  const shouldShowFinishInsteadOfSubmit =
+    (session.bag.remainingCount ?? 0) === 0 && !hasPendingTilesOnBoard;
 
   useEffect(() => {
     const remoteEventId = remoteUpdateEvent?.id ?? null;
@@ -1196,6 +1551,7 @@ const MultiplayerModeScreen = ({
     onBoardCellTap: handleCellClick,
     onBlankPlacementRequested: handleBlankPlacementRequest,
   });
+  const displayedVisibleRackTiles = isArchivedSession ? [] : visibleRackTiles;
 
   useEffect(() => {
     resetController();
@@ -1246,8 +1602,10 @@ const MultiplayerModeScreen = ({
     });
 
     if (payload.drawnTiles.length === 0) {
+      setPreSubmitScoreDelta(payload.turnScore ?? 0);
       setDraftRack(payload.remainingRack);
       const result = await submitResolvedPlay(payload);
+      setPreSubmitScoreDelta(0);
       if (!result?.ok) {
         await trackMultiplayerEvent("mp_turn_conflict", {
           sessionId: session.sessionId,
@@ -1272,6 +1630,7 @@ const MultiplayerModeScreen = ({
     }
 
     setIsSubmitAnimating(true);
+    setPreSubmitScoreDelta(payload.turnScore ?? 0);
     setDraftRack(payload.remainingRack);
 
     try {
@@ -1299,6 +1658,7 @@ const MultiplayerModeScreen = ({
       }
       await waitForNextFrame();
     } finally {
+      setPreSubmitScoreDelta(0);
       rackTileAnimationsRef.current = {};
       setRackTileAnimationStates({});
       setIsSubmitAnimating(false);
@@ -1408,52 +1768,71 @@ const MultiplayerModeScreen = ({
     openConflictModal,
   ]);
 
-  const handlePassButtonPress = useCallback(async () => {
+  const handleFinishButtonPress = useCallback(async () => {
     if (!canLocalPlayerAct || isSubmitAnimating) {
       return;
     }
-
-    if (isSwapMode) {
-      setSelectedTiles([]);
-      setIsSwapMode(false);
-    }
-    if (selectedCells.length > 0) {
-      clearSelection();
-    }
-
-    captureConflictDraft("pass");
-    const result = await passTurn();
+    const result = await requestFinish();
     if (!result?.ok) {
-      await trackMultiplayerEvent("mp_turn_conflict", {
-        sessionId: session.sessionId,
-        source: "pass",
-        reason: result?.reason ?? "unknown",
-      });
       setMessage({
-        title: "Pass Turn",
+        title: "Finish Game",
         text:
-          result?.reason === "revision_conflict"
-            ? "Session updated on another device. Your draft was not applied."
-            : result?.reason === "not_active_player"
-              ? "It's no longer your turn."
-              : result?.reason === "session_not_active"
-                ? "This multiplayer run is no longer active."
-                : "Could not pass your turn right now.",
+          result?.reason === "bag_not_empty"
+            ? "Finish is only available after the bag is empty."
+            : result?.reason === "finish_already_pending"
+              ? "A finish request is already pending."
+              : result?.reason === "not_active_player"
+                ? "It's no longer your turn."
+                : "Could not request game finish right now.",
       });
-      if (result?.reason === "revision_conflict") {
-        openConflictModal();
-      }
     }
-  }, [
-    canLocalPlayerAct,
-    clearSelection,
-    isSubmitAnimating,
-    isSwapMode,
-    passTurn,
-    selectedCells.length,
-    captureConflictDraft,
-    openConflictModal,
-  ]);
+  }, [canLocalPlayerAct, isSubmitAnimating, requestFinish]);
+
+  const handleAcceptFinishRequest = useCallback(async () => {
+    const result = await acceptFinishRequest();
+    setFinishRequestModalVisible(false);
+    if (!result?.ok) {
+      setMessage({
+        title: "Finish Request",
+        text: "Could not accept the finish request right now.",
+      });
+    }
+  }, [acceptFinishRequest]);
+
+  const handleDeclineFinishRequest = useCallback(async () => {
+    const result = await declineFinishRequest();
+    setFinishRequestModalVisible(false);
+    if (!result?.ok) {
+      setMessage({
+        title: "Finish Request",
+        text: "Could not decline the finish request right now.",
+      });
+    }
+  }, [declineFinishRequest]);
+
+  const handleConfirmArchiveOrDelete = useCallback(async () => {
+    if (!confirmGameActionType) {
+      return;
+    }
+    const isArchive = confirmGameActionType === "archive";
+    const result = isArchive
+      ? await archiveMultiplayerSessionForUser({ sessionId: session.sessionId })
+      : session.requestId
+        ? await deleteAcceptedMultiplayerGame({
+            requestId: session.requestId,
+            sessionId: session.sessionId,
+          })
+        : await archiveMultiplayerSessionForUser({ sessionId: session.sessionId });
+    setConfirmGameActionType(null);
+    if (!result?.ok) {
+      setMessage({
+        title: isArchive ? "Archive Game" : "Delete Game",
+        text: `Could not ${isArchive ? "archive" : "delete"} this game right now.`,
+      });
+      return;
+    }
+    onBack?.();
+  }, [confirmGameActionType, onBack, session.requestId, session.sessionId]);
 
   const handleReplayConflictDraft = useCallback(async () => {
     if (!conflictDraft) {
@@ -1502,27 +1881,6 @@ const MultiplayerModeScreen = ({
       return;
     }
 
-    if (conflictDraft.intent === "pass") {
-      const result = await passTurn();
-      setConflictModalVisible(false);
-      if (!result?.ok) {
-        await trackMultiplayerEvent("mp_conflict_replay_failed", {
-          sessionId: session.sessionId,
-          reason: result?.reason ?? "unknown",
-        });
-        setMessage({
-          title: "Pass Turn",
-          text: "Could not replay the pass action right now.",
-        });
-        return;
-      }
-      await trackMultiplayerEvent("mp_conflict_replay_applied", {
-        sessionId: session.sessionId,
-        intent: "pass",
-      });
-      return;
-    }
-
     const replayCells = conflictDraft.selectedCells ?? [];
     const boardHasConflict = replayCells.some(({ row, col }) => {
       const liveCell = session.sharedBoard?.[row]?.[col] ?? null;
@@ -1557,40 +1915,10 @@ const MultiplayerModeScreen = ({
     cloneBoard,
     cloneRack,
     conflictDraft,
-    passTurn,
     session.sessionId,
     session.sharedBoard,
     session.status,
   ]);
-
-  const applySessionMute = useCallback(
-    async (hours) => {
-      const mutedUntil =
-        hours == null
-          ? null
-          : new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
-      const result = await setSessionReminderMute({
-        sessionId: session.sessionId,
-        mutedUntil,
-      });
-      if (!result.ok) {
-        setMessage({
-          title: "Notification Mute",
-          text: "Could not update reminder mute right now.",
-        });
-        return;
-      }
-
-      setMessage({
-        title: "Notification Mute",
-        text:
-          hours == null
-            ? "Reminders enabled for this session."
-            : `Reminders muted for ${hours} hour${hours === 1 ? "" : "s"}.`,
-      });
-    },
-    [session.sessionId]
-  );
 
   const handleChooseBlankLetter = useCallback(
     (letter) => {
@@ -1615,6 +1943,8 @@ const MultiplayerModeScreen = ({
   const turnStateLabel =
     session.status === "completed"
       ? "Completed"
+      : session.status === "archived"
+        ? "Archived"
       : canLocalPlayerAct
         ? "Your turn"
         : "Waiting";
@@ -1622,11 +1952,49 @@ const MultiplayerModeScreen = ({
   return (
     <SafeAreaView
       ref={containerRef}
-      style={styles.safeArea}
+      style={[styles.safeArea, { backgroundColor: theme.background }]}
       onLayout={refreshContainerWindowPosition}
     >
-      <View style={styles.gameContainer}>
-        <View style={styles.topPanel}>
+      {!isHydrated ? (
+        <View
+          style={[styles.loadingState, { backgroundColor: theme.loadingBackground }]}
+        >
+          <Text style={[styles.loadingStateTitle, { color: theme.title }]}>
+            Loading Multiplayer Game
+          </Text>
+          <Text style={[styles.loadingStateText, { color: theme.subtitle }]}>
+            Fetching the latest session state.
+          </Text>
+        </View>
+      ) : hydrateError ? (
+        <View
+          style={[styles.loadingState, { backgroundColor: theme.loadingBackground }]}
+        >
+          <Text style={[styles.loadingStateTitle, { color: theme.title }]}>
+            Could Not Load Game
+          </Text>
+          <Text style={[styles.loadingStateText, { color: theme.subtitle }]}>
+            This multiplayer session could not be loaded. Try opening it again from the multiplayer menu.
+          </Text>
+          <TouchableOpacity
+            style={[
+              styles.loadingStateButton,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.border,
+              },
+            ]}
+            onPress={() => onBack?.()}
+          >
+            <Text style={[styles.loadingStateButtonText, { color: theme.title }]}>
+              Return to Main Menu
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+      <>
+      <View style={[styles.gameContainer, { backgroundColor: theme.background }]}>
+        <View style={[styles.topPanel, { backgroundColor: theme.panel }]}>
           <TouchableOpacity
             style={styles.menuButton}
             onPress={() => setMenuVisible(true)}
@@ -1637,86 +2005,93 @@ const MultiplayerModeScreen = ({
               <SFSymbolIcon
                 name="list.bullet"
                 size={24}
-                color="#2c3e50"
+                color={theme.title}
                 weight="medium"
                 scale="medium"
                 style={styles.menuButtonIcon}
               />
             ) : (
-              <Text style={styles.menuButtonText}>☰</Text>
+              <Text style={[styles.menuButtonText, { color: theme.title }]}>☰</Text>
             )}
           </TouchableOpacity>
 
           <View style={styles.infoContainer}>
             <View style={styles.infoRow}>
-              <View style={styles.infoItem}>
-                <Text style={styles.infoLabel}>{activeTurnLabel}</Text>
-                <Text style={styles.infoValue}>{turnStateLabel}</Text>
+              <View
+                style={[styles.infoItem, { backgroundColor: theme.infoCardBackground }]}
+              >
+                <Text
+                  style={[
+                    styles.infoLabel,
+                    { color: theme.muted },
+                  ]}
+                >
+                  {activeTurnLabel}
+                </Text>
+                <Text
+                  style={[
+                    styles.infoValue,
+                    { color: theme.title },
+                  ]}
+                >
+                  {turnStateLabel}
+                </Text>
               </View>
-              <View style={styles.infoItem}>
-                <Text style={styles.infoLabel}>Turn</Text>
-                <Text style={styles.infoValue}>{session.turn.number}</Text>
+              <View
+                style={[styles.infoItem, { backgroundColor: theme.infoCardBackground }]}
+              >
+                <Text
+                  style={[
+                    styles.infoLabel,
+                    { color: theme.muted },
+                  ]}
+                >
+                  Turn
+                </Text>
+                <Text
+                  style={[
+                    styles.infoValue,
+                    { color: theme.title },
+                  ]}
+                >
+                  {session.turn.number}
+                </Text>
               </View>
-              <View style={styles.infoItem}>
-                <Text style={styles.infoLabel}>Tiles</Text>
-                <Text style={styles.infoValue}>{session.bag.remainingCount}</Text>
+              <View
+                style={[styles.infoItem, { backgroundColor: theme.infoCardBackground }]}
+              >
+                <Text
+                  style={[
+                    styles.infoLabel,
+                    { color: theme.muted },
+                  ]}
+                >
+                  Tiles
+                </Text>
+                <Text
+                  style={[
+                    styles.infoValue,
+                    { color: theme.title },
+                  ]}
+                >
+                  {session.bag.remainingCount}
+                </Text>
               </View>
             </View>
           </View>
         </View>
 
         <AnimatedScoreDisplay
+          key={`score-${session.sessionId}`}
           totalScore={
             session.sharedScore.finalScore ?? session.sharedScore.total ?? 0
           }
           remoteUpdateEventId={remoteUpdateEvent?.id ?? null}
+          previewScoreDelta={preSubmitScoreDelta}
+          initialScore={initialScoreBaseline}
+          initialScoreReady={initialScoreBaselineReady}
+          isDarkMode={isDarkMode}
         />
-
-        {session.status === "completed" ? (
-          <View style={styles.completedBanner}>
-            <Text style={styles.completedBannerTitle}>Game complete</Text>
-            <Text style={styles.completedBannerText}>
-              Final score {session.sharedScore.finalScore ?? 0}
-            </Text>
-          </View>
-        ) : null}
-        {session.status === "active" ? (
-          <View style={styles.sessionMuteRow}>
-            <Text style={styles.sessionMuteLabel}>Reminders:</Text>
-            <TouchableOpacity
-              style={styles.sessionMuteChip}
-              onPress={() => {
-                void applySessionMute(12);
-              }}
-            >
-              <Text style={styles.sessionMuteChipText}>12h</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.sessionMuteChip}
-              onPress={() => {
-                void applySessionMute(24);
-              }}
-            >
-              <Text style={styles.sessionMuteChipText}>24h</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.sessionMuteChip}
-              onPress={() => {
-                void applySessionMute(72);
-              }}
-            >
-              <Text style={styles.sessionMuteChipText}>3d</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.sessionMuteChip}
-              onPress={() => {
-                void applySessionMute(null);
-              }}
-            >
-              <Text style={styles.sessionMuteChipText}>Unmute</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
 
         <View style={styles.boardSection}>
           <Animated.View
@@ -1772,18 +2147,33 @@ const MultiplayerModeScreen = ({
               isSubmitAnimating ||
               draggingTile?.from === "rack"
             }
+            submitScorePreview={submitScorePreview}
+            submitScorePreviewCell={
+              selectedCells.length > 0
+                ? selectedCells[selectedCells.length - 1]
+                : null
+            }
+            isDarkMode={isDarkMode}
           />
         </View>
 
         <View style={styles.bottomSection}>
-          <View style={styles.tilesSection}>
+          <View
+            style={[
+              styles.tilesSection,
+              !canLocalPlayerAct && styles.tilesSectionDisabled,
+            ]}
+          >
             <WaitingRackDisplay
-              tiles={waitingRackTiles}
+              tiles={displayedWaitingRackTiles}
               tileAnimationStates={waitingRackTileAnimationStates}
+              isDarkMode={isDarkMode}
+              matchLocalRackOpacity={!canLocalPlayerAct}
             />
 
             <TileRack
-              tiles={visibleRackTiles}
+              tiles={displayedVisibleRackTiles}
+              isDarkMode={isDarkMode}
               interactionsDisabled={!canLocalPlayerAct || isSubmitAnimating}
               onMeasureLayout={updateRackLayout}
               onDragStart={handleRackDragStart}
@@ -1849,7 +2239,8 @@ const MultiplayerModeScreen = ({
               swapMultiplier={swapMultiplier}
             />
 
-            <View style={styles.controls}>
+            {showActionControls ? (
+              <View style={styles.controls}>
               <TouchableOpacity
                 style={[
                   styles.controlButtonNarrow,
@@ -1873,37 +2264,35 @@ const MultiplayerModeScreen = ({
                   <Text style={styles.controlButtonTextLarge}>Swap</Text>
                 )}
               </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.controlButtonNarrow,
-                  (!canLocalPlayerAct || isSubmitAnimating) &&
-                    styles.controlButtonDisabled,
-                ]}
-                disabled={!canLocalPlayerAct || isSubmitAnimating}
-                onPress={handlePassButtonPress}
-                accessibilityLabel="Pass turn"
-              >
-                <Text style={styles.controlButtonTextLarge}>Pass</Text>
-              </TouchableOpacity>
-
               <TouchableOpacity
                 style={[
                   styles.controlButton,
                   session.status === "completed" && styles.controlButtonDisabled,
                   !canLocalPlayerAct && styles.controlButtonDisabled,
                   isSubmitAnimating && styles.controlButtonDisabled,
-                  selectedCells.length === 0 && styles.controlButtonDisabled,
+                  !shouldShowFinishInsteadOfSubmit &&
+                    selectedCells.length === 0 &&
+                    styles.controlButtonDisabled,
                 ]}
-                onPress={handleSubmit}
+                onPress={
+                  shouldShowFinishInsteadOfSubmit
+                    ? handleFinishButtonPress
+                    : handleSubmit
+                }
                 disabled={
                   session.status === "completed" ||
                   !canLocalPlayerAct ||
                   isSubmitAnimating ||
-                  selectedCells.length === 0
+                  (!shouldShowFinishInsteadOfSubmit &&
+                    selectedCells.length === 0)
+                }
+                accessibilityLabel={
+                  shouldShowFinishInsteadOfSubmit ? "Request finish" : "Submit turn"
                 }
               >
-                <Text style={styles.controlButtonText}>Submit</Text>
+                <Text style={styles.controlButtonText}>
+                  {shouldShowFinishInsteadOfSubmit ? "Finish" : "Submit"}
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1954,7 +2343,8 @@ const MultiplayerModeScreen = ({
                   <Text style={styles.controlButtonText}>Shuffle</Text>
                 )}
               </TouchableOpacity>
-            </View>
+              </View>
+            ) : null}
           </View>
         </View>
       </View>
@@ -1964,7 +2354,11 @@ const MultiplayerModeScreen = ({
         onChooseLetter={handleChooseBlankLetter}
         onCancel={() => setPendingBlankPlacement(null)}
       />
-      <MessageOverlay message={message} onClose={() => setMessage(null)} />
+      <MessageOverlay
+        message={message}
+        isDarkMode={isDarkMode}
+        onClose={() => setMessage(null)}
+      />
       <Modal
         visible={conflictModalVisible}
         transparent
@@ -1998,11 +2392,60 @@ const MultiplayerModeScreen = ({
       </Modal>
       <InGameMenu
         visible={menuVisible}
+        isDarkMode={isDarkMode}
         onClose={() => setMenuVisible(false)}
-        onOpenPlayMenu={() => setMenuVisible(false)}
+        onReturnToMultiplayerMenu={() => {
+          void (async () => {
+            setMenuVisible(false);
+            await clearSessionTurnNotifications();
+            onReturnToMultiplayerMenu?.();
+          })();
+        }}
         onReturnToMainMenu={() => {
           setMenuVisible(false);
           onBack?.();
+        }}
+        onArchiveGame={() => {
+          setMenuVisible(false);
+          setConfirmGameActionType("archive");
+        }}
+        onDeleteGame={() => {
+          setMenuVisible(false);
+          setConfirmGameActionType("delete");
+        }}
+      />
+      <PendingGameRequestModal
+        visible={confirmGameActionType != null}
+        isDarkMode={isDarkMode}
+        title={
+          confirmGameActionType === "archive" ? "Archive Game?" : "Delete Game?"
+        }
+        body="This will forfeit the current multiplayer game and return you to the main menu."
+        confirmLabel={
+          confirmGameActionType === "archive" ? "Archive Game" : "Delete Game"
+        }
+        confirmBusyLabel={
+          confirmGameActionType === "archive" ? "Archiving" : "Deleting"
+        }
+        cancelLabel="Cancel"
+        onCancel={() => setConfirmGameActionType(null)}
+        onConfirm={() => {
+          void handleConfirmArchiveOrDelete();
+        }}
+      />
+      <PendingGameRequestModal
+        visible={finishRequestModalVisible}
+        isDarkMode={isDarkMode}
+        title="Accept Finish?"
+        body="Your opponent requested to finish the game. Accept to end now, or decline to continue playing."
+        confirmLabel="Accept Finish"
+        confirmBusyLabel="Accepting"
+        cancelLabel="Decline"
+        onCancel={() => {
+          void handleDeclineFinishRequest();
+        }}
+        onConfirm={() => {
+          void handleAcceptFinishRequest();
         }}
       />
 
@@ -2078,6 +2521,8 @@ const MultiplayerModeScreen = ({
           </View>
         </Animated.View>
       </View>
+      </>
+      )}
     </SafeAreaView>
   );
 };
@@ -2091,6 +2536,40 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
     padding: 10,
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    gap: 10,
+    backgroundColor: "#fff",
+  },
+  loadingStateTitle: {
+    color: "#22313f",
+    fontSize: 22,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  loadingStateText: {
+    color: "#4b5563",
+    fontSize: 15,
+    lineHeight: 21,
+    textAlign: "center",
+  },
+  loadingStateButton: {
+    marginTop: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e2d3bb",
+    backgroundColor: "#fff",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  loadingStateButtonText: {
+    color: "#2c3e50",
+    fontSize: 16,
+    fontWeight: "800",
   },
   topPanel: {
     flexDirection: "row",
@@ -2140,29 +2619,6 @@ const styles = StyleSheet.create({
   infoValue: {
     color: "#2c3e50",
     fontSize: 14,
-    fontWeight: "700",
-  },
-  completedBanner: {
-    marginTop: 10,
-    marginHorizontal: 24,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    backgroundColor: "#fff7e8",
-    borderWidth: 1,
-    borderColor: "#e8c98a",
-  },
-  completedBannerTitle: {
-    color: "#9a6b2f",
-    fontSize: 14,
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-  },
-  completedBannerText: {
-    marginTop: 4,
-    color: "#5a5248",
-    fontSize: 16,
     fontWeight: "700",
   },
   sessionMuteRow: {
@@ -2231,6 +2687,9 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#2c3e50",
   },
+  scoreValueDark: {
+    color: "#f8fafc",
+  },
   scoreDelta: {
     fontSize: 18,
     fontWeight: "800",
@@ -2248,6 +2707,9 @@ const styles = StyleSheet.create({
     color: "#7f8c8d",
     marginTop: -2,
     marginBottom: 8,
+  },
+  scoreLabelDark: {
+    color: "#94a3b8",
   },
   boardSection: {
     flex: 1,
@@ -2286,9 +2748,16 @@ const styles = StyleSheet.create({
     width: "100%",
     alignItems: "center",
   },
+  tilesSectionDisabled: {
+    opacity: 0.45,
+  },
   waitingRackSection: {
     width: "100%",
     opacity: 0.42,
+    marginBottom: 1,
+  },
+  waitingRackSectionMatchLocal: {
+    opacity: 1,
   },
   controls: {
     flexDirection: "row",
@@ -2433,5 +2902,29 @@ const styles = StyleSheet.create({
     color: "#7f8c8d",
   },
 });
+
+const LIGHT_THEME = {
+  background: "#fff",
+  loadingBackground: "#fff",
+  panel: "#f5f6f7",
+  infoCardBackground: "#e0e0e0",
+  surface: "#fff",
+  border: "#e2d3bb",
+  title: "#2c3e50",
+  subtitle: "#4b5563",
+  muted: "#7f8c8d",
+};
+
+const DARK_THEME = {
+  background: "#0b1220",
+  loadingBackground: "#0b1220",
+  panel: "#1e293b",
+  infoCardBackground: "#4b5563",
+  surface: "#d1d5db",
+  border: "#334155",
+  title: "#f8fafc",
+  subtitle: "#cbd5e1",
+  muted: "#94a3b8",
+};
 
 export default MultiplayerModeScreen;

@@ -257,6 +257,24 @@ Add these env vars:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 
+For edge functions (push/reminders), also configure:
+
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `FCM_SERVER_KEY`
+- `APNS_TEAM_ID`
+- `APNS_KEY_ID`
+- `APNS_PRIVATE_KEY` (raw PEM or base64-encoded PEM, `\n` escaped is supported)
+- `APNS_BUNDLE_ID`
+- `APNS_USE_SANDBOX` (`true` for development, default `false`)
+
+Rollout flags for Phase 2 push/reminders:
+
+- `ENABLE_EVENT_DRIVEN_PUSH` (default `false`)
+- `EVENT_DRIVEN_PUSH_CANARY_PERCENT` (`0-100`, default `0`)
+- `ENABLE_CRON_REMINDERS` (default `false`)
+- `ENABLE_REMINDER_PUSH` (default `false`)
+- `REMINDER_PUSH_CANARY_PERCENT` (`0-100`, default `0`)
+
 These are already read by:
 
 - [`src/config/backend.js`](/Users/sethchun/Documents/WordsWithRealFriends/src/config/backend.js)

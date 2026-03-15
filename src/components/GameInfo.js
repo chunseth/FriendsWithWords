@@ -8,7 +8,9 @@ const GameInfo = ({
   overallHighScore,
   turnFlavor,
   pendingTurnFlavor,
+  isDarkMode = false,
 }) => {
+  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const [displayFlavor, setDisplayFlavor] = useState(null);
   const [tileAnimationState, setTileAnimationState] = useState(null);
   const expressionOpacity = useRef(new Animated.Value(0)).current;
@@ -82,8 +84,8 @@ const GameInfo = ({
         : null;
 
     return (
-      <View style={styles.infoItem}>
-        <Text style={styles.label}>{label}</Text>
+      <View style={[styles.infoItem, { backgroundColor: theme.infoBackground }]}>
+        <Text style={[styles.label, { color: theme.label }]}>{label}</Text>
         <View style={styles.valueContainer}>
           {hasFlavor ? (
             <>
@@ -91,6 +93,7 @@ const GameInfo = ({
                 style={[
                   styles.value,
                   styles.expressionValue,
+                  { color: theme.valueColor },
                   { opacity: expressionOpacity },
                 ]}
               >
@@ -102,6 +105,7 @@ const GameInfo = ({
                 style={[
                   styles.value,
                   styles.totalValueOverlay,
+                  { color: theme.valueColor },
                   { opacity: totalOpacity },
                 ]}
               >
@@ -109,9 +113,9 @@ const GameInfo = ({
               </Animated.Text>
             </>
           ) : pendingValue != null ? (
-            <Text style={styles.value}>{pendingValue}</Text>
+            <Text style={[styles.value, { color: theme.valueColor }]}>{pendingValue}</Text>
           ) : (
-            <Text style={styles.value}>{total}</Text>
+            <Text style={[styles.value, { color: theme.valueColor }]}>{total}</Text>
           )}
         </View>
       </View>
@@ -125,8 +129,8 @@ const GameInfo = ({
       : null;
 
     return (
-      <View style={styles.infoItem}>
-        <Text style={styles.label}>Tiles</Text>
+      <View style={[styles.infoItem, { backgroundColor: theme.infoBackground }]}>
+        <Text style={[styles.label, { color: theme.label }]}>Tiles</Text>
         <View style={styles.valueContainer}>
           {hasFlavor ? (
             <>
@@ -134,6 +138,7 @@ const GameInfo = ({
                 style={[
                   styles.value,
                   styles.expressionValue,
+                  { color: theme.valueColor },
                   { opacity: expressionOpacity },
                 ]}
               >
@@ -152,6 +157,7 @@ const GameInfo = ({
                 style={[
                   styles.value,
                   styles.totalValueOverlay,
+                  { color: theme.valueColor },
                   { opacity: totalOpacity },
                 ]}
               >
@@ -159,9 +165,9 @@ const GameInfo = ({
               </Animated.Text>
             </>
           ) : pendingValue != null ? (
-            <Text style={styles.value}>{pendingValue}</Text>
+            <Text style={[styles.value, { color: theme.valueColor }]}>{pendingValue}</Text>
           ) : (
-            <Text style={styles.value}>{tilesRemaining}</Text>
+            <Text style={[styles.value, { color: theme.valueColor }]}>{tilesRemaining}</Text>
           )}
         </View>
       </View>
@@ -171,9 +177,11 @@ const GameInfo = ({
   return (
     <View style={styles.container}>
       <View style={styles.row}>
-        <View style={styles.infoItem}>
-          <Text style={styles.label}>Best</Text>
-          <Text style={styles.value}>{overallHighScore ?? "-"}</Text>
+        <View style={[styles.infoItem, { backgroundColor: theme.infoBackground }]}>
+          <Text style={[styles.label, { color: theme.label }]}>Best</Text>
+          <Text style={[styles.value, { color: theme.valueColor }]}>
+            {overallHighScore ?? "-"}
+          </Text>
         </View>
         {renderMetricValue("Words", wordCount, {
           previous: displayFlavor?.previousWordCount,
@@ -191,6 +199,18 @@ const GameInfo = ({
       </View>
     </View>
   );
+};
+
+const LIGHT_THEME = {
+  infoBackground: "#ffffff",
+  label: "#7f8c8d",
+  valueColor: "#2c3e50",
+};
+
+const DARK_THEME = {
+  infoBackground: "#4b5563",
+  label: "#d1d5db",
+  valueColor: "#f9fafb",
 };
 
 const styles = StyleSheet.create({

@@ -39,6 +39,20 @@ npm install -g react-native-cli
 
 ## Getting Started
 
+### 0. Configure Env Files
+
+Create local env files from templates:
+
+```bash
+cp .env.example .env
+cp supabase/functions/.env.example supabase/functions/.env
+```
+
+Then fill values in:
+
+- `.env` for app runtime (`SUPABASE_URL`, `SUPABASE_ANON_KEY`)
+- `supabase/functions/.env` for edge functions (service role key, FCM/APNs, rollout flags)
+
 ### 1. Install Dependencies
 
 ```bash

@@ -10,6 +10,27 @@ const PROFILES_TABLE = "profiles";
 const SESSIONS_TABLE = "multiplayer_sessions";
 const SESSION_USER_STATE_TABLE = "multiplayer_user_session_state";
 const PRESENCE_TABLE = "user_presence";
+const FALLBACK_ACTOR_LABEL = "A friend";
+
+const resolveProfileLabelById = async (supabase, playerId) => {
+  if (!supabase || !playerId) {
+    return FALLBACK_ACTOR_LABEL;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from(PROFILES_TABLE)
+      .select("username, display_name")
+      .eq("id", playerId)
+      .maybeSingle();
+    if (error) {
+      return FALLBACK_ACTOR_LABEL;
+    }
+    return data?.username ?? data?.display_name ?? FALLBACK_ACTOR_LABEL;
+  } catch (_error) {
+    return FALLBACK_ACTOR_LABEL;
+  }
+};
 
 const getAuthContext = async () => {
   if (!isBackendConfigured()) {
@@ -74,6 +95,10 @@ const buildRequestSummary = ({
   presenceLastActiveAt: presenceRow?.last_active_at ?? null,
   createdAt: request.created_at,
   updatedAt: request.updated_at,
+  completedAt:
+    request.status === "accepted" && (sessionRow?.status ?? "active") === "archived"
+      ? sessionRow?.saved_at ?? request.updated_at
+      : null,
   summary:
     request.status === "pending"
       ? request.sender_id === currentUserId
@@ -156,7 +181,7 @@ export const loadMultiplayerGameRequests = async () => {
   if (acceptedSessionIds.length > 0) {
     const { data: sessions, error: sessionsError } = await supabase
       .from(SESSIONS_TABLE)
-      .select("session_id, board_revision, active_player_id, status")
+      .select("session_id, board_revision, active_player_id, status, saved_at")
       .in("session_id", acceptedSessionIds);
 
     if (sessionsError) {
@@ -296,7 +321,37 @@ export const sendMultiplayerGameRequest = async ({
     };
   }
 
-  return { ok: true, reason: "request_sent", requestId: data?.id ?? null };
+  const requestId = data?.id ?? null;
+  const actorLabel = await resolveProfileLabelById(supabase, userId);
+  if (supabase?.functions?.invoke && requestId) {
+    const notifyResult = await supabase.functions.invoke("notify-multiplayer-event", {
+      body: {
+        user_id: receiverId,
+        type: "game_request",
+        entity_id: requestId,
+        payload: {
+          requestId,
+          friendId: userId,
+          actorLabel,
+          route: "multiplayer-menu",
+          version: 1,
+        },
+        title: "Game request",
+        body: `${actorLabel} sent you a game request.`,
+        send_push: true,
+        skip_enqueue: true,
+      },
+    });
+    if (notifyResult?.error) {
+      console.warn("[multiplayer-push] game request notify invoke failed", {
+        requestId,
+        receiverId,
+        error: notifyResult.error?.message ?? "unknown_error",
+      });
+    }
+  }
+
+  return { ok: true, reason: "request_sent", requestId };
 };
 
 export const acceptMultiplayerGameRequest = async ({
@@ -391,10 +446,50 @@ export const acceptMultiplayerGameRequest = async ({
     };
   }
 
+  const acceptedSessionId = data?.session_id ?? sessionId;
+  const actorLabel =
+    receiverUsername ??
+    receiverDisplayName ??
+    receiverProfile?.username ??
+    receiverProfile?.display_name ??
+    "Your friend";
+  const pushPayload = {
+    requestId,
+    sessionId: acceptedSessionId,
+    friendId: userId,
+    actorLabel,
+    route: "multiplayer",
+    version: 1,
+  };
+
+  if (supabase?.functions?.invoke) {
+    const notifyResult = await supabase.functions.invoke("notify-multiplayer-event", {
+      body: {
+        user_id: senderId,
+        type: "request_accepted",
+        entity_id: acceptedSessionId,
+        payload: pushPayload,
+        title: "Game request accepted",
+        body: `${actorLabel} accepted your game request.`,
+        send_push: true,
+        skip_enqueue: true,
+      },
+    });
+
+    if (notifyResult?.error) {
+      console.warn("[multiplayer-push] request accepted notify invoke failed", {
+        requestId,
+        senderId,
+        sessionId: acceptedSessionId,
+        error: notifyResult.error?.message ?? "unknown_error",
+      });
+    }
+  }
+
   return {
     ok: true,
     reason: data?.reason ?? "request_accepted",
-    sessionId: data?.session_id ?? sessionId,
+    sessionId: acceptedSessionId,
   };
 };
 

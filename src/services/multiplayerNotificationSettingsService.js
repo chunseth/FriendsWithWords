@@ -54,12 +54,7 @@ export const fetchMultiplayerNotificationSettings = async () => {
   };
 };
 
-export const saveMultiplayerNotificationSettings = async ({
-  turnRemindersEnabled,
-  quietHoursStart = null,
-  quietHoursEnd = null,
-  timezone = null,
-}) => {
+export const saveMultiplayerNotificationSettings = async ({ enabled }) => {
   const authContext = await getAuthContext();
   if (!authContext.ok) {
     return {
@@ -75,12 +70,10 @@ export const saveMultiplayerNotificationSettings = async ({
     "upsert_multiplayer_notification_settings",
     {
       p_turn_reminders_enabled:
-        typeof turnRemindersEnabled === "boolean"
-          ? turnRemindersEnabled
-          : true,
-      p_quiet_hours_start: quietHoursStart,
-      p_quiet_hours_end: quietHoursEnd,
-      p_timezone: timezone,
+        typeof enabled === "boolean" ? enabled : true,
+      p_quiet_hours_start: null,
+      p_quiet_hours_end: null,
+      p_timezone: null,
     }
   );
 

@@ -1,7 +1,14 @@
 import React from "react";
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-const ConfirmLeaveGameModal = ({ visible, onCancel, onConfirm }) => {
+const ConfirmLeaveGameModal = ({
+  visible,
+  onCancel,
+  onConfirm,
+  isDarkMode = false,
+}) => {
+  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
+
   if (!visible) return null;
 
   return (
@@ -16,9 +23,18 @@ const ConfirmLeaveGameModal = ({ visible, onCancel, onConfirm }) => {
         activeOpacity={1}
         onPress={onCancel}
       >
-        <View style={styles.card} onStartShouldSetResponder={() => true}>
-          <Text style={styles.title}>Start New Game?</Text>
-          <Text style={styles.body}>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.cardBackground,
+              borderColor: theme.cardBorder,
+            },
+          ]}
+          onStartShouldSetResponder={() => true}
+        >
+          <Text style={[styles.title, { color: theme.title }]}>Start New Game?</Text>
+          <Text style={[styles.body, { color: theme.body }]}>
             Starting a new game will replace your current game or saved
             progress.
           </Text>
@@ -27,13 +43,44 @@ const ConfirmLeaveGameModal = ({ visible, onCancel, onConfirm }) => {
             <Text style={styles.primaryButtonText}>Start New Game</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.secondaryButton} onPress={onCancel}>
-            <Text style={styles.secondaryButtonText}>Keep Playing</Text>
+          <TouchableOpacity
+            style={[
+              styles.secondaryButton,
+              {
+                backgroundColor: theme.secondaryButtonBackground,
+                borderColor: theme.secondaryButtonBorder,
+              },
+            ]}
+            onPress={onCancel}
+          >
+            <Text style={[styles.secondaryButtonText, { color: theme.secondaryButtonText }]}>
+              Keep Playing
+            </Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
     </Modal>
   );
+};
+
+const LIGHT_THEME = {
+  cardBackground: "#fffaf2",
+  cardBorder: "#eadfcd",
+  title: "#2c3e50",
+  body: "#6b7280",
+  secondaryButtonBackground: "#fff",
+  secondaryButtonBorder: "#e2d3bb",
+  secondaryButtonText: "#2c3e50",
+};
+
+const DARK_THEME = {
+  cardBackground: "#1a2431",
+  cardBorder: "#334155",
+  title: "#f8fafc",
+  body: "#cbd5e1",
+  secondaryButtonBackground: "#111827",
+  secondaryButtonBorder: "#334155",
+  secondaryButtonText: "#f8fafc",
 };
 
 const styles = StyleSheet.create({

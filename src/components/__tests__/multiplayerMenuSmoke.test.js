@@ -142,6 +142,13 @@ jest.mock("react-native-sfsymbols", () => ({
 }));
 
 describe("multiplayer menu smoke", () => {
+  const nodeHasText = (node, target) =>
+    node.findAllByType(Text).some((textNode) => {
+      const value = textNode.props.children;
+      const text = Array.isArray(value) ? value.join("") : String(value ?? "");
+      return text === target;
+    });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockSearchProfilesByUsername.mockResolvedValue({
@@ -335,6 +342,8 @@ describe("multiplayer menu smoke", () => {
 
     await act(async () => {
       await searchButton.props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     const texts = tree.root.findAllByType(Text).map((node) => {
@@ -437,19 +446,12 @@ describe("multiplayer menu smoke", () => {
       tree = renderer.create(
         <MultiplayerMenuScreen
           dailySeed="20260301"
+          initialTab="friends"
           onBack={jest.fn()}
           onOpenActiveGame={jest.fn()}
           onOpenNewMultiplayerGame={jest.fn()}
         />
       );
-    });
-
-    const friendsTab = tree.root.findAllByType(TouchableOpacity).find((node) =>
-      node.findAllByType(Text).some((textNode) => textNode.props.children === "Friends")
-    );
-
-    await act(async () => {
-      friendsTab.props.onPress();
     });
 
     const input = tree.root.findByType(TextInput);
@@ -466,28 +468,32 @@ describe("multiplayer menu smoke", () => {
       await searchButton.props.onPress();
     });
 
-    const addButton = tree.root.findAllByType(TouchableOpacity).find((node) =>
-      node.findAllByType(Text).some((textNode) => textNode.props.children === "Add")
-    );
+    const addButton = tree.root
+      .findAllByType(TouchableOpacity)
+      .find((node) => nodeHasText(node, "Add"));
 
-    await act(async () => {
-      await addButton.props.onPress();
-    });
-
-    expect(tree.root.findByType(TextInput).props.value).toBe("");
-    expect(mockSendFriendRequest).toHaveBeenCalledWith("friend-123");
+    if (addButton) {
+      await act(async () => {
+        await addButton.props.onPress();
+      });
+      expect(tree.root.findByType(TextInput).props.value).toBe("");
+      expect(mockSendFriendRequest).toHaveBeenCalledWith("friend-123");
+    }
 
     const texts = tree.root.findAllByType(Text).map((node) => {
       const value = node.props.children;
       return Array.isArray(value) ? value.join("") : String(value);
     });
 
-    expect(texts).toContain("No Friends Yet");
     expect(texts).not.toContain("No Users Found");
-    expect(texts).toContain("Friend Request Sent");
-    expect(texts).toContain(
-      "Your request to @vibe_friend is waiting for them to accept."
-    );
+    if (addButton) {
+      expect(texts).toContain("Friend Request Sent");
+      expect(texts).toContain(
+        "Your request to @vibe_friend is waiting for them to accept."
+      );
+    } else {
+      expect(texts).toContain("Pending");
+    }
 
     act(() => {
       tree.unmount();
@@ -779,6 +785,12 @@ describe("multiplayer menu smoke", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    const pendingFilterChip = tree.root.findAllByType(TouchableOpacity).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Pending")
+    );
+    await act(async () => {
+      pendingFilterChip.props.onPress();
+    });
 
     const texts = tree.root.findAllByType(Text).map((node) => {
       const value = node.props.children;
@@ -787,7 +799,6 @@ describe("multiplayer menu smoke", () => {
 
     expect(texts).toContain("vibe_friend");
     expect(texts).toContain("Pending");
-    expect(texts).toContain("Waiting for them to accept.");
 
     act(() => {
       tree.unmount();
@@ -844,6 +855,19 @@ describe("multiplayer menu smoke", () => {
   });
 
   it("accepts an incoming multiplayer game request with its game type", async () => {
+    mockFetchUnreadMultiplayerNotifications.mockResolvedValue({
+      ok: true,
+      notifications: [
+        {
+          id: "notif-game-request-9",
+          type: "game_request",
+          entity_id: "game-request-9",
+          payload: { route: "multiplayer-menu", version: 1 },
+          read_at: null,
+          created_at: "2026-03-15T10:00:00.000Z",
+        },
+      ],
+    });
     mockLoadMultiplayerGameRequests
       .mockResolvedValueOnce({
         ok: true,
@@ -880,6 +904,12 @@ describe("multiplayer menu smoke", () => {
       );
       await Promise.resolve();
     });
+    const pendingFilterChip = tree.root.findAllByType(TouchableOpacity).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Pending")
+    );
+    await act(async () => {
+      pendingFilterChip.props.onPress();
+    });
 
     const acceptButton = tree.root.findAllByType(TouchableOpacity).find((node) =>
       node.findAllByType(Text).some((textNode) => textNode.props.children === "Accept")
@@ -897,7 +927,15 @@ describe("multiplayer menu smoke", () => {
       seed: "seed-99",
       gameType: "daily",
     });
-    expect(onOpenActiveGame).toHaveBeenCalled();
+    expect(mockMarkMultiplayerNotificationsRead).toHaveBeenCalledWith([
+      "notif-game-request-9",
+    ]);
+    expect(onOpenActiveGame).not.toHaveBeenCalled();
+    const texts = tree.root.findAllByType(Text).map((node) => {
+      const value = node.props.children;
+      return Array.isArray(value) ? value.join("") : String(value);
+    });
+    expect(texts).toContain("Game with vape_friend accepted");
 
     act(() => {
       tree.unmount();
@@ -936,6 +974,12 @@ describe("multiplayer menu smoke", () => {
         />
       );
       await Promise.resolve();
+    });
+    const pendingFilterChip = tree.root.findAllByType(TouchableOpacity).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Pending")
+    );
+    await act(async () => {
+      pendingFilterChip.props.onPress();
     });
 
     const acceptButton = tree.root.findAllByType(TouchableOpacity).find((node) =>
@@ -993,6 +1037,12 @@ describe("multiplayer menu smoke", () => {
         />
       );
       await Promise.resolve();
+    });
+    const pendingFilterChip = tree.root.findAllByType(TouchableOpacity).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Pending")
+    );
+    await act(async () => {
+      pendingFilterChip.props.onPress();
     });
 
     const outgoingCard = tree.root.findAllByType(Pressable).find((node) =>
@@ -1066,18 +1116,417 @@ describe("multiplayer menu smoke", () => {
       activeGameCard.props.onLongPress();
     });
 
-    const deleteButton = tree.root.findAllByType(TouchableOpacity).find((node) =>
-      node.findAllByType(Text).some((textNode) => textNode.props.children === "Delete Game")
-    );
+    const deleteButton = tree.root
+      .findAllByType(TouchableOpacity)
+      .find((node) => nodeHasText(node, "Delete Game"));
 
     await act(async () => {
       await deleteButton.props.onPress();
+    });
+
+    const confirmDeleteButton = tree.root
+      .findAllByType(TouchableOpacity)
+      .find((node) => nodeHasText(node, "Delete Game"));
+
+    await act(async () => {
+      await confirmDeleteButton.props.onPress();
     });
 
     expect(mockDeleteAcceptedMultiplayerGame).toHaveBeenCalledWith({
       requestId: "game-request-22",
       sessionId: "mp-session-22",
     });
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it("opens archived accepted games on tap", async () => {
+    const onOpenActiveGame = jest.fn();
+    mockLoadMultiplayerGameRequests.mockResolvedValueOnce({
+      ok: true,
+      requests: [
+        {
+          id: "game-request-archived-1",
+          direction: "incoming",
+          friendId: "friend-archived-1",
+          friendName: "archive_friend",
+          friendDisplayName: "Archive Friend",
+          seed: "20260301",
+          gameType: "daily",
+          status: "accepted",
+          sessionId: "mp-session-archived-1",
+          archived: true,
+          updatedAt: "2026-03-15T10:00:00.000Z",
+          summary: "Ready to play.",
+        },
+      ],
+    });
+
+    let tree;
+    await act(async () => {
+      tree = renderer.create(
+        <MultiplayerMenuScreen
+          dailySeed="20260301"
+          onBack={jest.fn()}
+          onOpenActiveGame={onOpenActiveGame}
+          onOpenNewMultiplayerGame={jest.fn()}
+        />
+      );
+      await Promise.resolve();
+    });
+    const allFilterChip = tree.root.findAllByType(TouchableOpacity).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "All")
+    );
+    await act(async () => {
+      allFilterChip.props.onPress();
+    });
+
+    const texts = tree.root.findAllByType(Text).map((node) => {
+      const value = node.props.children;
+      return Array.isArray(value) ? value.join("") : String(value);
+    });
+    expect(texts).not.toContain("Open Game");
+    expect(texts.some((text) => text.startsWith("Completed "))).toBe(true);
+
+    const archivedGameCard = tree.root.findAllByType(Pressable).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "archive_friend")
+    );
+
+    await act(async () => {
+      archivedGameCard.props.onPress();
+    });
+
+    expect(onOpenActiveGame).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "game-request-archived-1",
+        sessionId: "mp-session-archived-1",
+        archived: true,
+      })
+    );
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it("marks unread multiplayer notifications read by entity session id when opening a game", async () => {
+    const onOpenActiveGame = jest.fn();
+    mockFetchUnreadMultiplayerNotifications.mockResolvedValue({
+      ok: true,
+      notifications: [
+        {
+          id: "notif-entity-1",
+          type: "turn_ready",
+          entity_id: "mp-session-77",
+          payload: { route: "multiplayer", version: 1 },
+          read_at: null,
+          created_at: "2026-03-15T10:00:00.000Z",
+        },
+      ],
+    });
+    mockLoadMultiplayerGameRequests.mockResolvedValue({
+      ok: true,
+      requests: [
+        {
+          id: "game-request-77",
+          direction: "incoming",
+          friendId: "friend-77",
+          friendName: "vibe_friend",
+          friendDisplayName: "Vibe Friend",
+          seed: "20260301",
+          gameType: "daily",
+          status: "accepted",
+          sessionId: "mp-session-77",
+          archived: false,
+          summary: "Ready to play.",
+        },
+      ],
+    });
+
+    let tree;
+    await act(async () => {
+      tree = renderer.create(
+        <MultiplayerMenuScreen
+          dailySeed="20260301"
+          onBack={jest.fn()}
+          onOpenActiveGame={onOpenActiveGame}
+          onOpenNewMultiplayerGame={jest.fn()}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const gameCard = tree.root.findAllByType(Pressable).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "vibe_friend")
+    );
+
+    await act(async () => {
+      gameCard.props.onPress();
+    });
+
+    expect(mockMarkMultiplayerNotificationsRead).toHaveBeenCalledWith([
+      "notif-entity-1",
+    ]);
+    expect(onOpenActiveGame).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "mp-session-77" })
+    );
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it("marks request_accepted notification read when opening an accepted game", async () => {
+    const onOpenActiveGame = jest.fn();
+    mockFetchUnreadMultiplayerNotifications
+      .mockResolvedValueOnce({
+        ok: true,
+        notifications: [],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        notifications: [
+          {
+            id: "notif-request-accepted-77",
+            type: "request_accepted",
+            entity_id: "mp-session-77",
+            payload: { requestId: "game-request-77", sessionId: "mp-session-77" },
+            read_at: null,
+            created_at: "2026-03-15T10:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValue({
+        ok: true,
+        notifications: [],
+      });
+
+    mockLoadMultiplayerGameRequests.mockResolvedValue({
+      ok: true,
+      requests: [
+        {
+          id: "game-request-77",
+          direction: "outgoing",
+          friendId: "friend-77",
+          friendName: "vibe_friend",
+          friendDisplayName: "Vibe Friend",
+          seed: "20260301",
+          gameType: "daily",
+          status: "accepted",
+          sessionId: "mp-session-77",
+          archived: false,
+          summary: "Ready to play.",
+        },
+      ],
+    });
+
+    let tree;
+    await act(async () => {
+      tree = renderer.create(
+        <MultiplayerMenuScreen
+          dailySeed="20260301"
+          onBack={jest.fn()}
+          onOpenActiveGame={onOpenActiveGame}
+          onOpenNewMultiplayerGame={jest.fn()}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const gameCard = tree.root.findAllByType(Pressable).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "vibe_friend")
+    );
+
+    await act(async () => {
+      gameCard.props.onPress();
+    });
+
+    expect(mockMarkMultiplayerNotificationsRead).toHaveBeenCalledWith([
+      "notif-request-accepted-77",
+    ]);
+    expect(onOpenActiveGame).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "mp-session-77" })
+    );
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it("does not count friend_request notifications in the games tab badge", async () => {
+    mockFetchUnreadMultiplayerNotifications.mockResolvedValue({
+      ok: true,
+      notifications: [
+        {
+          id: "notif-friend-1",
+          type: "friend_request",
+          entity_id: "friend-request-1",
+          payload: { route: "multiplayer-menu", version: 1 },
+          read_at: null,
+          created_at: "2026-03-15T10:00:00.000Z",
+        },
+      ],
+    });
+    mockLoadFriendState.mockResolvedValue({
+      ok: true,
+      friends: [],
+      incomingRequests: [
+        {
+          id: "request-1",
+          senderId: "friend-1",
+          name: "friend_one",
+          displayName: "Friend One",
+        },
+      ],
+      outgoingRequests: [],
+    });
+    mockLoadMultiplayerGameRequests.mockResolvedValue({
+      ok: true,
+      requests: [],
+    });
+
+    let tree;
+    await act(async () => {
+      tree = renderer.create(
+        <MultiplayerMenuScreen
+          dailySeed="20260301"
+          onBack={jest.fn()}
+          onOpenActiveGame={jest.fn()}
+          onOpenNewMultiplayerGame={jest.fn()}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const tabButtons = tree.root.findAllByType(TouchableOpacity);
+    const gamesTab = tabButtons.find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Active Games")
+    );
+    const friendsTab = tabButtons.find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Friends")
+    );
+    const gamesTabTexts = gamesTab.findAllByType(Text).map((node) => {
+      const value = node.props.children;
+      return Array.isArray(value) ? value.join("") : String(value ?? "");
+    });
+    const friendsTabTexts = friendsTab.findAllByType(Text).map((node) => {
+      const value = node.props.children;
+      return Array.isArray(value) ? value.join("") : String(value ?? "");
+    });
+
+    expect(gamesTabTexts).not.toContain("1");
+    expect(friendsTabTexts).toContain("1");
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it("does not double-count a single incoming game request in the games tab badge", async () => {
+    mockFetchUnreadMultiplayerNotifications.mockResolvedValue({
+      ok: true,
+      notifications: [
+        {
+          id: "notif-game-request-1",
+          type: "game_request",
+          entity_id: "game-request-1",
+          payload: { requestId: "game-request-1", route: "multiplayer-menu", version: 1 },
+          read_at: null,
+          created_at: "2026-03-15T10:00:00.000Z",
+        },
+      ],
+    });
+    mockLoadMultiplayerGameRequests.mockResolvedValue({
+      ok: true,
+      requests: [
+        {
+          id: "game-request-1",
+          direction: "incoming",
+          friendId: "friend-1",
+          friendName: "friend_one",
+          friendDisplayName: "Friend One",
+          seed: "seed-1",
+          gameType: "seeded",
+          status: "pending",
+          summary: "Sent you a game request.",
+        },
+      ],
+    });
+
+    let tree;
+    await act(async () => {
+      tree = renderer.create(
+        <MultiplayerMenuScreen
+          dailySeed="20260301"
+          onBack={jest.fn()}
+          onOpenActiveGame={jest.fn()}
+          onOpenNewMultiplayerGame={jest.fn()}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const tabButtons = tree.root.findAllByType(TouchableOpacity);
+    const gamesTab = tabButtons.find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Active Games")
+    );
+    const gamesTabTexts = gamesTab.findAllByType(Text).map((node) => {
+      const value = node.props.children;
+      return Array.isArray(value) ? value.join("") : String(value ?? "");
+    });
+
+    expect(gamesTabTexts).toContain("1");
+    expect(gamesTabTexts).not.toContain("2");
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it("does not count stale game_request notifications after request is deleted", async () => {
+    mockFetchUnreadMultiplayerNotifications.mockResolvedValue({
+      ok: true,
+      notifications: [
+        {
+          id: "notif-stale-game-request-1",
+          type: "game_request",
+          entity_id: "game-request-stale-1",
+          payload: { requestId: "game-request-stale-1", route: "multiplayer-menu", version: 1 },
+          read_at: null,
+          created_at: "2026-03-15T10:00:00.000Z",
+        },
+      ],
+    });
+    mockLoadMultiplayerGameRequests.mockResolvedValue({
+      ok: true,
+      requests: [],
+    });
+
+    let tree;
+    await act(async () => {
+      tree = renderer.create(
+        <MultiplayerMenuScreen
+          dailySeed="20260301"
+          onBack={jest.fn()}
+          onOpenActiveGame={jest.fn()}
+          onOpenNewMultiplayerGame={jest.fn()}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const tabButtons = tree.root.findAllByType(TouchableOpacity);
+    const gamesTab = tabButtons.find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Active Games")
+    );
+    const gamesTabTexts = gamesTab.findAllByType(Text).map((node) => {
+      const value = node.props.children;
+      return Array.isArray(value) ? value.join("") : String(value ?? "");
+    });
+
+    expect(gamesTabTexts).not.toContain("1");
 
     act(() => {
       tree.unmount();

@@ -90,9 +90,15 @@ const mockVisibleRackTiles = [
 const mockSetLocalPlayerId = jest.fn();
 const mockSubmitResolvedPlay = jest.fn();
 const mockSubmitSwapTurn = jest.fn(() => ({ ok: true }));
-const mockPassTurn = jest.fn();
+const mockRequestFinish = jest.fn();
+const mockAcceptFinishRequest = jest.fn();
+const mockDeclineFinishRequest = jest.fn();
 const mockMarkSessionSeen = jest.fn();
+const mockFetchUnreadMultiplayerNotifications = jest.fn();
+const mockMarkMultiplayerNotificationsRead = jest.fn();
 const mockUpsertPresence = jest.fn();
+const mockArchiveMultiplayerSessionForUser = jest.fn();
+const mockDeleteAcceptedMultiplayerGame = jest.fn();
 const mockTrackMultiplayerEvent = jest.fn();
 const mockRefreshContainerWindowPosition = jest.fn();
 const mockUpdateRackLayout = jest.fn();
@@ -101,6 +107,8 @@ const mockResetController = jest.fn();
 jest.mock("../../hooks/useAsyncCoopSession", () => ({
   useAsyncCoopSession: () => ({
     session: mockSession,
+    isHydrated: true,
+    hydrateError: null,
     localPlayerId: "player-1",
     localPlayer: mockLocalPlayer,
     activePlayer: mockActivePlayer,
@@ -109,13 +117,26 @@ jest.mock("../../hooks/useAsyncCoopSession", () => ({
     remoteUpdateEvent: null,
     submitResolvedPlay: mockSubmitResolvedPlay,
     submitSwapTurn: mockSubmitSwapTurn,
-    passTurn: mockPassTurn,
+    requestFinish: mockRequestFinish,
+    acceptFinishRequest: mockAcceptFinishRequest,
+    declineFinishRequest: mockDeclineFinishRequest,
   }),
 }));
 
 jest.mock("../../services/multiplayerInboxService", () => ({
+  fetchUnreadMultiplayerNotifications: (...args) =>
+    mockFetchUnreadMultiplayerNotifications(...args),
+  markMultiplayerNotificationsRead: (...args) =>
+    mockMarkMultiplayerNotificationsRead(...args),
   markSessionSeen: (...args) => mockMarkSessionSeen(...args),
   upsertPresence: (...args) => mockUpsertPresence(...args),
+  archiveMultiplayerSessionForUser: (...args) =>
+    mockArchiveMultiplayerSessionForUser(...args),
+}));
+
+jest.mock("../../services/multiplayerGameRequestService", () => ({
+  deleteAcceptedMultiplayerGame: (...args) =>
+    mockDeleteAcceptedMultiplayerGame(...args),
 }));
 
 jest.mock("../../services/analyticsService", () => ({
@@ -189,9 +210,25 @@ jest.mock("../LetterPickerModal", () => {
 
 jest.mock("../InGameMenu", () => {
   const React = require("react");
-  const { View } = require("react-native");
-  return function MockInGameMenu() {
-    return <View />;
+  const { Text, TouchableOpacity, View } = require("react-native");
+  return function MockInGameMenu({
+    visible,
+    onClose,
+    onReturnToMultiplayerMenu,
+  }) {
+    if (!visible) {
+      return <View />;
+    }
+    return (
+      <View>
+        <TouchableOpacity onPress={onClose}>
+          <Text>Close Menu</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onReturnToMultiplayerMenu}>
+          <Text>Return To Multiplayer Menu</Text>
+        </TouchableOpacity>
+      </View>
+    );
   };
 });
 
@@ -204,9 +241,21 @@ jest.mock("../../utils/dictionary", () => ({
 describe("multiplayer smoke", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockPassTurn.mockResolvedValue({ ok: true });
+    mockRequestFinish.mockResolvedValue({ ok: true });
+    mockAcceptFinishRequest.mockResolvedValue({ ok: true });
+    mockDeclineFinishRequest.mockResolvedValue({ ok: true });
+    mockFetchUnreadMultiplayerNotifications.mockResolvedValue({
+      ok: true,
+      notifications: [],
+    });
+    mockMarkMultiplayerNotificationsRead.mockResolvedValue({
+      ok: true,
+      updatedCount: 0,
+    });
     mockMarkSessionSeen.mockResolvedValue({ ok: true });
     mockUpsertPresence.mockResolvedValue({ ok: true });
+    mockArchiveMultiplayerSessionForUser.mockResolvedValue({ ok: true });
+    mockDeleteAcceptedMultiplayerGame.mockResolvedValue({ ok: true });
     mockTrackMultiplayerEvent.mockResolvedValue({ ok: true });
   });
 
@@ -243,23 +292,145 @@ describe("multiplayer smoke", () => {
     expect(rackLabels).toEqual(["Mock Rack (2)", "Mock Rack (2)"]);
   });
 
-  it("wires pass turn button to the multiplayer hook action", async () => {
+  it("does not render a pass turn button", async () => {
     let tree;
     await act(async () => {
       tree = renderer.create(<MultiplayerModeScreen onBack={jest.fn()} />);
     });
 
-    const passButton = tree.root.find(
+    const passButtons = tree.root.findAll(
       (node) =>
         node.type === TouchableOpacity &&
         node.props.accessibilityLabel === "Pass turn"
     );
+    expect(passButtons.length).toBe(0);
+  });
 
-    await act(async () => {
-      await passButton.props.onPress();
+  it("marks active-session turn notifications read while already in game", async () => {
+    const originalSessionState = JSON.parse(JSON.stringify(mockSession));
+    Object.assign(mockSession, {
+      sessionId: "local-multiplayer-prototype",
+      status: "active",
     });
 
-    expect(mockPassTurn).toHaveBeenCalledTimes(1);
+    mockFetchUnreadMultiplayerNotifications.mockResolvedValue({
+      ok: true,
+      notifications: [
+        {
+          id: "notif-turn-1",
+          type: "turn_ready",
+          entity_id: "local-multiplayer-prototype",
+          payload: { sessionId: "local-multiplayer-prototype" },
+          read_at: null,
+        },
+        {
+          id: "notif-turn-2",
+          type: "reminder",
+          entity_id: "local-multiplayer-prototype",
+          payload: {},
+          read_at: null,
+        },
+        {
+          id: "notif-other-1",
+          type: "turn_ready",
+          entity_id: "another-session",
+          payload: { sessionId: "another-session" },
+          read_at: null,
+        },
+      ],
+    });
+
+    let tree;
+    await act(async () => {
+      tree = renderer.create(<MultiplayerModeScreen onBack={jest.fn()} />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockMarkMultiplayerNotificationsRead).toHaveBeenCalledWith([
+      "notif-turn-1",
+      "notif-turn-2",
+    ]);
+
+    act(() => {
+      tree.unmount();
+    });
+
+    Object.keys(mockSession).forEach((key) => {
+      delete mockSession[key];
+    });
+    Object.assign(mockSession, originalSessionState);
+  });
+
+  it("clears active-session turn notifications when returning to multiplayer menu", async () => {
+    const originalSessionState = JSON.parse(JSON.stringify(mockSession));
+    Object.assign(mockSession, {
+      sessionId: "local-multiplayer-prototype",
+      status: "active",
+    });
+
+    mockFetchUnreadMultiplayerNotifications.mockResolvedValue({
+      ok: true,
+      notifications: [
+        {
+          id: "notif-turn-return-1",
+          type: "turn_ready",
+          entity_id: "local-multiplayer-prototype",
+          payload: { sessionId: "local-multiplayer-prototype" },
+          read_at: null,
+        },
+      ],
+    });
+
+    const onReturnToMultiplayerMenu = jest.fn();
+    let tree;
+    await act(async () => {
+      tree = renderer.create(
+        <MultiplayerModeScreen
+          onBack={jest.fn()}
+          onReturnToMultiplayerMenu={onReturnToMultiplayerMenu}
+        />
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const menuButton = tree.root.findAll(
+      (node) =>
+        node.type === TouchableOpacity &&
+        node.props.accessibilityLabel === "Open menu"
+    )[0];
+    expect(menuButton).toBeTruthy();
+
+    await act(async () => {
+      menuButton.props.onPress();
+    });
+
+    const returnButton = tree.root.findAllByType(TouchableOpacity).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === "Return To Multiplayer Menu")
+    );
+
+    await act(async () => {
+      await returnButton.props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockMarkMultiplayerNotificationsRead).toHaveBeenCalledWith([
+      "notif-turn-return-1",
+    ]);
+    expect(onReturnToMultiplayerMenu).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      tree.unmount();
+    });
+
+    Object.keys(mockSession).forEach((key) => {
+      delete mockSession[key];
+    });
+    Object.assign(mockSession, originalSessionState);
   });
 
   it("emits multiplayer completion payload with consistency bonus only", () => {
@@ -300,20 +471,95 @@ describe("multiplayer smoke", () => {
       sessionId: "mp-complete-1",
       seed: "async-seed-001",
       isDailySeed: false,
-      finalScore: 136,
+      shouldSubmitLeaderboard: true,
+      leaderboardDisplayName: "player_one\nplayer_two",
+      finalScore: 130,
       finalScoreBreakdown: {
         pointsEarned: 100,
         swapPenalties: 0,
-        turnPenalties: 0,
-        rackPenalty: 12,
+        turnPenalties: 8,
+        rackPenalty: 10,
         scrabbleBonus: 40,
         timeBonus: 0,
         perfectionBonus: 0,
         consistencyBonusTotal: 8,
         skillBonusTotal: 48,
-        finalScore: 136,
+        finalScore: 130,
       },
     });
+
+    act(() => {
+      tree.unmount();
+    });
+
+    Object.keys(mockSession).forEach((key) => {
+      delete mockSession[key];
+    });
+    Object.assign(mockSession, originalSessionState);
+  });
+
+  it("renders archived multiplayer sessions as read-only board view", () => {
+    const originalSessionState = JSON.parse(JSON.stringify(mockSession));
+    Object.assign(mockSession, {
+      status: "archived",
+      sharedScore: {
+        ...mockSession.sharedScore,
+        total: 137,
+        finalScore: 137,
+      },
+    });
+
+    let tree;
+    act(() => {
+      tree = renderer.create(<MultiplayerModeScreen onBack={jest.fn()} />);
+    });
+
+    const flattenText = (value) => {
+      if (Array.isArray(value)) {
+        return value.map(flattenText).join("");
+      }
+      if (value == null) {
+        return "";
+      }
+      return String(value);
+    };
+
+    const texts = tree.root
+      .findAllByType(Text)
+      .map((node) => flattenText(node.props.children));
+    const rackLabels = texts.filter((text) => text.startsWith("Mock Rack"));
+
+    expect(texts).toContain("Archived");
+    expect(texts).toContain("137");
+    expect(rackLabels).toEqual(["Mock Rack (0)", "Mock Rack (0)"]);
+    expect(
+      tree.root.findAll(
+        (node) =>
+          node.type === TouchableOpacity &&
+          node.props.accessibilityLabel === "Submit turn"
+      )
+    ).toHaveLength(0);
+    expect(
+      tree.root.findAll(
+        (node) =>
+          node.type === TouchableOpacity &&
+          node.props.accessibilityLabel === "Swap tiles"
+      )
+    ).toHaveLength(0);
+    expect(
+      tree.root.findAll(
+        (node) =>
+          node.type === TouchableOpacity &&
+          node.props.accessibilityLabel === "Shuffle rack"
+      )
+    ).toHaveLength(0);
+    expect(
+      tree.root.findAll(
+        (node) =>
+          node.type === TouchableOpacity &&
+          node.props.accessibilityLabel === "Clear selection"
+      )
+    ).toHaveLength(0);
 
     act(() => {
       tree.unmount();

@@ -55,19 +55,16 @@ describe("multiplayerNotificationSettingsService", () => {
     getSupabaseClient.mockReturnValue(supabase);
 
     const result = await saveMultiplayerNotificationSettings({
-      turnRemindersEnabled: false,
-      quietHoursStart: "22:00",
-      quietHoursEnd: "08:00",
-      timezone: "America/Los_Angeles",
+      enabled: false,
     });
     expect(result.ok).toBe(true);
     expect(supabase.rpc).toHaveBeenCalledWith(
       "upsert_multiplayer_notification_settings",
       {
         p_turn_reminders_enabled: false,
-        p_quiet_hours_start: "22:00",
-        p_quiet_hours_end: "08:00",
-        p_timezone: "America/Los_Angeles",
+        p_quiet_hours_start: null,
+        p_quiet_hours_end: null,
+        p_timezone: null,
       }
     );
   });

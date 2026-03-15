@@ -30,7 +30,7 @@ const OVERLAY_PAN_MIN_DISTANCE = 0;
 const CELL_SIZE_EFFECTIVE = TILE_SIZE + 2 * CELL_MARGIN;
 const BOARD_INDICES = Array.from({ length: BOARD_SIZE }, (_, index) => index);
 
-const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, settlingBoardTile = null, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false, allowEmptyCellPress = false, submitScorePreview = null, submitScorePreviewCell = null }) => {
+const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, settlingBoardTile = null, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false, allowEmptyCellPress = false, submitScorePreview = null, submitScorePreviewCell = null, isDarkMode = false }) => {
     const boardViewRef = useRef(null);
     const zoomWrapperRef = useRef(null);
     const [zoom, setZoom] = useState(1);
@@ -390,7 +390,11 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
     return (
         <View
             ref={boardViewRef}
-            style={[styles.board, { padding: effectivePadding }]}
+            style={[
+                styles.board,
+                isDarkMode ? styles.boardDark : null,
+                { padding: effectivePadding },
+            ]}
             onLayout={boardLayoutRef ? updateBoardLayout : undefined}
         >
             <View style={styles.boardInner}>
@@ -444,6 +448,7 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                                         submitScorePreviewCellKey === `${row},${col}`
                                     }
                                     submitScorePreview={submitScorePreview}
+                                    isDarkMode={isDarkMode}
                                 />
                             ); })}
                         </View>
@@ -553,6 +558,10 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         position: 'relative',
     },
+    boardDark: {
+        backgroundColor: '#4b5563',
+        borderColor: '#ffffff',
+    },
     boardInner: {
         width: BOARD_INNER_SIZE,
         height: BOARD_INNER_SIZE,
@@ -588,6 +597,9 @@ const styles = StyleSheet.create({
         margin: CELL_MARGIN,
         overflow: 'visible',
     },
+    cellDark: {
+        backgroundColor: '#000000',
+    },
     cellInner: {
         width: '100%',
         height: '100%',
@@ -608,14 +620,28 @@ const styles = StyleSheet.create({
         backgroundColor: '#f39c12',
     },
     cellSelected: {
-        backgroundColor: '#3498db',
-        transform: [{ scale: 1.05 }],
+        backgroundColor: 'rgba(241, 211, 149, 0.24)',
+        borderColor: '#E6CB8D',
+        borderWidth: 1,
+        transform: [{ scale: 1.03 }],
         zIndex: 10,
-        shadowColor: '#3498db',
+        shadowColor: '#E6CB8D',
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.5,
-        shadowRadius: 10,
-        elevation: 10,
+        shadowOpacity: 0.18,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    cellSelectedDark: {
+        backgroundColor: 'rgba(241, 211, 149, 0.20)',
+        borderColor: '#E6CB8D',
+        borderWidth: 1,
+        transform: [{ scale: 1.03 }],
+        zIndex: 10,
+        shadowColor: '#E6CB8D',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+        elevation: 1,
     },
     premiumDW: {
         backgroundColor: '#e8a0a0', // lighter pink (Double Word)
@@ -632,6 +658,21 @@ const styles = StyleSheet.create({
     premiumCenter: {
         backgroundColor: '#e8a0a0', // same as Double Word, with star for first-turn
     },
+    premiumDWDark: {
+        backgroundColor: '#D07C9A',
+    },
+    premiumTWDark: {
+        backgroundColor: '#B0374F',
+    },
+    premiumDLDark: {
+        backgroundColor: '#65B2DB',
+    },
+    premiumTLDark: {
+        backgroundColor: '#2D62AD',
+    },
+    premiumCenterDark: {
+        backgroundColor: '#D07C9A',
+    },
     premiumLabel: {
         color: 'white',
         fontSize: TILE_SIZE * 0.3,
@@ -640,17 +681,30 @@ const styles = StyleSheet.create({
     tile: {
         width: '100%',
         height: '100%',
-        backgroundColor: '#fff59d',
+        backgroundColor: '#FADFB6',
         borderRadius: 4,
+        overflow: 'hidden',
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: '#bdc3c7',
+        borderColor: '#E4CDA7',
+    },
+    tileDark: {
+        backgroundColor: '#FADFB6',
+        borderColor: '#E4CDA7',
+        shadowColor: '#ffffff',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.22,
+        shadowRadius: 3,
+        elevation: 3,
     },
     tileLetter: {
         fontSize: TILE_SIZE * 0.4 + 2,
         fontWeight: '700',
         color: '#2c3e50',
+    },
+    tileLetterDark: {
+        color: '#000000',
     },
     tileValue: {
         position: 'absolute',
@@ -659,24 +713,68 @@ const styles = StyleSheet.create({
         fontSize: TILE_SIZE * 0.2,
         color: '#7f8c8d',
     },
+    tileValueDark: {
+        color: '#000000',
+    },
+    tileEdgeTop: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 1,
+        backgroundColor: '#FDF2D8',
+    },
+    tileEdgeRight: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 2,
+        backgroundColor: '#FDF2D8',
+    },
+    tileEdgeLeftLower: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        bottom: 0,
+        width: 1,
+        backgroundColor: '#E6CB8D',
+    },
+    tileEdgeBottomLower: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 1,
+        backgroundColor: '#E6CB8D',
+    },
     submitScorePreviewBadge: {
         position: 'absolute',
         top: -2,
-        right: -4,
+        right: -2,
         zIndex: 30,
-        minWidth: 12,
+        width: 10,
         height: 10,
         borderRadius: 3,
-        paddingHorizontal: 2,
         backgroundColor: '#3f3f3f',
         justifyContent: 'center',
         alignItems: 'center',
     },
+    submitScorePreviewBadgeDark: {
+        backgroundColor: '#d1d5db',
+    },
     submitScorePreviewText: {
         fontSize: 5,
-        lineHeight: 6,
+        lineHeight: 10,
         color: '#ffffff',
         fontWeight: '700',
+        width: '100%',
+        textAlign: 'center',
+        textAlignVertical: 'center',
+        includeFontPadding: false,
+    },
+    submitScorePreviewTextDark: {
+        color: '#111827',
     },
 });
 
@@ -686,9 +784,12 @@ const BoardCell = React.memo(function BoardCell({
     row, col, tile, isSelected, isDragSource, premium,
     onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, onCellClick, allowEmptyCellPress,
     showSubmitScorePreview, submitScorePreview,
+    isDarkMode = false,
 }) {
     const previewBadgeScale = useRef(new Animated.Value(1)).current;
     const previousPreviewValueRef = useRef(null);
+    const darkShadowGradientColors = ['rgba(0,0,0,0.22)', 'rgba(0,0,0,0.08)', 'rgba(0,0,0,0)'];
+    const showTileInCell = tile && !isDragSource;
 
     useEffect(() => {
         if (!showSubmitScorePreview || submitScorePreview == null) {
@@ -723,33 +824,50 @@ const BoardCell = React.memo(function BoardCell({
 
     const cellStyle = useMemo(() => [
         styles.cell,
+        isDarkMode && styles.cellDark,
         tile !== null && styles.cellOccupied,
-        isSelected && styles.cellSelected,
-        premium === 'dw' && styles.premiumDW,
-        premium === 'tw' && styles.premiumTW,
-        premium === 'dl' && styles.premiumDL,
-        premium === 'tl' && styles.premiumTL,
-        premium === 'center' && styles.premiumCenter,
-    ].filter(Boolean), [tile !== null, isSelected, premium]);
+        isSelected &&
+            !showTileInCell &&
+            (isDarkMode ? styles.cellSelectedDark : styles.cellSelected),
+        premium === 'dw' && (isDarkMode ? styles.premiumDWDark : styles.premiumDW),
+        premium === 'tw' && (isDarkMode ? styles.premiumTWDark : styles.premiumTW),
+        premium === 'dl' && (isDarkMode ? styles.premiumDLDark : styles.premiumDL),
+        premium === 'tl' && (isDarkMode ? styles.premiumTLDark : styles.premiumTL),
+        premium === 'center' && (isDarkMode ? styles.premiumCenterDark : styles.premiumCenter),
+    ].filter(Boolean), [isDarkMode, tile !== null, isSelected, premium, showTileInCell]);
 
-    const showTileInCell = tile && !isDragSource;
+    const premiumGradientColorsLight = !isDarkMode
+        ? ({
+            dw: ['rgba(187,112,142,1)', 'rgba(187,112,142,0.35)', 'rgba(187,112,142,0)'],
+            tw: ['rgba(129,40,73,1)', 'rgba(129,40,73,0.35)', 'rgba(129,40,73,0)'],
+            dl: ['rgba(96,136,188,1)', 'rgba(96,136,188,0.35)', 'rgba(96,136,188,0)'],
+            tl: ['rgba(56,88,184,1)', 'rgba(56,88,184,0.35)', 'rgba(56,88,184,0)'],
+            center: ['rgba(187,112,142,1)', 'rgba(187,112,142,0.35)', 'rgba(187,112,142,0)'],
+        }[premium] ?? null)
+        : null;
+    const letterTileGradientColors = ['rgba(241,211,149,1)', 'rgba(241,211,149,0.35)', 'rgba(241,211,149,0)'];
+    const slotShadowGradientColors = showTileInCell
+        ? (isDarkMode ? darkShadowGradientColors : letterTileGradientColors)
+        : (!isDarkMode && premiumGradientColorsLight
+            ? premiumGradientColorsLight
+            : (isDarkMode
+                ? ['rgba(255,255,255,0.22)', 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0)']
+                : darkShadowGradientColors));
     const canPickup = (tile && tile.isFromRack && !tile.scored) || isDragSource;
     const cellContent = (
         <View style={styles.cellInner}>
             {showTileInCell ? (
-                <View style={styles.tile}>
-                    <Text style={styles.tileLetter}>{tile.letter}</Text>
-                    {showSubmitScorePreview && (
-                        <Animated.View
-                            style={[
-                                styles.submitScorePreviewBadge,
-                                { transform: [{ scale: previewBadgeScale }] },
-                            ]}
-                        >
-                            <Text style={styles.submitScorePreviewText}>{submitScorePreview}</Text>
-                        </Animated.View>
+                <View style={[styles.tile, isDarkMode ? styles.tileDark : null]}>
+                    {!isDarkMode && <View style={styles.tileEdgeTop} pointerEvents="none" />}
+                    {!isDarkMode && <View style={styles.tileEdgeRight} pointerEvents="none" />}
+                    {!isDarkMode && <View style={styles.tileEdgeLeftLower} pointerEvents="none" />}
+                    {!isDarkMode && <View style={styles.tileEdgeBottomLower} pointerEvents="none" />}
+                    <Text style={[styles.tileLetter, isDarkMode ? styles.tileLetterDark : null]}>{tile.letter}</Text>
+                    {!tile.isBlank && (
+                        <Text style={[styles.tileValue, isDarkMode ? styles.tileValueDark : null]}>
+                            {tile.value}
+                        </Text>
                     )}
-                    {!tile.isBlank && <Text style={styles.tileValue}>{tile.value}</Text>}
                 </View>
             ) : (
                 premium && (
@@ -758,11 +876,29 @@ const BoardCell = React.memo(function BoardCell({
             )}
             <LinearGradient
                 pointerEvents="none"
-                colors={['rgba(0,0,0,0.22)', 'rgba(0,0,0,0.08)', 'rgba(0,0,0,0)']}
+                colors={slotShadowGradientColors}
                 start={{ x: 0.5, y: 0 }}
                 end={{ x: 0.5, y: 1 }}
                 style={styles.tileGradient}
             />
+            {showTileInCell && showSubmitScorePreview && (
+                <Animated.View
+                    style={[
+                        styles.submitScorePreviewBadge,
+                        isDarkMode ? styles.submitScorePreviewBadgeDark : null,
+                        { transform: [{ scale: previewBadgeScale }] },
+                    ]}
+                >
+                    <Text
+                        style={[
+                            styles.submitScorePreviewText,
+                            isDarkMode ? styles.submitScorePreviewTextDark : null,
+                        ]}
+                    >
+                        {submitScorePreview}
+                    </Text>
+                </Animated.View>
+            )}
         </View>
     );
 

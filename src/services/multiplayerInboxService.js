@@ -4,6 +4,7 @@ import { isBackendConfigured } from "../config/backend";
 const NOTIFICATIONS_TABLE = "multiplayer_notifications";
 const PRESENCE_TABLE = "user_presence";
 const GAME_REQUESTS_TABLE = "multiplayer_game_requests";
+const FRIEND_REQUESTS_TABLE = "friend_requests";
 const SESSIONS_TABLE = "multiplayer_sessions";
 const INBOX_CHANNEL = "multiplayer-inbox";
 
@@ -329,8 +330,11 @@ export const loadPresenceByUserIds = async (userIds = []) => {
 };
 
 export const subscribeToMultiplayerInbox = async ({
+  channelKey = "default",
   onNotification = null,
   onGameRequest = null,
+  onFriendRequest = null,
+  onFriendRequestSent = null,
   onSessionChange = null,
   onStatusChange = null,
 } = {}) => {
@@ -346,7 +350,7 @@ export const subscribeToMultiplayerInbox = async ({
 
   const { supabase, userId } = authContext;
   const channel = supabase
-    .channel(`${INBOX_CHANNEL}:${userId}`)
+    .channel(`${INBOX_CHANNEL}:${userId}:${channelKey}`)
     .on(
       "postgres_changes",
       {
@@ -366,6 +370,26 @@ export const subscribeToMultiplayerInbox = async ({
         filter: `receiver_id=eq.${userId}`,
       },
       (payload) => onGameRequest?.(payload)
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: FRIEND_REQUESTS_TABLE,
+        filter: `receiver_id=eq.${userId}`,
+      },
+      (payload) => onFriendRequest?.(payload)
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: FRIEND_REQUESTS_TABLE,
+        filter: `sender_id=eq.${userId}`,
+      },
+      (payload) => onFriendRequestSent?.(payload)
     )
     .on(
       "postgres_changes",

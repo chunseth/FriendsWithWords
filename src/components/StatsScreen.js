@@ -32,12 +32,18 @@ const formatLeaderboardPosition = ({
   return "Unranked";
 };
 
-const StatsCard = ({ label, value, accent = false }) => (
-  <View style={[styles.card, accent && styles.cardAccent]}>
-    <Text style={[styles.cardLabel, accent && styles.cardLabelAccent]}>
+const StatsCard = ({ label, value, accent = false, isDarkMode = false }) => (
+  <View
+    style={[
+      styles.card,
+      accent && styles.cardAccent,
+      isDarkMode && !accent ? styles.cardDark : null,
+    ]}
+  >
+    <Text style={[styles.cardLabel, accent && styles.cardLabelAccent, isDarkMode && !accent ? styles.cardLabelDark : null]}>
       {label}
     </Text>
-    <Text style={[styles.cardValue, accent && styles.cardValueAccent]}>
+    <Text style={[styles.cardValue, accent && styles.cardValueAccent, isDarkMode && !accent ? styles.cardValueDark : null]}>
       {value}
     </Text>
   </View>
@@ -49,32 +55,34 @@ const StatsScreen = ({
   leaderboardPositionLoading,
   leaderboardPositionError,
   backendConfigured,
+  isDarkMode = false,
   onBack,
 }) => {
+  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const wordsPlayed = stats?.wordsPlayed ?? 0;
   const highestScore = stats?.highestScore ?? 0;
   const gamesPlayed = stats?.gamesPlayed ?? 0;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={styles.header}>
         <TouchableOpacity
           onPress={onBack}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
-          <Text style={styles.backButton}>Back</Text>
+          <Text style={[styles.backButton, { color: theme.backButton }]}>Back</Text>
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.title}>Stats</Text>
-      <Text style={styles.subtitle}>
+      <Text style={[styles.title, { color: theme.title }]}>Stats</Text>
+      <Text style={[styles.subtitle, { color: theme.subtitle }]}>
         Your running totals across completed boards.
       </Text>
 
       <View style={styles.grid}>
-        <StatsCard label="Highest Score" value={highestScore} accent />
-        <StatsCard label="Words Played" value={wordsPlayed} />
-        <StatsCard label="Games Played" value={gamesPlayed} />
+        <StatsCard label="Highest Score" value={highestScore} accent isDarkMode={isDarkMode} />
+        <StatsCard label="Words Played" value={wordsPlayed} isDarkMode={isDarkMode} />
+        <StatsCard label="Games Played" value={gamesPlayed} isDarkMode={isDarkMode} />
         <StatsCard
           label="High Score Rank"
           value={formatLeaderboardPosition({
@@ -83,17 +91,20 @@ const StatsScreen = ({
             error: leaderboardPositionError,
             leaderboardPosition,
           })}
+          isDarkMode={isDarkMode}
         />
       </View>
 
       {leaderboardPositionError ? (
-        <Text style={styles.footnote}>{leaderboardPositionError}</Text>
+        <Text style={[styles.footnote, { color: theme.footnote }]}>
+          {leaderboardPositionError}
+        </Text>
       ) : !backendConfigured ? (
-        <Text style={styles.footnote}>
+        <Text style={[styles.footnote, { color: theme.footnote }]}>
           Connect Supabase to see your leaderboard rank.
         </Text>
       ) : (
-        <Text style={styles.footnote}>
+        <Text style={[styles.footnote, { color: theme.footnote }]}>
           Rank is based on your best submitted overall score.
         </Text>
       )}
@@ -101,10 +112,25 @@ const StatsScreen = ({
   );
 };
 
+const LIGHT_THEME = {
+  background: "#f8f4ed",
+  backButton: "#2f6f4f",
+  title: "#22313f",
+  subtitle: "#6a736f",
+  footnote: "#7f8c8d",
+};
+
+const DARK_THEME = {
+  background: "#0b1220",
+  backButton: "#86efac",
+  title: "#f8fafc",
+  subtitle: "#cbd5e1",
+  footnote: "#94a3b8",
+};
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f4ed",
     paddingHorizontal: 28,
     paddingTop: 24,
     paddingBottom: 42,
@@ -114,7 +140,6 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
   },
   backButton: {
-    color: "#2f6f4f",
     fontSize: 18,
     fontWeight: "800",
   },
@@ -123,13 +148,11 @@ const styles = StyleSheet.create({
     fontSize: 40,
     lineHeight: 44,
     fontWeight: "900",
-    color: "#22313f",
   },
   subtitle: {
     marginTop: 10,
     fontSize: 16,
     lineHeight: 22,
-    color: "#6a736f",
     maxWidth: 280,
   },
   grid: {
@@ -148,6 +171,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#d97706",
     borderColor: "#d97706",
   },
+  cardDark: {
+    backgroundColor: "#d1d5db",
+    borderColor: "#9ca3af",
+  },
   cardLabel: {
     fontSize: 13,
     fontWeight: "800",
@@ -157,6 +184,9 @@ const styles = StyleSheet.create({
   },
   cardLabelAccent: {
     color: "rgba(255,255,255,0.76)",
+  },
+  cardLabelDark: {
+    color: "#4b5563",
   },
   cardValue: {
     marginTop: 10,
@@ -168,11 +198,13 @@ const styles = StyleSheet.create({
   cardValueAccent: {
     color: "#fff",
   },
+  cardValueDark: {
+    color: "#111827",
+  },
   footnote: {
     marginTop: 24,
     fontSize: 14,
     lineHeight: 20,
-    color: "#7f8c8d",
   },
 });
 

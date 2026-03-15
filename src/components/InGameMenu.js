@@ -1,8 +1,18 @@
 import React from "react";
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-const InGameMenu = ({ visible, onClose, onOpenPlayMenu, onReturnToMainMenu }) => {
+const InGameMenu = ({
+  visible,
+  isDarkMode = false,
+  onClose,
+  onOpenPlayMenu,
+  onReturnToMultiplayerMenu,
+  onReturnToMainMenu,
+  onArchiveGame,
+  onDeleteGame,
+}) => {
   if (!visible) return null;
+  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
 
   return (
     <Modal
@@ -16,22 +26,78 @@ const InGameMenu = ({ visible, onClose, onOpenPlayMenu, onReturnToMainMenu }) =>
         activeOpacity={1}
         onPress={onClose}
       >
-        <View style={styles.card} onStartShouldSetResponder={() => true}>
-          <Text style={styles.title}>Menu</Text>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.cardBackground,
+              borderColor: theme.cardBorder,
+            },
+          ]}
+          onStartShouldSetResponder={() => true}
+        >
+          <Text style={[styles.title, { color: theme.title }]}>Menu</Text>
 
-          <TouchableOpacity style={styles.primaryButton} onPress={onOpenPlayMenu}>
-            <Text style={styles.primaryButtonText}>Play Menu</Text>
-          </TouchableOpacity>
+          {onOpenPlayMenu || onReturnToMultiplayerMenu ? (
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={onReturnToMultiplayerMenu ?? onOpenPlayMenu}
+            >
+              <Text style={styles.primaryButtonText}>
+                {onReturnToMultiplayerMenu
+                  ? "Return to Multiplayer Menu"
+                  : "Play Menu"}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
 
           <TouchableOpacity
-            style={styles.secondaryButton}
+            style={[
+              styles.secondaryButton,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.surfaceBorder,
+              },
+            ]}
             onPress={onReturnToMainMenu}
           >
-            <Text style={styles.secondaryButtonText}>Return to Main Menu</Text>
+            <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+              Return to Main Menu
+            </Text>
           </TouchableOpacity>
 
+          {onArchiveGame ? (
+            <TouchableOpacity
+              style={[
+                styles.secondaryButton,
+                {
+                  backgroundColor: theme.surface,
+                  borderColor: theme.surfaceBorder,
+                },
+              ]}
+              onPress={onArchiveGame}
+            >
+              <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                Archive Game
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {onDeleteGame ? (
+            <TouchableOpacity
+              style={[styles.secondaryButton, styles.dangerButton]}
+              onPress={onDeleteGame}
+            >
+              <Text style={[styles.secondaryButtonText, styles.dangerText]}>
+                Delete Game
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Text style={styles.closeButtonText}>Close</Text>
+            <Text style={[styles.closeButtonText, { color: theme.closeText }]}>
+              Close
+            </Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -95,6 +161,13 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     textAlign: "center",
   },
+  dangerButton: {
+    borderColor: "#f3b3ad",
+    backgroundColor: "#fff5f4",
+  },
+  dangerText: {
+    color: "#b42318",
+  },
   closeButton: {
     marginTop: 12,
     paddingVertical: 12,
@@ -106,5 +179,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 });
+
+const LIGHT_THEME = {
+  cardBackground: "#fffaf2",
+  cardBorder: "#eadfcd",
+  surface: "#fff",
+  surfaceBorder: "#e2d3bb",
+  title: "#2c3e50",
+  closeText: "#9a6b2f",
+};
+
+const DARK_THEME = {
+  cardBackground: "#1a2431",
+  cardBorder: "#334155",
+  surface: "#0f172a",
+  surfaceBorder: "#334155",
+  title: "#f8fafc",
+  closeText: "#fdba74",
+};
 
 export default InGameMenu;

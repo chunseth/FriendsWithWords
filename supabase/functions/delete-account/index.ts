@@ -34,21 +34,9 @@ Deno.serve(async (request) => {
       });
     }
 
-    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: {
-          Authorization: authHeader,
-        },
-      },
-    });
-
-    const {
-      data: { user },
-      error: userError,
-    } = await userClient.auth.getUser();
-
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized." }), {
+    const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (!accessToken) {
+      return new Response(JSON.stringify({ error: "Missing bearer token." }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -61,9 +49,39 @@ Deno.serve(async (request) => {
       },
     });
 
-    const { data: cleanupData, error: cleanupError } = await userClient.rpc(
-      "delete_my_account_data"
-    );
+    const {
+      data: { user },
+      error: userError,
+    } = await adminClient.auth.getUser(accessToken);
+
+    if (userError || !user) {
+      return new Response(
+        JSON.stringify({
+          error: "Unauthorized.",
+          details: userError?.message ?? null,
+        }),
+        {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Run cleanup as the caller so auth.uid() inside the RPC resolves correctly.
+    const scopedUserClient = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    });
+
+    const { data: cleanupData, error: cleanupError } =
+      await scopedUserClient.rpc("delete_my_account_data");
 
     if (cleanupError) {
       return new Response(

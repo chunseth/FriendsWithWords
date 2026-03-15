@@ -137,7 +137,6 @@ const createInitialSession = ({
     turn: {
       number: 1,
       activePlayerId: firstPlayerId,
-      passStreak: 0,
       pendingAction: null,
       lockedAt: null,
       lastCompletedTurnId: null,
@@ -157,6 +156,7 @@ const createInitialSession = ({
         scoreDelta: 0,
       }),
     ],
+    finishRequest: null,
     boardRevision: 0,
     savedAt: Date.now(),
     lastMoveSummary: null,
@@ -206,6 +206,8 @@ export const useAsyncCoopSession = ({
   sessionId = "local-multiplayer-prototype",
 } = {}) => {
   const [session, setSession] = useState(() => createInitialSession({ sessionId }));
+  const [isHydrated, setIsHydrated] = useState(false);
+  const [hydrateError, setHydrateError] = useState(null);
   const [localPlayerId, setLocalPlayerId] = useState("player-1");
   const [remoteUpdateEvent, setRemoteUpdateEvent] = useState(null);
   const [subscriptionAttempt, setSubscriptionAttempt] = useState(0);
@@ -255,6 +257,8 @@ export const useAsyncCoopSession = ({
 
     const hydrate = async () => {
       hasHydratedRef.current = false;
+      setIsHydrated(false);
+      setHydrateError(null);
       let authenticatedUserId = null;
       if (isBackendConfigured()) {
         const sessionResult = await ensureSupabaseSession();
@@ -263,20 +267,33 @@ export const useAsyncCoopSession = ({
         }
       }
 
-      const savedSession = isBackendConfigured()
-        ? (await loadRemoteMultiplayerSession(sessionId)).session
-        : await loadMultiplayerSession();
+      let savedSession = null;
+      let remoteReason = null;
+      if (isBackendConfigured()) {
+        const remoteResult = await loadRemoteMultiplayerSession(sessionId);
+        savedSession = remoteResult.session ?? null;
+        remoteReason = remoteResult.reason ?? null;
+      } else {
+        savedSession = await loadMultiplayerSession();
+      }
       if (cancelled) {
         return;
       }
 
-      const hydratedSession = savedSession ?? createInitialSession({ sessionId });
+      const isLocalPrototypeSession = sessionId === "local-multiplayer-prototype";
+      const allowCreateFallback = !isBackendConfigured() || isLocalPrototypeSession;
+      const hydratedSession = savedSession ?? (allowCreateFallback
+        ? createInitialSession({ sessionId })
+        : null);
+
       if (!savedSession && !isBackendConfigured()) {
         await saveMultiplayerSession(hydratedSession);
       }
 
       if (!hydratedSession) {
+        setHydrateError(remoteReason ?? "session_load_failed");
         hasHydratedRef.current = true;
+        setIsHydrated(true);
         return;
       }
 
@@ -290,6 +307,7 @@ export const useAsyncCoopSession = ({
         })
       );
       hasHydratedRef.current = true;
+      setIsHydrated(true);
     };
 
     hydrate();
@@ -500,8 +518,6 @@ export const useAsyncCoopSession = ({
 
       const nextActivePlayerId = rotateActivePlayer(currentSession);
       const nextTurnNumber = currentSession.turn.number + 1;
-      const nextPassStreak =
-        action === "pass" ? currentSession.turn.passStreak + 1 : 0;
       const nextHistoryEntry = createTurnLogEntry({
         turnNumber: currentSession.turn.number,
         actorId: actor.id,
@@ -554,57 +570,9 @@ export const useAsyncCoopSession = ({
         return player;
       });
 
-      const completesSession = nextPassStreak >= 2;
-      if (completesSession) {
-        const rackPenaltyTotal = getRackPenaltyTotal(nextPlayers);
-        const nextHistory = [...currentSession.history, nextHistoryEntry];
-        const consistencyBonusTotal = calculateConsistencyBonusTotal({
-          turnCount: currentSession.turn.number,
-          wordHistory: buildWordHistoryFromTurns(nextHistory),
-        });
-        const finalScore =
-          currentSession.sharedScore.total +
-          scoreDelta -
-          rackPenaltyTotal +
-          consistencyBonusTotal;
-
-        return {
-          ...currentSession,
-          status: "completed",
-          players: nextPlayers.map((player) => ({
-            ...player,
-            readiness: "waiting",
-          })),
-          sharedScore: {
-            ...currentSession.sharedScore,
-            total: finalScore,
-            consistencyBonusTotal,
-            rackPenaltyTotal,
-            finalScore,
-          },
-          turn: {
-            number: nextTurnNumber,
-            activePlayerId: nextActivePlayerId,
-            passStreak: nextPassStreak,
-            pendingAction: null,
-            lockedAt: null,
-            lastCompletedTurnId: nextHistoryEntry.id,
-          },
-          bag: {
-            ...currentSession.bag,
-            tiles: refillResult.nextBag,
-            remainingCount: refillResult.nextBag.length,
-            nextTileId: refillResult.nextTileId,
-          },
-          history: nextHistory,
-          lastMoveSummary: nextHistoryEntry,
-          boardRevision: currentSession.boardRevision + 1,
-          savedAt: Date.now(),
-        };
-      }
-
       return {
         ...currentSession,
+        finishRequest: null,
         players: nextPlayers,
         sharedScore: {
           ...currentSession.sharedScore,
@@ -613,7 +581,6 @@ export const useAsyncCoopSession = ({
         turn: {
           number: nextTurnNumber,
           activePlayerId: nextActivePlayerId,
-          passStreak: nextPassStreak,
           pendingAction: null,
           lockedAt: null,
           lastCompletedTurnId: nextHistoryEntry.id,
@@ -683,7 +650,9 @@ export const useAsyncCoopSession = ({
       });
 
       const completesSession =
-        payload.nextBag.length === 0 && payload.resultingRack.length === 0;
+        payload.nextBag.length === 0 &&
+        payload.resultingRack.length === 0 &&
+        nextPlayers.every((player) => (player?.rack?.length ?? 0) === 0);
 
       if (completesSession) {
         const rackPenaltyTotal = getRackPenaltyTotal(nextPlayers);
@@ -718,10 +687,10 @@ export const useAsyncCoopSession = ({
             ...player,
             readiness: "waiting",
           })),
+          finishRequest: null,
           turn: {
             number: currentSession.turn.number + 1,
             activePlayerId: nextActivePlayerId,
-            passStreak: 0,
             pendingAction: null,
             lockedAt: null,
             lastCompletedTurnId: nextHistoryEntry.id,
@@ -741,6 +710,7 @@ export const useAsyncCoopSession = ({
 
       return {
         ...currentSession,
+        finishRequest: null,
         sharedBoard: payload.resolvedBoard,
         sharedPremiumSquares: payload.newPremiumSquares,
         sharedScore: {
@@ -755,7 +725,6 @@ export const useAsyncCoopSession = ({
         turn: {
           number: currentSession.turn.number + 1,
           activePlayerId: nextActivePlayerId,
-          passStreak: 0,
           pendingAction: null,
           lockedAt: null,
           lastCompletedTurnId: nextHistoryEntry.id,
@@ -817,27 +786,6 @@ export const useAsyncCoopSession = ({
     });
   }, [buildHandOffSession, commitNextSession, resolveCanAct]);
 
-  const completeMockPass = useCallback(async () => {
-    const currentSession = sessionRef.current;
-    const canAct = resolveCanAct(currentSession);
-    if (!canAct.ok) {
-      return canAct;
-    }
-
-    const nextSession = buildHandOffSession(currentSession, {
-      action: "pass",
-      scoreDelta: 0,
-      words: [],
-      tilesDrawn: 0,
-    });
-
-    return commitNextSession({
-      action: "pass",
-      currentSession,
-      nextSession,
-    });
-  }, [buildHandOffSession, commitNextSession, resolveCanAct]);
-
   const submitResolvedPlay = useCallback(
     async (payload) => {
       if (!payload) {
@@ -863,27 +811,6 @@ export const useAsyncCoopSession = ({
     },
     [buildResolvedPlaySession, commitNextSession, resolveCanAct]
   );
-
-  const passTurn = useCallback(async () => {
-    const currentSession = sessionRef.current;
-    const canAct = resolveCanAct(currentSession);
-    if (!canAct.ok) {
-      return canAct;
-    }
-
-    const nextSession = buildHandOffSession(currentSession, {
-      action: "pass",
-      scoreDelta: 0,
-      words: [],
-      tilesDrawn: 0,
-    });
-
-    return commitNextSession({
-      action: "pass",
-      currentSession,
-      nextSession,
-    });
-  }, [buildHandOffSession, commitNextSession, resolveCanAct]);
 
   const submitSwapTurn = useCallback(
     async ({ selectedRackIndices = [] } = {}) => {
@@ -999,6 +926,7 @@ export const useAsyncCoopSession = ({
 
       const nextSession = {
         ...currentSession,
+        finishRequest: null,
         players: nextPlayers,
         sharedScore: {
           ...currentSession.sharedScore,
@@ -1009,7 +937,6 @@ export const useAsyncCoopSession = ({
         turn: {
           number: currentSession.turn.number + 1,
           activePlayerId: nextActivePlayerId,
-          passStreak: 0,
           pendingAction: null,
           lockedAt: null,
           lastCompletedTurnId: nextHistoryEntry.id,
@@ -1036,8 +963,168 @@ export const useAsyncCoopSession = ({
     [commitNextSession, resolveCanAct, rotateActivePlayer]
   );
 
+  const buildCompletedSession = useCallback(
+    ({ currentSession, action, actorId, nextSessionOverride = {} }) => {
+      const actor =
+        currentSession.players.find((player) => player.id === actorId) ??
+        getActivePlayer(currentSession);
+      const nextHistoryEntry = createTurnLogEntry({
+        turnNumber: currentSession.turn.number,
+        actorId: actor?.id ?? "system",
+        actorName: actor?.displayName ?? "Player",
+        action,
+        scoreDelta: 0,
+        words: [],
+        tilesDrawn: 0,
+      });
+      const nextHistory = [...currentSession.history, nextHistoryEntry];
+      const rackPenaltyTotal = getRackPenaltyTotal(currentSession.players);
+      const consistencyBonusTotal = calculateConsistencyBonusTotal({
+        turnCount: currentSession.turn.number,
+        wordHistory: buildWordHistoryFromTurns(nextHistory),
+      });
+      const finalScore =
+        (currentSession.sharedScore.total ?? 0) -
+        rackPenaltyTotal +
+        consistencyBonusTotal;
+
+      return {
+        ...currentSession,
+        ...nextSessionOverride,
+        status: "completed",
+        players: currentSession.players.map((player) => ({
+          ...player,
+          readiness: "waiting",
+        })),
+        sharedScore: {
+          ...currentSession.sharedScore,
+          total: finalScore,
+          consistencyBonusTotal,
+          rackPenaltyTotal,
+          finalScore,
+        },
+        finishRequest: null,
+        turn: {
+          ...currentSession.turn,
+          number: currentSession.turn.number + 1,
+          pendingAction: null,
+          lockedAt: null,
+          lastCompletedTurnId: nextHistoryEntry.id,
+        },
+        history: nextHistory,
+        lastMoveSummary: nextHistoryEntry,
+        boardRevision: currentSession.boardRevision + 1,
+        savedAt: Date.now(),
+      };
+    },
+    []
+  );
+
+  const requestFinish = useCallback(async () => {
+    const currentSession = sessionRef.current;
+    const canAct = resolveCanAct(currentSession);
+    if (!canAct.ok) {
+      return canAct;
+    }
+    if ((currentSession.bag?.remainingCount ?? 0) !== 0) {
+      return { ok: false, reason: "bag_not_empty" };
+    }
+    if (currentSession.finishRequest?.status === "pending") {
+      return { ok: false, reason: "finish_already_pending" };
+    }
+    const nextActivePlayerId = rotateActivePlayer(currentSession);
+    const nextSession = {
+      ...currentSession,
+      finishRequest: {
+        requestedBy: localPlayerId,
+        requestedAt: Date.now(),
+        status: "pending",
+      },
+      turn: {
+        ...currentSession.turn,
+        activePlayerId: nextActivePlayerId,
+      },
+      lastMoveSummary: createTurnLogEntry({
+        turnNumber: currentSession.turn.number,
+        actorId: localPlayerId,
+        actorName: localPlayer?.displayName ?? "Player",
+        action: "finish_request",
+        scoreDelta: 0,
+      }),
+      boardRevision: currentSession.boardRevision + 1,
+      savedAt: Date.now(),
+    };
+
+    return commitNextSession({
+      action: "finish_request",
+      currentSession,
+      nextSession,
+    });
+  }, [commitNextSession, localPlayer?.displayName, localPlayerId, resolveCanAct, rotateActivePlayer]);
+
+  const acceptFinishRequest = useCallback(async () => {
+    const currentSession = sessionRef.current;
+    if (currentSession.status !== "active") {
+      return { ok: false, reason: "session_not_active" };
+    }
+    if ((currentSession.bag?.remainingCount ?? 0) !== 0) {
+      return { ok: false, reason: "bag_not_empty" };
+    }
+    const pending = currentSession.finishRequest;
+    if (!pending || pending.status !== "pending") {
+      return { ok: false, reason: "no_finish_request" };
+    }
+    if (pending.requestedBy === localPlayerId) {
+      return { ok: false, reason: "finish_request_own" };
+    }
+    const nextSession = buildCompletedSession({
+      currentSession,
+      action: "finish_accept",
+      actorId: localPlayerId,
+    });
+    return commitNextSession({
+      action: "finish_accept",
+      currentSession,
+      nextSession,
+    });
+  }, [buildCompletedSession, commitNextSession, localPlayerId]);
+
+  const declineFinishRequest = useCallback(async () => {
+    const currentSession = sessionRef.current;
+    if (currentSession.status !== "active") {
+      return { ok: false, reason: "session_not_active" };
+    }
+    const pending = currentSession.finishRequest;
+    if (!pending || pending.status !== "pending") {
+      return { ok: false, reason: "no_finish_request" };
+    }
+    if (pending.requestedBy === localPlayerId) {
+      return { ok: false, reason: "finish_request_own" };
+    }
+    const nextSession = {
+      ...currentSession,
+      finishRequest: null,
+      lastMoveSummary: createTurnLogEntry({
+        turnNumber: currentSession.turn.number,
+        actorId: localPlayerId,
+        actorName: localPlayer?.displayName ?? "Player",
+        action: "finish_decline",
+        scoreDelta: 0,
+      }),
+      boardRevision: currentSession.boardRevision + 1,
+      savedAt: Date.now(),
+    };
+    return commitNextSession({
+      action: "finish_decline",
+      currentSession,
+      nextSession,
+    });
+  }, [commitNextSession, localPlayer?.displayName, localPlayerId]);
+
   return {
     session,
+    isHydrated,
+    hydrateError,
     localPlayerId,
     setLocalPlayerId,
     localPlayer,
@@ -1047,10 +1134,11 @@ export const useAsyncCoopSession = ({
     remoteUpdateEvent,
     submitResolvedPlay,
     submitSwapTurn,
-    passTurn,
+    requestFinish,
+    acceptFinishRequest,
+    declineFinishRequest,
     completeMockPlay,
     completeMockSwap,
-    completeMockPass,
   };
 };
 

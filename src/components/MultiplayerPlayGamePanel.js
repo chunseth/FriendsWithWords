@@ -14,11 +14,13 @@ const MultiplayerPlayGamePanel = ({
   visible,
   friendName,
   dailySeed,
+  isDarkMode = false,
   onClose,
   onDailyGame,
   onNewGameRandom,
   onNewGameWithSeed,
 }) => {
+  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const [seedInput, setSeedInput] = useState("");
 
   const trimmedSeed = useMemo(() => seedInput.trim(), [seedInput]);
@@ -54,15 +56,26 @@ const MultiplayerPlayGamePanel = ({
         activeOpacity={1}
         onPress={onClose}
       >
-        <View style={styles.modal} onStartShouldSetResponder={() => true}>
+        <View
+          style={[
+            styles.modal,
+            {
+              backgroundColor: theme.modalBackground,
+              borderColor: theme.modalBorder,
+            },
+          ]}
+          onStartShouldSetResponder={() => true}
+        >
           <ScrollView
             style={styles.scrollView}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.eyebrow}>Friends With Words</Text>
-            <Text style={styles.title}>Play Game</Text>
-            <Text style={styles.subtitle}>
+            <Text style={[styles.eyebrow, { color: theme.eyebrow }]}>
+              Friends With Words
+            </Text>
+            <Text style={[styles.title, { color: theme.title }]}>Play Game</Text>
+            <Text style={[styles.subtitle, { color: theme.subtitle }]}>
               {friendName ? `Start a run with ${friendName}.` : "Start a multiplayer run."}
             </Text>
 
@@ -77,24 +90,43 @@ const MultiplayerPlayGamePanel = ({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.secondaryButton}
+              style={[
+                styles.secondaryButton,
+                {
+                  backgroundColor: theme.secondaryButtonBackground,
+                  borderColor: theme.secondaryButtonBorder,
+                },
+              ]}
               onPress={handleNewGameRandom}
             >
               <View style={styles.buttonRow}>
-                <Text style={styles.secondaryButtonText}>New Game</Text>
-                <Text style={styles.secondaryButtonMeta}>Random seed</Text>
+                <Text style={[styles.secondaryButtonText, { color: theme.secondaryButtonText }]}>
+                  New Game
+                </Text>
+                <Text style={[styles.secondaryButtonMeta, { color: theme.secondaryButtonMeta }]}>
+                  Random seed
+                </Text>
               </View>
             </TouchableOpacity>
 
             <View style={styles.seedSection}>
-              <Text style={styles.seedSectionLabel}>Seeded run</Text>
+              <Text style={[styles.seedSectionLabel, { color: theme.seedSectionLabel }]}>
+                Seeded run
+              </Text>
               <View style={styles.seedRow}>
                 <TextInput
-                  style={styles.seedInput}
+                  style={[
+                    styles.seedInput,
+                    {
+                      borderColor: theme.seedInputBorder,
+                      backgroundColor: theme.seedInputBackground,
+                      color: theme.seedInputText,
+                    },
+                  ]}
                   value={seedInput}
                   onChangeText={setSeedInput}
                   placeholder="000000"
-                  placeholderTextColor="#95a5a6"
+                  placeholderTextColor={theme.seedInputPlaceholder}
                   keyboardType={
                     Platform.OS === "ios" ? "number-pad" : "numeric"
                   }
@@ -121,13 +153,51 @@ const MultiplayerPlayGamePanel = ({
               onPress={onClose}
               hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
             >
-              <Text style={styles.closeButtonText}>Cancel</Text>
+              <Text style={[styles.closeButtonText, { color: theme.closeButtonText }]}>
+                Cancel
+              </Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
       </TouchableOpacity>
     </Modal>
   );
+};
+
+const LIGHT_THEME = {
+  modalBackground: "#fffaf2",
+  modalBorder: "#eadfcd",
+  eyebrow: "#9a6b2f",
+  title: "#2c3e50",
+  subtitle: "#6b7280",
+  secondaryButtonBackground: "#fff",
+  secondaryButtonBorder: "#e4d7c2",
+  secondaryButtonText: "#2c3e50",
+  secondaryButtonMeta: "#7f8c8d",
+  seedSectionLabel: "#7a5d33",
+  seedInputBorder: "#dcc9ac",
+  seedInputBackground: "#fff",
+  seedInputText: "#2c3e50",
+  seedInputPlaceholder: "#95a5a6",
+  closeButtonText: "#5f6c7b",
+};
+
+const DARK_THEME = {
+  modalBackground: "#1a2431",
+  modalBorder: "#334155",
+  eyebrow: "#fdba74",
+  title: "#f8fafc",
+  subtitle: "#cbd5e1",
+  secondaryButtonBackground: "#111827",
+  secondaryButtonBorder: "#334155",
+  secondaryButtonText: "#f8fafc",
+  secondaryButtonMeta: "#94a3b8",
+  seedSectionLabel: "#cbd5e1",
+  seedInputBorder: "#334155",
+  seedInputBackground: "#111827",
+  seedInputText: "#f8fafc",
+  seedInputPlaceholder: "#94a3b8",
+  closeButtonText: "#cbd5e1",
 };
 
 const styles = StyleSheet.create({

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, StyleSheet } from 'react-native';
 
-const MessageOverlay = ({ message, onClose }) => {
+const MessageOverlay = ({ message, onClose, isDarkMode = false }) => {
+    const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
     const isWordAcceptedWithTurnPoints =
         message?.title === 'Word Accepted!' &&
         typeof message?.turnPoints === 'number';
@@ -93,39 +94,70 @@ const MessageOverlay = ({ message, onClose }) => {
                 onPress={onClose}
             >
                 <TouchableOpacity 
-                    style={styles.content} 
+                    style={[
+                        styles.content,
+                        { backgroundColor: theme.contentBackground },
+                    ]} 
                     activeOpacity={1}
                     onPress={(e) => e.stopPropagation()}
                 >
-                    <Text style={styles.title}>{message.title}</Text>
+                    <Text style={[styles.title, { color: theme.title }]}>{message.title}</Text>
                     {isWordAcceptedWithTurnPoints ? (
                         <>
                             <View style={styles.turnSummaryRow}>
                                 <View style={styles.pointsLineRow}>
-                                    <Text style={styles.pointsLineText}>{displayPoints.turnPoints}</Text>
+                                    <Text style={[styles.pointsLineText, { color: theme.body }]}>
+                                        {displayPoints.turnPoints}
+                                    </Text>
                                     {isAnimatedWordAccepted && displayPoints.bonusPoints > 0 && (
-                                        <Text style={styles.pointsLineBonusText}> +{displayPoints.bonusPoints}</Text>
+                                        <Text
+                                            style={[
+                                                styles.pointsLineBonusText,
+                                                { color: theme.bonusText },
+                                            ]}
+                                        >
+                                            {" "}+{displayPoints.bonusPoints}
+                                        </Text>
                                     )}
-                                    <Text style={styles.pointsLineText}> points</Text>
+                                    <Text style={[styles.pointsLineText, { color: theme.body }]}> points</Text>
                                 </View>
                                 <View style={styles.comboRow}>
-                                    <Text style={styles.comboLabel}>
+                                    <Text style={[styles.comboLabel, { color: theme.bonusText }]}>
                                         {isAnimatedWordAccepted && showBonusLabel ? 'Combo!' : ' '}
                                     </Text>
                                 </View>
                             </View>
-                            <Text style={styles.text}>{message.text}</Text>
+                            <Text style={[styles.text, { color: theme.body }]}>{message.text}</Text>
                         </>
                     ) : (
-                        <Text style={styles.text}>{message.text}</Text>
+                        <Text style={[styles.text, { color: theme.body }]}>{message.text}</Text>
                     )}
-                    <TouchableOpacity style={styles.button} onPress={onClose}>
+                    <TouchableOpacity
+                        style={[styles.button, { backgroundColor: theme.buttonBackground }]}
+                        onPress={onClose}
+                    >
                         <Text style={styles.buttonText}>OK</Text>
                     </TouchableOpacity>
                 </TouchableOpacity>
             </TouchableOpacity>
         </Modal>
     );
+};
+
+const LIGHT_THEME = {
+    contentBackground: 'white',
+    title: '#2c3e50',
+    body: '#7f8c8d',
+    bonusText: '#2f6f4f',
+    buttonBackground: '#667eea',
+};
+
+const DARK_THEME = {
+    contentBackground: '#1a2431',
+    title: '#f8fafc',
+    body: '#cbd5e1',
+    bonusText: '#86efac',
+    buttonBackground: '#4f46e5',
 };
 
 const styles = StyleSheet.create({

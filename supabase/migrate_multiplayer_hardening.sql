@@ -224,6 +224,17 @@ begin
     );
   end if;
 
+  if p_action in ('finish_request', 'finish_accept', 'finish_decline') then
+    if coalesce((p_session_payload #>> '{bag,remainingCount}')::integer, 1) <> 0 then
+      return jsonb_build_object(
+        'ok',
+        false,
+        'reason',
+        'bag_not_empty'
+      );
+    end if;
+  end if;
+
   next_revision := p_expected_revision + 1;
   next_payload := jsonb_set(
     jsonb_set(

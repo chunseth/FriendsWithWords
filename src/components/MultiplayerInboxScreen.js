@@ -109,6 +109,7 @@ const MultiplayerInboxScreen = ({
     let unsubscribe = () => {};
     void (async () => {
       const result = await subscribeToMultiplayerInbox({
+        channelKey: "inbox-screen",
         onNotification: () => {
           if (refreshTimeoutRef.current) {
             clearTimeout(refreshTimeoutRef.current);

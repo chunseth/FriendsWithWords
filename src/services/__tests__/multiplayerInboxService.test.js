@@ -103,10 +103,15 @@ describe("multiplayerInboxService", () => {
     getSupabaseClient.mockReturnValue(supabase);
 
     const onStatusChange = jest.fn();
-    const result = await subscribeToMultiplayerInbox({ onStatusChange });
+    const result = await subscribeToMultiplayerInbox({
+      channelKey: "unit-test",
+      onStatusChange,
+    });
 
     expect(result.ok).toBe(true);
-    expect(supabase.channel).toHaveBeenCalledWith("multiplayer-inbox:user-1");
+    expect(supabase.channel).toHaveBeenCalledWith(
+      "multiplayer-inbox:user-1:unit-test"
+    );
     expect(onStatusChange).toHaveBeenCalledWith("SUBSCRIBED");
 
     result.unsubscribe();

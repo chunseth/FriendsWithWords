@@ -35,9 +35,11 @@ const LeaderboardScreen = ({
   canGoNextDailySeed,
   onPreviousDailySeed,
   onNextDailySeed,
+  isDarkMode = false,
   onBack,
   onRefresh,
 }) => {
+  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const [activePage, setActivePage] = useState(initialPage);
   const [seedCopiedVisible, setSeedCopiedVisible] = useState(false);
   const [seedCopiedPosition, setSeedCopiedPosition] = useState({
@@ -152,18 +154,20 @@ const LeaderboardScreen = ({
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <Pressable style={styles.backHotzone} onPress={onBack} />
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack}>
-          <Text style={styles.backButton}>Back</Text>
+          <Text style={[styles.backButton, { color: theme.backButton }]}>Back</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onRefresh}>
-          <Text style={styles.refreshButton}>Refresh</Text>
+          <Text style={[styles.refreshButton, { color: theme.refreshButton }]}>
+            Refresh
+          </Text>
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.title}>{title}</Text>
+      <Text style={[styles.title, { color: theme.title }]}>{title}</Text>
       {seedCopiedVisible && (
         <View
           pointerEvents="none"
@@ -183,14 +187,24 @@ const LeaderboardScreen = ({
         <TouchableOpacity
           style={[
             styles.pageTab,
+            {
+              backgroundColor: theme.tabBackground,
+              borderColor: theme.tabBorder,
+            },
             activePage === "highScores" && styles.pageTabActive,
+            activePage === "highScores" && {
+              backgroundColor: theme.tabActiveBackground,
+              borderColor: theme.tabActiveBorder,
+            },
           ]}
           onPress={() => setActivePage("highScores")}
         >
           <Text
             style={[
               styles.pageTabText,
+              { color: theme.tabText },
               activePage === "highScores" && styles.pageTabTextActive,
+              activePage === "highScores" && { color: theme.tabTextActive },
             ]}
           >
             {highScoresTitle}
@@ -199,14 +213,24 @@ const LeaderboardScreen = ({
         <TouchableOpacity
           style={[
             styles.pageTab,
+            {
+              backgroundColor: theme.tabBackground,
+              borderColor: theme.tabBorder,
+            },
             activePage === "daily" && styles.pageTabActive,
+            activePage === "daily" && {
+              backgroundColor: theme.tabActiveBackground,
+              borderColor: theme.tabActiveBorder,
+            },
           ]}
           onPress={() => setActivePage("daily")}
         >
           <Text
             style={[
               styles.pageTabText,
+              { color: theme.tabText },
               activePage === "daily" && styles.pageTabTextActive,
+              activePage === "daily" && { color: theme.tabTextActive },
             ]}
           >
             Daily Seeds
@@ -215,14 +239,24 @@ const LeaderboardScreen = ({
         <TouchableOpacity
           style={[
             styles.pageTab,
+            {
+              backgroundColor: theme.tabBackground,
+              borderColor: theme.tabBorder,
+            },
             activePage === "multiplayer" && styles.pageTabActive,
+            activePage === "multiplayer" && {
+              backgroundColor: theme.tabActiveBackground,
+              borderColor: theme.tabActiveBorder,
+            },
           ]}
           onPress={() => setActivePage("multiplayer")}
         >
           <Text
             style={[
               styles.pageTabText,
+              { color: theme.tabText },
               activePage === "multiplayer" && styles.pageTabTextActive,
+              activePage === "multiplayer" && { color: theme.tabTextActive },
             ]}
           >
             Multiplayer
@@ -237,19 +271,27 @@ const LeaderboardScreen = ({
       >
         {activePage === "highScores" ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{highScoresTitle}</Text>
-            <Text style={styles.sectionSubtitle}>{highScoresSubtitle}</Text>
+            <Text style={[styles.sectionTitle, { color: theme.sectionTitle }]}>
+              {highScoresTitle}
+            </Text>
+            <Text style={[styles.sectionSubtitle, { color: theme.sectionSubtitle }]}>
+              {highScoresSubtitle}
+            </Text>
 
             {!backendConfigured ? (
-              <Text style={styles.stateText}>
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
                 Add Supabase env values to load online leaderboard scores.
               </Text>
             ) : globalLeaderboardLoading ? (
-              <Text style={styles.stateText}>Loading leaderboard...</Text>
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                Loading leaderboard...
+              </Text>
             ) : globalLeaderboardError ? (
               <Text style={styles.errorText}>{globalLeaderboardError}</Text>
             ) : globalLeaderboardEntries.length === 0 ? (
-              <Text style={styles.stateText}>No scores have been submitted yet.</Text>
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                No scores have been submitted yet.
+              </Text>
             ) : (
               globalLeaderboardEntries.map((entry, index) => {
                 const entryKey = `${entry.display_name}-${entry.completed_at}-${index}`;
@@ -263,17 +305,31 @@ const LeaderboardScreen = ({
                         openEntryDetails(entry, index + 1, "High Scores");
                       }}
                     >
-                      <View style={styles.row}>
-                        <Text style={styles.rank}>{index + 1}</Text>
+                      <View
+                        style={[
+                          styles.row,
+                          {
+                            backgroundColor: theme.rowBackground,
+                            borderColor: theme.rowBorder,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.rank, { color: theme.rank }]}>
+                          {index + 1}
+                        </Text>
                         <View style={styles.meta}>
-                          <Text style={styles.name}>{entry.display_name}</Text>
-                          <Text style={styles.date}>
+                          <Text style={[styles.name, { color: theme.name }]}>
+                            {entry.display_name}
+                          </Text>
+                          <Text style={[styles.date, { color: theme.date }]}>
                             {entry.completed_at
                               ? new Date(entry.completed_at).toLocaleDateString()
                               : ""}
                           </Text>
                         </View>
-                        <Text style={styles.score}>{entry.final_score}</Text>
+                        <Text style={[styles.score, { color: theme.score }]}>
+                          {entry.final_score}
+                        </Text>
                       </View>
                     </TouchableOpacity>
                   </View>
@@ -287,15 +343,27 @@ const LeaderboardScreen = ({
               <TouchableOpacity
                 style={[
                   styles.seedArrow,
+                  {
+                    backgroundColor: theme.seedControlBackground,
+                    borderColor: theme.seedControlBorder,
+                  },
                   !canGoNextDailySeed && styles.seedArrowDisabled,
                 ]}
                 onPress={onNextDailySeed}
                 disabled={!canGoNextDailySeed}
               >
-                <Text style={styles.seedArrowText}>{"<"}</Text>
+                <Text style={[styles.seedArrowText, { color: theme.seedControlText }]}>
+                  {"<"}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.seedPill}
+                style={[
+                  styles.seedPill,
+                  {
+                    backgroundColor: theme.seedControlBackground,
+                    borderColor: theme.seedControlBorder,
+                  },
+                ]}
                 activeOpacity={0.85}
                 onPress={(event) => {
                   Clipboard.setString(String(selectedDailySeed));
@@ -309,33 +377,43 @@ const LeaderboardScreen = ({
                   }
                 }}
               >
-                <Text style={styles.seedPillLabel}>Daily seed</Text>
-                <Text style={styles.seedPillValue}>
+                <Text style={[styles.seedPillLabel, { color: theme.seedPillLabel }]}>
+                  Daily seed
+                </Text>
+                <Text style={[styles.seedPillValue, { color: theme.seedPillValue }]}>
                   {formatDailySeed(selectedDailySeed)}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
                   styles.seedArrow,
+                  {
+                    backgroundColor: theme.seedControlBackground,
+                    borderColor: theme.seedControlBorder,
+                  },
                   !canGoPreviousDailySeed && styles.seedArrowDisabled,
                 ]}
                 onPress={onPreviousDailySeed}
                 disabled={!canGoPreviousDailySeed}
               >
-                <Text style={styles.seedArrowText}>{">"}</Text>
+                <Text style={[styles.seedArrowText, { color: theme.seedControlText }]}>
+                  {">"}
+                </Text>
               </TouchableOpacity>
             </View>
 
             {!backendConfigured ? (
-              <Text style={styles.stateText}>
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
                 Add Supabase env values to load daily leaderboard scores.
               </Text>
             ) : dailyLeaderboardLoading ? (
-              <Text style={styles.stateText}>Loading daily leaderboard...</Text>
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                Loading daily leaderboard...
+              </Text>
             ) : dailyLeaderboardError ? (
               <Text style={styles.errorText}>{dailyLeaderboardError}</Text>
             ) : dailyLeaderboardEntries.length === 0 ? (
-              <Text style={styles.stateText}>
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
                 No submitted daily scores for this seed yet.
               </Text>
             ) : (
@@ -350,17 +428,31 @@ const LeaderboardScreen = ({
                         openEntryDetails(entry, index + 1, "Daily Seeds")
                       }
                     >
-                      <View style={styles.row}>
-                        <Text style={styles.rank}>{index + 1}</Text>
+                      <View
+                        style={[
+                          styles.row,
+                          {
+                            backgroundColor: theme.rowBackground,
+                            borderColor: theme.rowBorder,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.rank, { color: theme.rank }]}>
+                          {index + 1}
+                        </Text>
                         <View style={styles.meta}>
-                          <Text style={styles.name}>{entry.display_name}</Text>
-                          <Text style={styles.date}>
+                          <Text style={[styles.name, { color: theme.name }]}>
+                            {entry.display_name}
+                          </Text>
+                          <Text style={[styles.date, { color: theme.date }]}>
                             {entry.completed_at
                               ? new Date(entry.completed_at).toLocaleDateString()
                               : ""}
                           </Text>
                         </View>
-                        <Text style={styles.score}>{entry.final_score}</Text>
+                        <Text style={[styles.score, { color: theme.score }]}>
+                          {entry.final_score}
+                        </Text>
                       </View>
                     </TouchableOpacity>
                   </View>
@@ -370,19 +462,27 @@ const LeaderboardScreen = ({
           </View>
         ) : (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{multiplayerTitle}</Text>
-            <Text style={styles.sectionSubtitle}>{multiplayerSubtitle}</Text>
+            <Text style={[styles.sectionTitle, { color: theme.sectionTitle }]}>
+              {multiplayerTitle}
+            </Text>
+            <Text style={[styles.sectionSubtitle, { color: theme.sectionSubtitle }]}>
+              {multiplayerSubtitle}
+            </Text>
 
             {!backendConfigured ? (
-              <Text style={styles.stateText}>
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
                 Add Supabase env values to load online leaderboard scores.
               </Text>
             ) : multiplayerLeaderboardLoading ? (
-              <Text style={styles.stateText}>Loading leaderboard...</Text>
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                Loading leaderboard...
+              </Text>
             ) : multiplayerLeaderboardError ? (
               <Text style={styles.errorText}>{multiplayerLeaderboardError}</Text>
             ) : multiplayerLeaderboardEntries.length === 0 ? (
-              <Text style={styles.stateText}>No scores have been submitted yet.</Text>
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                No scores have been submitted yet.
+              </Text>
             ) : (
               multiplayerLeaderboardEntries.map((entry, index) => {
                 const entryKey = `${entry.display_name}-${entry.completed_at}-${index}`;
@@ -396,17 +496,31 @@ const LeaderboardScreen = ({
                         openEntryDetails(entry, index + 1, "Multiplayer");
                       }}
                     >
-                      <View style={styles.row}>
-                        <Text style={styles.rank}>{index + 1}</Text>
+                      <View
+                        style={[
+                          styles.row,
+                          {
+                            backgroundColor: theme.rowBackground,
+                            borderColor: theme.rowBorder,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.rank, { color: theme.rank }]}>
+                          {index + 1}
+                        </Text>
                         <View style={styles.meta}>
-                          <Text style={styles.name}>{entry.display_name}</Text>
-                          <Text style={styles.date}>
+                          <Text style={[styles.name, { color: theme.name }]}>
+                            {entry.display_name}
+                          </Text>
+                          <Text style={[styles.date, { color: theme.date }]}>
                             {entry.completed_at
                               ? new Date(entry.completed_at).toLocaleDateString()
                               : ""}
                           </Text>
                         </View>
-                        <Text style={styles.score}>{entry.final_score}</Text>
+                        <Text style={[styles.score, { color: theme.score }]}>
+                          {entry.final_score}
+                        </Text>
                       </View>
                     </TouchableOpacity>
                   </View>
@@ -428,11 +542,23 @@ const LeaderboardScreen = ({
               style={styles.detailsBackdrop}
               onPress={() => setDetailsEntry(null)}
             />
-            <View style={styles.detailsCard}>
+            <View
+              style={[
+                styles.detailsCard,
+                {
+                  backgroundColor: theme.detailsCardBackground,
+                  borderColor: theme.detailsCardBorder,
+                },
+              ]}
+            >
               <View style={styles.detailsHeaderRow}>
                 <View style={styles.detailsPlacementRow}>
-                  <Text style={styles.detailsTitle}>#{detailsEntry.rank}</Text>
-                  <Text style={styles.detailsName}>{detailsEntry.entry.display_name}</Text>
+                  <Text style={[styles.detailsTitle, { color: theme.detailsTitle }]}>
+                    #{detailsEntry.rank}
+                  </Text>
+                  <Text style={[styles.detailsName, { color: theme.detailsName }]}>
+                    {detailsEntry.entry.display_name}
+                  </Text>
                 </View>
                 <View style={styles.detailsHeaderActions}>
                   <TouchableOpacity
@@ -440,31 +566,50 @@ const LeaderboardScreen = ({
                     accessibilityLabel="Close details"
                     hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
                   >
-                    <Text style={styles.detailsClose}>Close</Text>
+                    <Text style={[styles.detailsClose, { color: theme.detailsClose }]}>
+                      Close
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
             <View style={styles.detailsRow}>
-              <Text style={styles.detailsScore}>{detailsEntry.entry.final_score}</Text>
+              <Text style={[styles.detailsScore, { color: theme.detailsScore }]}>
+                {detailsEntry.entry.final_score}
+              </Text>
               {typeof getEntryDurationSeconds(detailsEntry.entry) === "number" &&
                 getEntryDurationSeconds(detailsEntry.entry) > 0 && (
-                  <Text style={styles.detailsCompletedTop}>
+                  <Text
+                    style={[
+                      styles.detailsCompletedTop,
+                      { color: theme.detailsCompletedTop },
+                    ]}
+                  >
                     {formatDuration(getEntryDurationSeconds(detailsEntry.entry))}
                   </Text>
                 )}
             </View>
-            <View style={styles.detailsDivider} />
+            <View
+              style={[styles.detailsDivider, { backgroundColor: theme.detailsDivider }]}
+            />
             <View style={styles.detailsRow}>
-              <Text style={styles.detailsLabel}>Points earned</Text>
-              <Text style={styles.detailsValue}>
+              <Text style={[styles.detailsLabel, { color: theme.detailsLabel }]}>
+                Points earned
+              </Text>
+              <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
                 {detailsEntry.entry.points_earned ?? "-"}
               </Text>
             </View>
             <View style={styles.detailsRow}>
-              <Text style={[styles.detailsLabel, styles.detailsLabelPenalty]}>
+              <Text
+                style={[
+                  styles.detailsLabel,
+                  styles.detailsLabelPenalty,
+                  { color: theme.detailsLabelPenalty },
+                ]}
+              >
                 Turns
               </Text>
-              <Text style={styles.detailsValue}>
+              <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
                 {typeof detailsEntry.entry.turn_penalties === "number"
                   ? detailsEntry.entry.turn_penalties / 2
                   : "-"}
@@ -472,20 +617,32 @@ const LeaderboardScreen = ({
             </View>
             {(detailsEntry.entry.swap_penalties ?? 0) > 0 && (
               <View style={styles.detailsRow}>
-                <Text style={[styles.detailsLabel, styles.detailsLabelPenalty]}>
+                <Text
+                  style={[
+                    styles.detailsLabel,
+                    styles.detailsLabelPenalty,
+                    { color: theme.detailsLabelPenalty },
+                  ]}
+                >
                   Swap penalties
                 </Text>
-                <Text style={styles.detailsValue}>
+                <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
                   {detailsEntry.entry.swap_penalties}
                 </Text>
               </View>
             )}
             {(detailsEntry.entry.rack_penalty ?? 0) > 0 && (
               <View style={styles.detailsRow}>
-                <Text style={[styles.detailsLabel, styles.detailsLabelPenalty]}>
+                <Text
+                  style={[
+                    styles.detailsLabel,
+                    styles.detailsLabelPenalty,
+                    { color: theme.detailsLabelPenalty },
+                  ]}
+                >
                   Rack penalty
                 </Text>
-                <Text style={styles.detailsValue}>
+                <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
                   {detailsEntry.entry.rack_penalty}
                 </Text>
               </View>
@@ -494,10 +651,16 @@ const LeaderboardScreen = ({
               ((detailsEntry.entry.time_bonus ?? 0) > 0 ||
                 (detailsEntry.entry.timeBonus ?? 0) > 0) && (
               <View style={styles.detailsRow}>
-                <Text style={[styles.detailsLabel, styles.detailsLabelPositive]}>
+                <Text
+                  style={[
+                    styles.detailsLabel,
+                    styles.detailsLabelPositive,
+                    { color: theme.detailsLabelPositive },
+                  ]}
+                >
                   Time bonus
                 </Text>
-                <Text style={styles.detailsValue}>
+                <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
                   {detailsEntry.entry.time_bonus ?? detailsEntry.entry.timeBonus}
                 </Text>
               </View>
@@ -505,10 +668,16 @@ const LeaderboardScreen = ({
             {((detailsEntry.entry.consistency_bonus ?? 0) > 0 ||
               (detailsEntry.entry.consistencyBonusTotal ?? 0) > 0) && (
               <View style={styles.detailsRow}>
-                <Text style={[styles.detailsLabel, styles.detailsLabelPositive]}>
+                <Text
+                  style={[
+                    styles.detailsLabel,
+                    styles.detailsLabelPositive,
+                    { color: theme.detailsLabelPositive },
+                  ]}
+                >
                   Consistency bonus
                 </Text>
-                <Text style={styles.detailsValue}>
+                <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
                   {detailsEntry.entry.consistency_bonus ??
                     detailsEntry.entry.consistencyBonusTotal}
                 </Text>
@@ -522,11 +691,12 @@ const LeaderboardScreen = ({
                     styles.detailsLabel,
                     styles.detailsLabelPositive,
                     styles.detailsLabelEmphasis,
+                    { color: theme.detailsLabelPositive },
                   ]}
                 >
                   Scrabble bonus
                 </Text>
-                <Text style={styles.detailsValue}>
+                <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
                   {detailsEntry.entry.scrabble_bonus ??
                     detailsEntry.entry.scrabbleBonus}
                 </Text>
@@ -541,20 +711,26 @@ const LeaderboardScreen = ({
                     styles.detailsLabel,
                     styles.detailsLabelPositive,
                     styles.detailsLabelEmphasis,
+                    { color: theme.detailsLabelPositive },
                   ]}
                 >
                   Perfection bonus
                 </Text>
-                <Text style={styles.detailsValue}>
+                <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
                   {detailsEntry.entry.perfection_bonus ??
                     detailsEntry.entry.perfectionBonus}
                 </Text>
               </View>
             )}
             <View style={styles.detailsSeedRow}>
-              <Text style={styles.detailsSeedTop}>{detailsEntry.entry.seed}</Text>
+              <Text style={[styles.detailsSeedTop, { color: theme.detailsSeedTop }]}>
+                {detailsEntry.entry.seed}
+              </Text>
               <TouchableOpacity
-                style={styles.copySeedButton}
+                style={[
+                  styles.copySeedButton,
+                  { borderColor: theme.copyButtonBorder },
+                ]}
                 onPress={(event) => handleCopySeed(detailsEntry.entry.seed, event)}
                 accessibilityLabel="Copy seed"
                 activeOpacity={0.8}
@@ -563,16 +739,27 @@ const LeaderboardScreen = ({
                   <SFSymbolIcon
                     name="doc.on.doc"
                     size={16}
-                    color="#2f6f4f"
+                    color={theme.copyIcon}
                     weight="regular"
                     scale="medium"
                   />
                 ) : (
-                  <Text style={styles.copySeedButtonFallback}>Copy</Text>
+                  <Text
+                    style={[styles.copySeedButtonFallback, { color: theme.copyIcon }]}
+                  >
+                    Copy
+                  </Text>
                 )}
               </TouchableOpacity>
               {detailsSeedCopiedVisible && (
-                <Text style={styles.detailsSeedCopiedText}>Seed copied</Text>
+                <Text
+                  style={[
+                    styles.detailsSeedCopiedText,
+                    { color: theme.detailsSeedCopiedText },
+                  ]}
+                >
+                  Seed copied
+                </Text>
               )}
             </View>
             </View>
@@ -583,10 +770,95 @@ const LeaderboardScreen = ({
   );
 };
 
+const LIGHT_THEME = {
+  background: "#f8f4ed",
+  backButton: "#9a6b2f",
+  refreshButton: "#2f6f4f",
+  title: "#22313f",
+  tabBackground: "#fff8ef",
+  tabBorder: "#d8cdbd",
+  tabActiveBackground: "#fff",
+  tabActiveBorder: "#c7b08a",
+  tabText: "#7f8c8d",
+  tabTextActive: "#22313f",
+  sectionTitle: "#22313f",
+  sectionSubtitle: "#7f8c8d",
+  stateText: "#7f8c8d",
+  rowBackground: "#fff",
+  rowBorder: "#eadfcd",
+  rank: "#9a6b2f",
+  name: "#22313f",
+  date: "#7f8c8d",
+  score: "#2f6f4f",
+  copyIcon: "#2f6f4f",
+  seedControlBackground: "#fff",
+  seedControlBorder: "#e3d3b9",
+  seedControlText: "#22313f",
+  seedPillLabel: "#8b8d7a",
+  seedPillValue: "#2f6f4f",
+  detailsCardBackground: "#fff",
+  detailsCardBorder: "#eadfcd",
+  detailsTitle: "#22313f",
+  detailsName: "#22313f",
+  detailsClose: "#9a6b2f",
+  detailsScore: "#2f6f4f",
+  detailsCompletedTop: "#7f8c8d",
+  detailsLabel: "#7f8c8d",
+  detailsLabelPenalty: "#b91c1c",
+  detailsLabelPositive: "#2f6f4f",
+  detailsValue: "#22313f",
+  detailsSeedTop: "#2f6f4f",
+  detailsSeedCopiedText: "#2f6f4f",
+  detailsDivider: "#eadfcd",
+  copyButtonBorder: "#d7e7de",
+};
+
+const DARK_THEME = {
+  background: "#0b1220",
+  backButton: "#fdba74",
+  refreshButton: "#86efac",
+  title: "#f8fafc",
+  tabBackground: "#111b2c",
+  tabBorder: "#334155",
+  tabActiveBackground: "#1e293b",
+  tabActiveBorder: "#475569",
+  tabText: "#94a3b8",
+  tabTextActive: "#f1f5f9",
+  sectionTitle: "#f8fafc",
+  sectionSubtitle: "#cbd5e1",
+  stateText: "#94a3b8",
+  rowBackground: "#152033",
+  rowBorder: "#334155",
+  rank: "#fdba74",
+  name: "#f1f5f9",
+  date: "#94a3b8",
+  score: "#86efac",
+  copyIcon: "#86efac",
+  seedControlBackground: "#4b5563",
+  seedControlBorder: "#6b7280",
+  seedControlText: "#f9fafb",
+  seedPillLabel: "#d1d5db",
+  seedPillValue: "#f9fafb",
+  detailsCardBackground: "#1a2431",
+  detailsCardBorder: "#334155",
+  detailsTitle: "#f8fafc",
+  detailsName: "#f1f5f9",
+  detailsClose: "#fdba74",
+  detailsScore: "#86efac",
+  detailsCompletedTop: "#94a3b8",
+  detailsLabel: "#cbd5e1",
+  detailsLabelPenalty: "#fca5a5",
+  detailsLabelPositive: "#86efac",
+  detailsValue: "#f1f5f9",
+  detailsSeedTop: "#86efac",
+  detailsSeedCopiedText: "#86efac",
+  detailsDivider: "#334155",
+  copyButtonBorder: "#334155",
+};
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f4ed",
     paddingHorizontal: 22,
     paddingTop: 30,
   },
@@ -605,12 +877,10 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   backButton: {
-    color: "#9a6b2f",
     fontSize: 16,
     fontWeight: "800",
   },
   refreshButton: {
-    color: "#2f6f4f",
     fontSize: 16,
     fontWeight: "800",
   },
@@ -619,7 +889,6 @@ const styles = StyleSheet.create({
     fontSize: 36,
     lineHeight: 40,
     fontWeight: "900",
-    color: "#22313f",
   },
   seedNavigator: {
     marginTop: 20,
@@ -729,13 +998,11 @@ const styles = StyleSheet.create({
   sectionSubtitle: {
     fontSize: 13,
     lineHeight: 18,
-    color: "#7f8c8d",
     marginBottom: 4,
   },
   stateText: {
     fontSize: 15,
     lineHeight: 22,
-    color: "#7f8c8d",
   },
   errorText: {
     fontSize: 15,

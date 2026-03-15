@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const MULTIPLAYER_SESSION_STORAGE_KEY = "wwrf.multiplayerSession.v1";
+const MULTIPLAYER_SESSION_LAST_SCORE_KEY_PREFIX =
+  "wwrf.multiplayerSession.lastScore.v1";
 
 const isFiniteNumber = (value) =>
   typeof value === "number" && Number.isFinite(value);
@@ -121,5 +123,44 @@ export const clearMultiplayerSession = async () => {
     await AsyncStorage.removeItem(MULTIPLAYER_SESSION_STORAGE_KEY);
   } catch (error) {
     console.warn("Failed to clear multiplayer session", error);
+  }
+};
+
+export const loadMultiplayerSessionLastSeenScore = async (sessionId) => {
+  if (!sessionId || typeof sessionId !== "string") {
+    return null;
+  }
+  try {
+    const storedValue = await AsyncStorage.getItem(
+      `${MULTIPLAYER_SESSION_LAST_SCORE_KEY_PREFIX}.${sessionId}`
+    );
+    if (!storedValue) {
+      return null;
+    }
+    const parsed = Number.parseInt(storedValue, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch (error) {
+    console.warn("Failed to load multiplayer last seen score", error);
+    return null;
+  }
+};
+
+export const saveMultiplayerSessionLastSeenScore = async ({
+  sessionId,
+  score,
+}) => {
+  if (!sessionId || typeof sessionId !== "string") {
+    return;
+  }
+  if (typeof score !== "number" || !Number.isFinite(score)) {
+    return;
+  }
+  try {
+    await AsyncStorage.setItem(
+      `${MULTIPLAYER_SESSION_LAST_SCORE_KEY_PREFIX}.${sessionId}`,
+      String(Math.trunc(score))
+    );
+  } catch (error) {
+    console.warn("Failed to save multiplayer last seen score", error);
   }
 };

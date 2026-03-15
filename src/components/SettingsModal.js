@@ -1,14 +1,54 @@
 import React from "react";
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
+const LIGHT_THEME = {
+  cardBackground: "#fffaf2",
+  cardBorder: "#eadfcd",
+  title: "#2c3e50",
+  optionBackground: "#fff",
+  optionBorder: "#e2d3bb",
+  optionLabel: "#22313f",
+  optionDetail: "#2f6f4f",
+  optionAction: "#d97706",
+  deleteLabel: "#b42318",
+  deleteDetail: "#7a2e1f",
+  deleteAction: "#b42318",
+  cancelBackground: "#fff",
+  cancelBorder: "#e2d3bb",
+  cancelText: "#2c3e50",
+};
+
+const DARK_THEME = {
+  cardBackground: "#1a2431",
+  cardBorder: "#334155",
+  title: "#f8fafc",
+  optionBackground: "#0f172a",
+  optionBorder: "#334155",
+  optionLabel: "#f1f5f9",
+  optionDetail: "#86efac",
+  optionAction: "#f59e0b",
+  deleteLabel: "#fca5a5",
+  deleteDetail: "#fecaca",
+  deleteAction: "#fca5a5",
+  cancelBackground: "#0f172a",
+  cancelBorder: "#334155",
+  cancelText: "#f8fafc",
+};
+
 const SettingsModal = ({
   visible,
   leaderboardSharingEnabled = false,
+  multiplayerNotificationsEnabled = true,
+  darkModeEnabled = false,
+  onToggleMultiplayerNotifications,
+  onToggleDarkMode,
   onManageLeaderboardSharing,
   onDeleteAccount,
   onClose,
 }) => {
   if (!visible) return null;
+
+  const theme = darkModeEnabled ? DARK_THEME : LIGHT_THEME;
 
   return (
     <Modal
@@ -18,39 +58,103 @@ const SettingsModal = ({
       onRequestClose={onClose}
     >
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
-        <View style={styles.card} onStartShouldSetResponder={() => true}>
-          <Text style={styles.title}>Settings</Text>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.cardBackground,
+              borderColor: theme.cardBorder,
+            },
+          ]}
+          onStartShouldSetResponder={() => true}
+        >
+          <Text style={[styles.title, { color: theme.title }]}>Settings</Text>
 
           <TouchableOpacity
-            style={styles.optionButton}
+            style={[
+              styles.optionButton,
+              {
+                backgroundColor: theme.optionBackground,
+                borderColor: theme.optionBorder,
+              },
+            ]}
+            onPress={() =>
+              onToggleMultiplayerNotifications?.(!multiplayerNotificationsEnabled)
+            }
+          >
+            <Text style={[styles.optionLabel, { color: theme.optionLabel }]}>
+              Notifications
+            </Text>
+            <Text style={[styles.optionValue, { color: theme.optionDetail }]}>
+              {multiplayerNotificationsEnabled ? "On" : "Off"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.optionButton,
+              {
+                backgroundColor: theme.optionBackground,
+                borderColor: theme.optionBorder,
+              },
+            ]}
+            onPress={() => onToggleDarkMode?.(!darkModeEnabled)}
+          >
+            <Text style={[styles.optionLabel, { color: theme.optionLabel }]}>
+              Dark Mode
+            </Text>
+            <Text style={[styles.optionValue, { color: theme.optionDetail }]}>
+              {darkModeEnabled ? "On" : "Off"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.optionButton,
+              {
+                backgroundColor: theme.optionBackground,
+                borderColor: theme.optionBorder,
+              },
+            ]}
             onPress={onManageLeaderboardSharing}
           >
-            <View>
-              <Text style={styles.optionLabel}>Leaderboard Sharing</Text>
-              <Text style={styles.optionDetail}>
-                {leaderboardSharingEnabled ? "On" : "Off"}
-              </Text>
-            </View>
-            <Text style={styles.optionAction}>Manage</Text>
+            <Text style={[styles.optionLabel, { color: theme.optionLabel }]}>
+              Leaderboard Sharing
+            </Text>
+            <Text style={[styles.optionValue, { color: theme.optionDetail }]}>
+              {leaderboardSharingEnabled ? "On" : "Off"}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.optionButton, styles.deleteOptionButton]}
+            style={[
+              styles.optionButton,
+              styles.deleteOptionButton,
+              {
+                backgroundColor: theme.optionBackground,
+                borderColor: theme.optionBorder,
+              },
+            ]}
             onPress={onDeleteAccount}
           >
-            <View>
-              <Text style={[styles.optionLabel, styles.deleteOptionLabel]}>
-                Delete Account
-              </Text>
-              <Text style={styles.deleteOptionDetail}>
-                Remove your username, friends, and multiplayer account data.
-              </Text>
-            </View>
-            <Text style={styles.deleteOptionAction}>Delete</Text>
+            <Text style={[styles.centeredActionLabel, { color: theme.deleteAction }]}>
+              Delete Account
+            </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-            <Text style={styles.cancelButtonText}>Cancel</Text>
+          <TouchableOpacity
+            style={[
+              styles.cancelButton,
+              {
+                backgroundColor: theme.cancelBackground,
+                borderColor: theme.cancelBorder,
+              },
+            ]}
+            onPress={onClose}
+          >
+            <Text style={[styles.centeredActionLabel, { color: theme.cancelText }]}>
+              Cancel
+            </Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -69,11 +173,9 @@ const styles = StyleSheet.create({
   card: {
     width: "100%",
     maxWidth: 360,
-    backgroundColor: "#fffaf2",
     borderRadius: 20,
     padding: 22,
     borderWidth: 1,
-    borderColor: "#eadfcd",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.18,
@@ -83,17 +185,14 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: "800",
-    color: "#2c3e50",
     textAlign: "center",
   },
   optionButton: {
-    marginTop: 22,
-    backgroundColor: "#fff",
+    marginTop: 12,
     borderRadius: 14,
-    paddingVertical: 16,
+    paddingVertical: 12,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: "#e2d3bb",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -101,51 +200,27 @@ const styles = StyleSheet.create({
   optionLabel: {
     fontSize: 17,
     fontWeight: "800",
-    color: "#22313f",
   },
-  optionDetail: {
-    marginTop: 4,
+  optionValue: {
     fontSize: 14,
-    color: "#2f6f4f",
     fontWeight: "700",
-  },
-  optionAction: {
-    fontSize: 15,
-    color: "#d97706",
-    fontWeight: "800",
   },
   deleteOptionButton: {
     marginTop: 12,
-  },
-  deleteOptionLabel: {
-    color: "#b42318",
-  },
-  deleteOptionDetail: {
-    marginTop: 4,
-    fontSize: 14,
-    color: "#7a2e1f",
-    fontWeight: "600",
-    maxWidth: 220,
-  },
-  deleteOptionAction: {
-    fontSize: 15,
-    color: "#b42318",
-    fontWeight: "800",
+    justifyContent: "center",
   },
   cancelButton: {
-    marginTop: 18,
-    backgroundColor: "#fff",
+    marginTop: 10,
     borderRadius: 14,
-    paddingVertical: 14,
+    paddingVertical: 12,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: "#e2d3bb",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  cancelButtonText: {
-    color: "#2c3e50",
+  centeredActionLabel: {
     fontSize: 17,
     fontWeight: "800",
-    textAlign: "center",
   },
 });
 

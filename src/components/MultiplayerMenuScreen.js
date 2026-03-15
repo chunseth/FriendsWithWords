@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AppState,
+  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -32,7 +33,6 @@ import {
 } from "../services/multiplayerGameRequestService";
 import {
   archiveMultiplayerSessionForUser,
-  createMultiplayerRematch,
   fetchUnreadMultiplayerNotifications,
   markMultiplayerNotificationsRead,
   subscribeToMultiplayerInbox,
@@ -40,23 +40,23 @@ import {
 } from "../services/multiplayerInboxService";
 import { trackMultiplayerEvent } from "../services/analyticsService";
 
-const buildPresenceLabel = (status) => {
-  if (status === "online") return "Online now";
-  if (status === "away") return "Active recently";
-  if (status === "offline") return "Offline";
-  return null;
-};
-
-const groupAndSortGames = (games = [], activeFilter = "all") => {
+const groupAndSortGames = (games = [], activeFilter = "active") => {
   const filtered = games.filter((game) => {
-    if (activeFilter === "needs_action") {
-      return game.needsAction || game.direction === "incoming";
+    if (activeFilter === "active") {
+      return (
+        (game.status === "accepted" && game.archived !== true) ||
+        (game.status === "pending" && game.direction === "incoming")
+      );
+    }
+    if (activeFilter === "your_turn") {
+      return (
+        game.status === "accepted" &&
+        game.archived !== true &&
+        game.needsAction === true
+      );
     }
     if (activeFilter === "pending") {
       return game.status === "pending";
-    }
-    if (activeFilter === "archived") {
-      return game.archived === true;
     }
     return true;
   });
@@ -82,16 +82,60 @@ const groupAndSortGames = (games = [], activeFilter = "all") => {
   return { yourTurn, waiting, pending, archived };
 };
 
+const GAME_TAB_NOTIFICATION_TYPES = new Set([
+  "game_request",
+  "request_accepted",
+  "turn_ready",
+  "reminder",
+  "session_conflict",
+]);
+
+const formatArchivedCompletedDate = (value) => {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
+
+const getNotificationSessionId = (notification) => {
+  if (!notification || typeof notification !== "object") {
+    return null;
+  }
+  const payload = notification.payload ?? {};
+  return (
+    payload.sessionId ??
+    payload.session_id ??
+    notification.entity_id ??
+    null
+  );
+};
+
+const getNotificationRequestId = (notification) => {
+  if (!notification || typeof notification !== "object") {
+    return null;
+  }
+  const payload = notification.payload ?? {};
+  return payload.requestId ?? payload.request_id ?? notification.entity_id ?? null;
+};
+
 const MultiplayerMenuScreen = ({
   dailySeed,
   onBack,
   onOpenLeaderboard,
   onOpenActiveGame,
   onOpenNewMultiplayerGame,
-  onOpenInbox,
-  onOpenNotificationSettings,
   initialTab = "games",
+  isDarkMode = false,
 }) => {
+  const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const [activeTab, setActiveTab] = useState(
     initialTab === "friends" ? "friends" : "games"
   );
@@ -114,20 +158,66 @@ const MultiplayerMenuScreen = ({
   const [gameRequestsLoading, setGameRequestsLoading] = useState(false);
   const [gameRequestsError, setGameRequestsError] = useState(null);
   const [pendingGameActionId, setPendingGameActionId] = useState(null);
+  const [gameActionBanner, setGameActionBanner] = useState(null);
   const [selectedOutgoingGameRequest, setSelectedOutgoingGameRequest] =
     useState(null);
   const [selectedActiveGameForDeletion, setSelectedActiveGameForDeletion] =
     useState(null);
-  const [activeGameFilter, setActiveGameFilter] = useState("all");
+  const [selectedActiveGameActionType, setSelectedActiveGameActionType] =
+    useState(null);
+  const [activeGameFilter, setActiveGameFilter] = useState("active");
   const [unreadNotifications, setUnreadNotifications] = useState([]);
-  const [latestInboxMessage, setLatestInboxMessage] = useState(null);
 
   const unreadCount = unreadNotifications.length;
-  const pendingIncomingCount = activeGames.filter(
-    (game) => game.status === "pending" && game.direction === "incoming"
-  ).length;
-  const gamesTabBadgeCount = pendingIncomingCount + unreadCount;
+  const pendingIncomingGames = useMemo(
+    () =>
+      activeGames.filter(
+        (game) => game.status === "pending" && game.direction === "incoming"
+      ),
+    [activeGames]
+  );
+  const pendingIncomingRequestIds = useMemo(
+    () =>
+      new Set(
+        pendingIncomingGames
+          .map((game) => game?.id)
+          .filter(
+            (requestId) => typeof requestId === "string" && requestId.length > 0
+          )
+      ),
+    [pendingIncomingGames]
+  );
+  const unreadGameNotificationCount = useMemo(
+    () =>
+      unreadNotifications.filter((notification) => {
+        const normalizedType = String(notification?.type ?? "").toLowerCase();
+        if (!GAME_TAB_NOTIFICATION_TYPES.has(normalizedType)) {
+          return false;
+        }
+        if (normalizedType === "game_request") {
+          return false;
+        }
+        return true;
+      }).length,
+    [unreadNotifications]
+  );
+  const gamesTabBadgeCount = pendingIncomingGames.length + unreadGameNotificationCount;
   const friendsTabBadgeCount = incomingRequests.length;
+  const friendIds = useMemo(
+    () => new Set(friends.map((friend) => friend.id)),
+    [friends]
+  );
+  const outgoingRequestReceiverIds = useMemo(
+    () => new Set(outgoingRequests.map((request) => request.receiverId)),
+    [outgoingRequests]
+  );
+  const incomingRequestBySenderId = useMemo(
+    () =>
+      new Map(
+        incomingRequests.map((request) => [request.senderId, request])
+      ),
+    [incomingRequests]
+  );
 
   const refreshFriendState = useCallback(async () => {
     setFriendsLoading(true);
@@ -177,6 +267,18 @@ const MultiplayerMenuScreen = ({
   }, []);
 
   useEffect(() => {
+    if (!gameActionBanner?.text) {
+      return undefined;
+    }
+
+    const timeout = setTimeout(() => {
+      setGameActionBanner(null);
+    }, 3600);
+
+    return () => clearTimeout(timeout);
+  }, [gameActionBanner]);
+
+  useEffect(() => {
     setActiveTab(initialTab === "friends" ? "friends" : "games");
   }, [initialTab]);
 
@@ -189,11 +291,9 @@ const MultiplayerMenuScreen = ({
   }, [activeTab, refreshGameRequests]);
 
   useEffect(() => {
-    if (activeTab !== "friends") {
-      return;
+    if (activeTab === "friends") {
+      void refreshFriendState();
     }
-
-    void refreshFriendState();
   }, [activeTab, refreshFriendState]);
 
   useEffect(() => {
@@ -202,9 +302,11 @@ const MultiplayerMenuScreen = ({
 
     void upsertPresence({ status: "online", lastSessionId: null });
     void refreshUnreadNotifications();
+    void refreshFriendState();
 
     void (async () => {
       const result = await subscribeToMultiplayerInbox({
+        channelKey: "menu",
         onNotification: () => {
           if (cancelled) return;
           void refreshUnreadNotifications();
@@ -216,6 +318,14 @@ const MultiplayerMenuScreen = ({
         onSessionChange: () => {
           if (cancelled) return;
           void refreshGameRequests();
+        },
+        onFriendRequest: () => {
+          if (cancelled) return;
+          void refreshFriendState();
+        },
+        onFriendRequestSent: () => {
+          if (cancelled) return;
+          void refreshFriendState();
         },
       });
 
@@ -240,7 +350,7 @@ const MultiplayerMenuScreen = ({
       unsubscribe();
       void upsertPresence({ status: "offline", lastSessionId: null });
     };
-  }, [refreshGameRequests, refreshUnreadNotifications]);
+  }, [refreshFriendState, refreshGameRequests, refreshUnreadNotifications]);
 
   const handleSearchFriends = async () => {
     const trimmedQuery = friendSearch.trim();
@@ -351,12 +461,42 @@ const MultiplayerMenuScreen = ({
     setPendingFriendActionId(null);
   };
 
-  const groupedGames = groupAndSortGames(activeGames, activeGameFilter);
+  const groupedGames = useMemo(
+    () => groupAndSortGames(activeGames, activeGameFilter),
+    [activeGames, activeGameFilter]
+  );
 
   const handleOpenGame = async (game) => {
     if (!game) return;
-    const sessionNotificationIds = unreadNotifications
-      .filter((notification) => notification?.payload?.sessionId === game.sessionId)
+    if (!game.sessionId || typeof game.sessionId !== "string") {
+      setGameRequestsError(
+        "This multiplayer game could not be opened because the session is missing."
+      );
+      return;
+    }
+    const latestUnreadResult = await fetchUnreadMultiplayerNotifications(20);
+    const candidateUnreadNotifications = latestUnreadResult?.ok
+      ? (latestUnreadResult.notifications ?? [])
+      : unreadNotifications;
+    if (latestUnreadResult?.ok) {
+      setUnreadNotifications(candidateUnreadNotifications);
+    }
+
+    const targetSessionId = String(game.sessionId);
+    const targetRequestId =
+      typeof game.id === "string" && game.id.length > 0 ? game.id : null;
+    const sessionNotificationIds = candidateUnreadNotifications
+      .filter((notification) => {
+        const notificationSessionId = getNotificationSessionId(notification);
+        const notificationRequestId = getNotificationRequestId(notification);
+        return (
+          (notificationSessionId != null &&
+            String(notificationSessionId) === targetSessionId) ||
+          (targetRequestId != null &&
+            notificationRequestId != null &&
+            String(notificationRequestId) === targetRequestId)
+        );
+      })
       .map((notification) => notification.id);
     if (sessionNotificationIds.length > 0) {
       await markMultiplayerNotificationsRead(sessionNotificationIds);
@@ -372,48 +512,79 @@ const MultiplayerMenuScreen = ({
     onOpenActiveGame?.(game);
   };
 
-  const renderGameCard = (game) => (
+  const renderGameCard = (game) => {
+    const archivedCompletedLabel = game.archived
+      ? formatArchivedCompletedDate(
+          game.completedAt ?? game.updatedAt ?? game.createdAt ?? null
+        )
+      : null;
+
+    return (
     <Pressable
       key={game.id}
-      style={styles.card}
+      style={[
+        styles.card,
+        {
+          backgroundColor: theme.cardBackground,
+          borderColor: theme.cardBorder,
+        },
+        game.archived && styles.archivedCard,
+      ]}
       onPress={() => {
         if (game.status === "pending" && game.direction === "outgoing") {
           setSelectedOutgoingGameRequest(game);
           return;
         }
 
-        if (game.status === "accepted" && game.archived !== true) {
+        if (game.status === "accepted") {
+          if (!game.sessionId || typeof game.sessionId !== "string") {
+            setGameRequestsError(
+              "This multiplayer game could not be opened because the session is missing."
+            );
+            return;
+          }
           void handleOpenGame(game);
         }
       }}
       onLongPress={() => {
         if (game.status === "accepted") {
           setSelectedActiveGameForDeletion(game);
+          setSelectedActiveGameActionType(null);
         }
       }}
       delayLongPress={350}
     >
       <View style={styles.cardRow}>
-        <Text style={styles.cardTitle}>{game.friendName}</Text>
-        <Text style={styles.cardBadge}>
+        <Text
+          style={[
+            styles.cardTitle,
+            { color: theme.cardTitle },
+            game.archived && styles.archivedCardTitle,
+          ]}
+        >
+          {game.friendName}
+        </Text>
+        <Text style={[styles.cardBadge, { color: theme.cardBadge }]}>
           {game.status === "pending"
             ? game.direction === "incoming"
               ? "Request"
               : "Pending"
             : game.needsAction
               ? "Your Turn"
-              : game.archived
-                ? "Archived"
-                : "Waiting"}
+                : game.archived
+                  ? "Archived"
+                  : "Their Turn"}
         </Text>
       </View>
-      {buildPresenceLabel(game.presenceStatus) ? (
-        <Text style={styles.cardPresenceText}>{buildPresenceLabel(game.presenceStatus)}</Text>
-      ) : null}
-      <Text style={styles.cardMeta}>Seed {game.seed}</Text>
-      <Text style={styles.cardSummary}>{game.summary}</Text>
       {game.hasUnreadSessionUpdate ? (
-        <Text style={styles.cardUnreadText}>New activity</Text>
+        <Text style={[styles.cardUnreadText, { color: theme.cardUnreadText }]}>
+          New activity
+        </Text>
+      ) : null}
+      {game.archived && archivedCompletedLabel ? (
+        <Text style={[styles.archivedCardDate, { color: theme.cardMeta }]}>
+          Completed {archivedCompletedLabel}
+        </Text>
       ) : null}
       {game.status === "pending" && game.direction === "incoming" ? (
         <View style={styles.cardActionRow}>
@@ -470,10 +641,25 @@ const MultiplayerMenuScreen = ({
                   );
                   return;
                 }
+                const acceptedRequestNotificationIds = unreadNotifications
+                  .filter((notification) => {
+                    const requestNotificationId =
+                      getNotificationRequestId(notification);
+                    return (
+                      requestNotificationId != null &&
+                      String(requestNotificationId) === String(game.id)
+                    );
+                  })
+                  .map((notification) => notification.id);
+                if (acceptedRequestNotificationIds.length > 0) {
+                  await markMultiplayerNotificationsRead(
+                    acceptedRequestNotificationIds
+                  );
+                  await refreshUnreadNotifications();
+                }
                 await refreshGameRequests();
-                onOpenActiveGame?.({
-                  ...game,
-                  sessionId: result.sessionId ?? null,
+                setGameActionBanner({
+                  text: `Game with ${game.friendName} accepted`,
                 });
                 await trackMultiplayerEvent("mp_request_accepted", {
                   requestId: game.id,
@@ -492,130 +678,81 @@ const MultiplayerMenuScreen = ({
             </Text>
           </TouchableOpacity>
         </View>
-      ) : game.status === "accepted" ? (
-        <>
-          {game.archived ? (
-            <TouchableOpacity
-              style={styles.primaryInlineButton}
-              onPress={async () => {
-                const nextSessionId = `mp_${Date.now()}_${Math.random()
-                  .toString(36)
-                  .slice(2, 10)}`;
-                const rematchResult = await createMultiplayerRematch({
-                  sessionId: game.sessionId,
-                  newSessionId: nextSessionId,
-                  seed: game.seed,
-                  gameType: game.gameType ?? "seeded",
-                });
-                if (!rematchResult.ok) {
-                  setGameRequestsError("Could not create a rematch right now.");
-                  return;
-                }
-                await trackMultiplayerEvent("mp_rematch_created", {
-                  fromSessionId: game.sessionId,
-                  newSessionId: rematchResult.sessionId ?? nextSessionId,
-                });
-                onOpenNewMultiplayerGame?.({
-                  ...game,
-                  sessionId: rematchResult.sessionId ?? nextSessionId,
-                });
-              }}
-            >
-              <Text style={styles.primaryInlineButtonText}>Rematch</Text>
-            </TouchableOpacity>
-          ) : (
-            <>
-              <TouchableOpacity
-                style={styles.primaryInlineButton}
-                onPress={() => {
-                  void handleOpenGame(game);
-                }}
-              >
-                <Text style={styles.primaryInlineButtonText}>Open Game</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.secondaryInlineButton}
-                onPress={async () => {
-                  const result = await archiveMultiplayerSessionForUser({
-                    sessionId: game.sessionId,
-                  });
-                if (!result.ok) {
-                  setGameRequestsError(
-                    "Could not archive that multiplayer game right now."
-                  );
-                  return;
-                }
-                await trackMultiplayerEvent("mp_session_archived", {
-                  sessionId: game.sessionId,
-                });
-                await refreshGameRequests();
-              }}
-            >
-                <Text style={styles.secondaryInlineButtonText}>Archive</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </>
-      ) : (
-        <Text style={styles.cardAction}>
+      ) : game.status === "accepted" && game.archived !== true ? (
+        <TouchableOpacity
+          style={styles.primaryInlineButton}
+          onPress={() => {
+            void handleOpenGame(game);
+          }}
+        >
+          <Text style={styles.primaryInlineButtonText}>Open Game</Text>
+        </TouchableOpacity>
+      ) : game.status !== "accepted" ? (
+        <Text style={[styles.cardAction, { color: theme.cardAction }]}>
           {game.direction === "outgoing"
             ? "Waiting for response"
             : "Request pending"}
         </Text>
-      )}
+      ) : null}
     </Pressable>
-  );
+    );
+  };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={styles.header}>
         <TouchableOpacity
           onPress={onBack}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
-          <Text style={styles.backButton}>Back</Text>
+          <Text style={[styles.backButton, { color: theme.backButton }]}>Back</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.titleRow}>
-        <Text style={styles.title}>Multiplayer</Text>
+        <Text style={[styles.title, { color: theme.title }]}>Multiplayer</Text>
         <TouchableOpacity
-          style={styles.leaderboardButton}
+          style={[
+            styles.leaderboardButton,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+            },
+          ]}
           onPress={onOpenLeaderboard}
         >
-          <Text style={styles.leaderboardButtonText}>High Scores</Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={styles.subtitle}>Start or resume games with friends.</Text>
-      <View style={styles.quickActionsRow}>
-        <TouchableOpacity
-          style={styles.quickActionButton}
-          onPress={onOpenInbox}
-          accessibilityLabel="Open multiplayer inbox"
-        >
-          <Text style={styles.quickActionText}>
-            Inbox {unreadCount > 0 ? `(${unreadCount})` : ""}
+          <Text style={[styles.leaderboardButtonText, { color: theme.accentText }]}>
+            High Scores
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.quickActionButton}
-          onPress={onOpenNotificationSettings}
-          accessibilityLabel="Open multiplayer notification settings"
-        >
-          <Text style={styles.quickActionText}>Notification Settings</Text>
-        </TouchableOpacity>
       </View>
+      <Text style={[styles.subtitle, { color: theme.subtitle }]}>
+        Start or resume games with friends.
+      </Text>
 
       <View style={styles.tabRow}>
         <TouchableOpacity
-          style={[styles.tabButton, activeTab === "games" && styles.tabButtonActive]}
+          style={[
+            styles.tabButton,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+            },
+            activeTab === "games" && styles.tabButtonActive,
+            activeTab === "games" && {
+              backgroundColor: theme.activePill,
+              borderColor: theme.activePill,
+            },
+          ]}
           onPress={() => setActiveTab("games")}
         >
           <View style={styles.tabLabelRow}>
             <Text
               style={[
                 styles.tabButtonText,
+                { color: theme.tabText },
                 activeTab === "games" && styles.tabButtonTextActive,
+                activeTab === "games" && { color: theme.tabTextActive },
               ]}
             >
               Active Games
@@ -628,14 +765,27 @@ const MultiplayerMenuScreen = ({
           </View>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tabButton, activeTab === "friends" && styles.tabButtonActive]}
+          style={[
+            styles.tabButton,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+            },
+            activeTab === "friends" && styles.tabButtonActive,
+            activeTab === "friends" && {
+              backgroundColor: theme.activePill,
+              borderColor: theme.activePill,
+            },
+          ]}
           onPress={() => setActiveTab("friends")}
         >
           <View style={styles.tabLabelRow}>
             <Text
               style={[
                 styles.tabButtonText,
+                { color: theme.tabText },
                 activeTab === "friends" && styles.tabButtonTextActive,
+                activeTab === "friends" && { color: theme.tabTextActive },
               ]}
             >
               Friends
@@ -659,14 +809,50 @@ const MultiplayerMenuScreen = ({
             <TouchableOpacity
               style={[
                 styles.filterChip,
+                {
+                  borderColor: theme.border,
+                  backgroundColor: theme.surface,
+                },
+                activeGameFilter === "active" && styles.filterChipActive,
+                activeGameFilter === "active" && {
+                  borderColor: theme.activePill,
+                  backgroundColor: theme.activePill,
+                },
+              ]}
+              onPress={() => setActiveGameFilter("active")}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  { color: theme.tabText },
+                  activeGameFilter === "active" && styles.filterChipTextActive,
+                  activeGameFilter === "active" && { color: theme.tabTextActive },
+                ]}
+              >
+                Active
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                {
+                  borderColor: theme.border,
+                  backgroundColor: theme.surface,
+                },
                 activeGameFilter === "all" && styles.filterChipActive,
+                activeGameFilter === "all" && {
+                  borderColor: theme.activePill,
+                  backgroundColor: theme.activePill,
+                },
               ]}
               onPress={() => setActiveGameFilter("all")}
             >
               <Text
                 style={[
                   styles.filterChipText,
+                  { color: theme.tabText },
                   activeGameFilter === "all" && styles.filterChipTextActive,
+                  activeGameFilter === "all" && { color: theme.tabTextActive },
                 ]}
               >
                 All
@@ -675,92 +861,101 @@ const MultiplayerMenuScreen = ({
             <TouchableOpacity
               style={[
                 styles.filterChip,
-                activeGameFilter === "needs_action" && styles.filterChipActive,
+                {
+                  borderColor: theme.border,
+                  backgroundColor: theme.surface,
+                },
+                activeGameFilter === "your_turn" && styles.filterChipActive,
+                activeGameFilter === "your_turn" && {
+                  borderColor: theme.activePill,
+                  backgroundColor: theme.activePill,
+                },
               ]}
-              onPress={() => setActiveGameFilter("needs_action")}
+              onPress={() => setActiveGameFilter("your_turn")}
             >
               <Text
                 style={[
                   styles.filterChipText,
-                  activeGameFilter === "needs_action" &&
+                  { color: theme.tabText },
+                  activeGameFilter === "your_turn" &&
                     styles.filterChipTextActive,
+                  activeGameFilter === "your_turn" && { color: theme.tabTextActive },
                 ]}
               >
-                Needs Action
+                Your Turn
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
                 styles.filterChip,
+                {
+                  borderColor: theme.border,
+                  backgroundColor: theme.surface,
+                },
                 activeGameFilter === "pending" && styles.filterChipActive,
+                activeGameFilter === "pending" && {
+                  borderColor: theme.activePill,
+                  backgroundColor: theme.activePill,
+                },
               ]}
               onPress={() => setActiveGameFilter("pending")}
             >
               <Text
                 style={[
                   styles.filterChipText,
+                  { color: theme.tabText },
                   activeGameFilter === "pending" && styles.filterChipTextActive,
+                  activeGameFilter === "pending" && { color: theme.tabTextActive },
                 ]}
               >
                 Pending
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.filterChip,
-                activeGameFilter === "archived" && styles.filterChipActive,
-              ]}
-              onPress={() => setActiveGameFilter("archived")}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  activeGameFilter === "archived" && styles.filterChipTextActive,
-                ]}
-              >
-                Archived
-              </Text>
-            </TouchableOpacity>
           </View>
-          {unreadNotifications.length > 0 ? (
-            <TouchableOpacity
-              style={styles.inlineStatusCard}
-              onPress={async () => {
-                const unreadIds = unreadNotifications.map((notification) => notification.id);
-                await markMultiplayerNotificationsRead(unreadIds);
-                await refreshUnreadNotifications();
-                const newest = unreadNotifications[0];
-                if (newest) {
-                  setLatestInboxMessage({
-                    title: "Notifications",
-                    text: "Marked multiplayer notifications as read.",
-                  });
-                }
-              }}
-            >
-              <Text style={styles.inlineStatusText}>
-                {`${unreadCount} unread multiplayer notification${
-                  unreadCount === 1 ? "" : "s"
-                }`}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
           {gameRequestsLoading ? (
-            <View style={styles.emptyStateCard}>
-              <Text style={styles.emptyStateTitle}>Loading Games</Text>
-              <Text style={styles.emptyStateText}>
+            <View
+              style={[
+                styles.emptyStateCard,
+                { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+              ]}
+            >
+              <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                Loading Games
+              </Text>
+              <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
                 Pulling your multiplayer requests now.
               </Text>
             </View>
-          ) : gameRequestsError ? (
-            <View style={styles.emptyStateCard}>
-              <Text style={styles.emptyStateTitle}>Could Not Load Games</Text>
-              <Text style={styles.emptyStateText}>{gameRequestsError}</Text>
+          ) : gameActionBanner?.text ? (
+            <View style={styles.gameActionBanner}>
+              <Text style={styles.gameActionBannerText}>{gameActionBanner.text}</Text>
+            </View>
+          ) : null}
+          {gameRequestsLoading ? null : gameRequestsError ? (
+            <View
+              style={[
+                styles.emptyStateCard,
+                { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+              ]}
+            >
+              <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                Could Not Load Games
+              </Text>
+              <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
+                {gameRequestsError}
+              </Text>
             </View>
           ) : activeGames.length === 0 ? (
-            <View style={styles.emptyStateCard}>
-              <Text style={styles.emptyStateTitle}>No Active Games</Text>
-              <Text style={styles.emptyStateText}>
+            <View
+              style={[
+                styles.emptyStateCard,
+                { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+              ]}
+            >
+              <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                No Active Games
+              </Text>
+              <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
                 Start a multiplayer run from the Friends tab.
               </Text>
             </View>
@@ -768,25 +963,33 @@ const MultiplayerMenuScreen = ({
             <>
               {groupedGames.yourTurn.length > 0 ? (
                 <View style={styles.sectionBlock}>
-                  <Text style={styles.sectionTitle}>Your Turn</Text>
+                  <Text style={[styles.sectionTitle, { color: theme.cardMeta }]}>
+                    Your Turn
+                  </Text>
                   {groupedGames.yourTurn.map((game) => renderGameCard(game))}
                 </View>
               ) : null}
               {groupedGames.waiting.length > 0 ? (
                 <View style={styles.sectionBlock}>
-                  <Text style={styles.sectionTitle}>Waiting</Text>
+                  <Text style={[styles.sectionTitle, { color: theme.cardMeta }]}>
+                    Their Turn
+                  </Text>
                   {groupedGames.waiting.map((game) => renderGameCard(game))}
                 </View>
               ) : null}
               {groupedGames.pending.length > 0 ? (
                 <View style={styles.sectionBlock}>
-                  <Text style={styles.sectionTitle}>Pending Requests</Text>
+                  <Text style={[styles.sectionTitle, { color: theme.cardMeta }]}>
+                    Pending Requests
+                  </Text>
                   {groupedGames.pending.map((game) => renderGameCard(game))}
                 </View>
               ) : null}
               {groupedGames.archived.length > 0 ? (
                 <View style={styles.sectionBlock}>
-                  <Text style={styles.sectionTitle}>Completed / Archived</Text>
+                  <Text style={[styles.sectionTitle, { color: theme.cardMeta }]}>
+                    Completed / Archived
+                  </Text>
                   {groupedGames.archived.map((game) => renderGameCard(game))}
                 </View>
               ) : null}
@@ -794,9 +997,16 @@ const MultiplayerMenuScreen = ({
               groupedGames.waiting.length === 0 &&
               groupedGames.pending.length === 0 &&
               groupedGames.archived.length === 0 ? (
-                <View style={styles.emptyStateCard}>
-                  <Text style={styles.emptyStateTitle}>No Games In Filter</Text>
-                  <Text style={styles.emptyStateText}>
+                <View
+                  style={[
+                    styles.emptyStateCard,
+                    { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+                  ]}
+                >
+                  <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                    No Games In Filter
+                  </Text>
+                  <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
                     Try another filter to see your multiplayer games.
                   </Text>
                 </View>
@@ -808,7 +1018,14 @@ const MultiplayerMenuScreen = ({
         <View style={styles.friendsSection}>
           <View style={styles.searchRow}>
             <TextInput
-              style={styles.searchInput}
+              style={[
+                styles.searchInput,
+                {
+                  backgroundColor: theme.cardBackground,
+                  borderColor: theme.border,
+                  color: theme.cardTitle,
+                },
+              ]}
               value={friendSearch}
               onChangeText={(nextValue) => {
                 setFriendSearch(nextValue);
@@ -819,7 +1036,7 @@ const MultiplayerMenuScreen = ({
                 }
               }}
               placeholder="Search friend username"
-              placeholderTextColor="#8b8d7a"
+              placeholderTextColor={theme.inputPlaceholder}
               returnKeyType="search"
               onSubmitEditing={() => {
                 void handleSearchFriends();
@@ -859,35 +1076,56 @@ const MultiplayerMenuScreen = ({
             ) : null}
 
             {hasSearchedFriends ? friendSearchLoading ? (
-              <View style={styles.emptyStateCard}>
-                <Text style={styles.emptyStateTitle}>Searching</Text>
-                <Text style={styles.emptyStateText}>
+              <View
+                style={[
+                  styles.emptyStateCard,
+                  { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+                ]}
+              >
+                <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                  Searching
+                </Text>
+                <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
                   Looking for that username now.
                 </Text>
               </View>
             ) : friendSearchError ? (
-              <View style={styles.emptyStateCard}>
-                <Text style={styles.emptyStateTitle}>Search Failed</Text>
-                <Text style={styles.emptyStateText}>{friendSearchError}</Text>
+              <View
+                style={[
+                  styles.emptyStateCard,
+                  { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+                ]}
+              >
+                <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                  Search Failed
+                </Text>
+                <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
+                  {friendSearchError}
+                </Text>
               </View>
             ) : searchResults.length === 0 ? (
-              <View style={styles.emptyStateCard}>
-                <Text style={styles.emptyStateTitle}>No Users Found</Text>
-                <Text style={styles.emptyStateText}>
+              <View
+                style={[
+                  styles.emptyStateCard,
+                  { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+                ]}
+              >
+                <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                  No Users Found
+                </Text>
+                <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
                   No users found with that username.
                 </Text>
               </View>
             ) : (
               searchResults.map((friend) => {
-                const alreadyFriends = friends.some(
-                  (existingFriend) => existingFriend.id === friend.id
+                const alreadyFriends = friendIds.has(friend.id);
+                const hasPendingOutgoingRequest = outgoingRequestReceiverIds.has(
+                  friend.id
                 );
-                const hasPendingOutgoingRequest = outgoingRequests.some(
-                  (request) => request.receiverId === friend.id
-                );
-                const hasPendingIncomingRequest = incomingRequests.some(
-                  (request) => request.senderId === friend.id
-                );
+                const matchingIncomingRequest =
+                  incomingRequestBySenderId.get(friend.id) ?? null;
+                const hasPendingIncomingRequest = matchingIncomingRequest != null;
                 const addButtonLabel = alreadyFriends
                   ? "Friends"
                   : hasPendingIncomingRequest
@@ -902,11 +1140,22 @@ const MultiplayerMenuScreen = ({
                   hasPendingOutgoingRequest ||
                   pendingFriendActionId === friend.id;
                 return (
-                  <View key={friend.id} style={styles.searchResultRow}>
-                    <View style={styles.searchResultTextWrap}>
-                      <Text style={styles.friendName}>@{friend.name}</Text>
+                  <View
+                    key={friend.id}
+                    style={[
+                      styles.searchResultRow,
+                      {
+                        backgroundColor: theme.cardBackground,
+                        borderColor: theme.cardBorder,
+                      },
+                    ]}
+                    >
+                      <View style={styles.searchResultTextWrap}>
+                      <Text style={[styles.friendName, { color: theme.cardTitle }]}>
+                        @{friend.name}
+                      </Text>
                       {friend.displayName ? (
-                        <Text style={styles.searchResultMeta}>
+                        <Text style={[styles.searchResultMeta, { color: theme.cardMeta }]}>
                           {friend.displayName}
                         </Text>
                       ) : null}
@@ -918,11 +1167,10 @@ const MultiplayerMenuScreen = ({
                       ]}
                       onPress={() => {
                         if (hasPendingIncomingRequest) {
-                          const matchingRequest = incomingRequests.find(
-                            (request) => request.senderId === friend.id
-                          );
-                          if (matchingRequest) {
-                            void handleAcceptFriendRequest(matchingRequest);
+                          if (matchingIncomingRequest) {
+                            void handleAcceptFriendRequest(
+                              matchingIncomingRequest
+                            );
                           }
                           return;
                         }
@@ -936,28 +1184,57 @@ const MultiplayerMenuScreen = ({
                 );
               })
             ) : friendsLoading ? (
-              <View style={styles.emptyStateCard}>
-                <Text style={styles.emptyStateTitle}>Loading Friends</Text>
-                <Text style={styles.emptyStateText}>
+              <View
+                style={[
+                  styles.emptyStateCard,
+                  { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+                ]}
+              >
+                <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                  Loading Friends
+                </Text>
+                <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
                   Pulling your requests and friends now.
                 </Text>
               </View>
             ) : friendsError ? (
-              <View style={styles.emptyStateCard}>
-                <Text style={styles.emptyStateTitle}>Could Not Load Friends</Text>
-                <Text style={styles.emptyStateText}>{friendsError}</Text>
+              <View
+                style={[
+                  styles.emptyStateCard,
+                  { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+                ]}
+              >
+                <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                  Could Not Load Friends
+                </Text>
+                <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
+                  {friendsError}
+                </Text>
               </View>
             ) : incomingRequests.length > 0 || friends.length > 0 ? (
               <>
                 {incomingRequests.length > 0 ? (
                   <View style={styles.sectionBlock}>
-                    <Text style={styles.sectionTitle}>Friend Requests</Text>
+                    <Text style={[styles.sectionTitle, { color: theme.cardMeta }]}>
+                      Friend Requests
+                    </Text>
                     {incomingRequests.map((request) => (
-                      <View key={request.id} style={styles.searchResultRow}>
+                      <View
+                        key={request.id}
+                        style={[
+                          styles.searchResultRow,
+                          {
+                            backgroundColor: theme.cardBackground,
+                            borderColor: theme.cardBorder,
+                          },
+                        ]}
+                      >
                         <View style={styles.searchResultTextWrap}>
-                          <Text style={styles.friendName}>@{request.name}</Text>
+                          <Text style={[styles.friendName, { color: theme.cardTitle }]}>
+                            @{request.name}
+                          </Text>
                           {request.displayName ? (
-                            <Text style={styles.searchResultMeta}>
+                            <Text style={[styles.searchResultMeta, { color: theme.cardMeta }]}>
                               {request.displayName}
                             </Text>
                           ) : null}
@@ -1005,30 +1282,55 @@ const MultiplayerMenuScreen = ({
 
                 {friends.length > 0 ? (
                   <View style={styles.sectionBlock}>
-                    <Text style={styles.sectionTitle}>Friends</Text>
+                    <Text style={[styles.sectionTitle, { color: theme.cardMeta }]}>
+                      Friends
+                    </Text>
                     {friends.map((friend) => {
                       const isSelected = selectedFriendId === friend.id;
                       return (
                         <View key={friend.id} style={styles.friendRowWrap}>
                           <Pressable
-                            style={styles.friendRow}
+                            style={[
+                              styles.friendRow,
+                              {
+                                backgroundColor: theme.cardBackground,
+                                borderColor: theme.cardBorder,
+                              },
+                            ]}
                             onPress={() =>
                               setSelectedFriendId((current) =>
                                 current === friend.id ? null : friend.id
                               )
                             }
                           >
-                            <Text style={styles.friendName}>{friend.name}</Text>
-                            <Text style={styles.friendHint}>Options</Text>
+                            <Text style={[styles.friendName, { color: theme.cardTitle }]}>
+                              {friend.name}
+                            </Text>
+                            <Text style={[styles.friendHint, { color: theme.cardMeta }]}>
+                              Options
+                            </Text>
                           </Pressable>
 
                           {isSelected ? (
-                            <View style={styles.friendActionPanel}>
+                            <View
+                              style={[
+                                styles.friendActionPanel,
+                                {
+                                  backgroundColor: theme.surface,
+                                  borderColor: theme.border,
+                                },
+                              ]}
+                            >
                               <TouchableOpacity
                                 style={styles.friendActionButton}
                                 onPress={() => setPlayPanelFriend(friend)}
                               >
-                                <Text style={styles.friendActionText}>
+                                <Text
+                                  style={[
+                                    styles.friendActionText,
+                                    isDarkMode ? styles.friendActionTextDark : null,
+                                  ]}
+                                >
                                   Play Game
                                 </Text>
                               </TouchableOpacity>
@@ -1061,9 +1363,16 @@ const MultiplayerMenuScreen = ({
                 ) : null}
               </>
             ) : (
-              <View style={styles.emptyStateCard}>
-                <Text style={styles.emptyStateTitle}>No Friends Yet</Text>
-                <Text style={styles.emptyStateText}>
+              <View
+                style={[
+                  styles.emptyStateCard,
+                  { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder },
+                ]}
+              >
+                <Text style={[styles.emptyStateTitle, { color: theme.cardTitle }]}>
+                  No Friends Yet
+                </Text>
+                <Text style={[styles.emptyStateText, { color: theme.cardMeta }]}>
                   Search for a friend above to add them.
                 </Text>
               </View>
@@ -1076,6 +1385,7 @@ const MultiplayerMenuScreen = ({
         visible={playPanelFriend != null}
         friendName={playPanelFriend?.name ?? null}
         dailySeed={dailySeed}
+        isDarkMode={isDarkMode}
         onClose={() => setPlayPanelFriend(null)}
         onDailyGame={() => {
           const nextFriend = playPanelFriend;
@@ -1174,14 +1484,12 @@ const MultiplayerMenuScreen = ({
       />
       <MessageOverlay
         message={friendActionMessage}
+        isDarkMode={isDarkMode}
         onClose={() => setFriendActionMessage(null)}
-      />
-      <MessageOverlay
-        message={latestInboxMessage}
-        onClose={() => setLatestInboxMessage(null)}
       />
       <PendingGameRequestModal
         visible={selectedOutgoingGameRequest != null}
+        isDarkMode={isDarkMode}
         friendName={selectedOutgoingGameRequest?.friendName ?? null}
         confirmDisabled={
           selectedOutgoingGameRequest != null &&
@@ -1221,16 +1529,30 @@ const MultiplayerMenuScreen = ({
         }}
       />
       <PendingGameRequestModal
-        visible={selectedActiveGameForDeletion != null}
+        visible={
+          selectedActiveGameForDeletion != null &&
+          selectedActiveGameActionType != null
+        }
+        isDarkMode={isDarkMode}
         friendName={selectedActiveGameForDeletion?.friendName ?? null}
-        title="Delete Active Game?"
+        title={
+          selectedActiveGameActionType === "archive"
+            ? "Archive Game?"
+            : "Delete Active Game?"
+        }
         body={
           selectedActiveGameForDeletion?.friendName
-            ? `This will remove your active multiplayer game with @${selectedActiveGameForDeletion.friendName} from the list for both players.`
-            : "This will remove this active multiplayer game from the list for both players."
+            ? `This will forfeit your game with @${selectedActiveGameForDeletion.friendName} and return you to the main menu.`
+            : "This will forfeit this game and return you to the main menu."
         }
-        confirmLabel="Delete Game"
-        confirmBusyLabel="Deleting"
+        confirmLabel={
+          selectedActiveGameActionType === "archive"
+            ? "Archive Game"
+            : "Delete Game"
+        }
+        confirmBusyLabel={
+          selectedActiveGameActionType === "archive" ? "Archiving" : "Deleting"
+        }
         cancelLabel="Keep Game"
         confirmDisabled={
           selectedActiveGameForDeletion != null &&
@@ -1243,6 +1565,7 @@ const MultiplayerMenuScreen = ({
           ) {
             return;
           }
+          setSelectedActiveGameActionType(null);
           setSelectedActiveGameForDeletion(null);
         }}
         onConfirm={() => {
@@ -1252,23 +1575,68 @@ const MultiplayerMenuScreen = ({
 
           void (async () => {
             setPendingGameActionId(selectedActiveGameForDeletion.id);
-            const result = await deleteAcceptedMultiplayerGame({
-              requestId: selectedActiveGameForDeletion.id,
-              sessionId: selectedActiveGameForDeletion.sessionId,
-            });
+            const result =
+              selectedActiveGameActionType === "archive"
+                ? await archiveMultiplayerSessionForUser({
+                    sessionId: selectedActiveGameForDeletion.sessionId,
+                  })
+                : await deleteAcceptedMultiplayerGame({
+                    requestId: selectedActiveGameForDeletion.id,
+                    sessionId: selectedActiveGameForDeletion.sessionId,
+                  });
             if (!result.ok) {
               setGameRequestsError(
-                result.errorMessage ?? "Could not delete that multiplayer game."
+                result.errorMessage ??
+                  `Could not ${
+                    selectedActiveGameActionType === "archive"
+                      ? "archive"
+                      : "delete"
+                  } that multiplayer game.`
               );
               setPendingGameActionId(null);
               return;
             }
+            setSelectedActiveGameActionType(null);
             setSelectedActiveGameForDeletion(null);
             await refreshGameRequests();
             setPendingGameActionId(null);
+            onBack?.();
           })();
         }}
       />
+      <Modal
+        visible={
+          selectedActiveGameForDeletion != null &&
+          selectedActiveGameActionType == null
+        }
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedActiveGameForDeletion(null)}
+      >
+        <View style={styles.actionModalBackdrop}>
+          <View style={styles.actionModalCard} onStartShouldSetResponder={() => true}>
+            <Text style={styles.actionModalTitle}>Game Actions</Text>
+            <TouchableOpacity
+              style={styles.actionModalButton}
+              onPress={() => setSelectedActiveGameActionType("archive")}
+            >
+              <Text style={styles.actionModalButtonText}>Archive Game</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionModalButton, styles.actionModalButtonDanger]}
+              onPress={() => setSelectedActiveGameActionType("delete")}
+            >
+              <Text style={styles.actionModalButtonDangerText}>Delete Game</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionModalCancelButton}
+              onPress={() => setSelectedActiveGameForDeletion(null)}
+            >
+              <Text style={styles.actionModalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1329,6 +1697,64 @@ const styles = StyleSheet.create({
     color: "#2f6f4f",
     fontSize: 12,
     fontWeight: "800",
+  },
+  actionModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.52)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  actionModalCard: {
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: "#fffaf2",
+    borderRadius: 20,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: "#eadfcd",
+  },
+  actionModalTitle: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#2c3e50",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  actionModalButton: {
+    marginTop: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e2d3bb",
+    backgroundColor: "#fff",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  actionModalButtonText: {
+    color: "#2c3e50",
+    fontSize: 17,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  actionModalButtonDanger: {
+    borderColor: "#f3b3ad",
+    backgroundColor: "#fff5f4",
+  },
+  actionModalButtonDangerText: {
+    color: "#b42318",
+    fontSize: 17,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  actionModalCancelButton: {
+    marginTop: 10,
+    paddingVertical: 12,
+  },
+  actionModalCancelText: {
+    color: "#9a6b2f",
+    fontWeight: "700",
+    fontSize: 15,
+    textAlign: "center",
   },
   leaderboardButton: {
     marginBottom: 0,
@@ -1428,6 +1854,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e6d8be",
   },
+  archivedCard: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+  },
   cardRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1438,6 +1869,10 @@ const styles = StyleSheet.create({
     color: "#22313f",
     fontSize: 20,
     fontWeight: "900",
+  },
+  archivedCardTitle: {
+    fontSize: 18,
+    fontWeight: "800",
   },
   cardBadge: {
     color: "#2f6f4f",
@@ -1455,17 +1890,17 @@ const styles = StyleSheet.create({
     color: "#5a5248",
     fontSize: 15,
   },
-  cardPresenceText: {
-    marginTop: 4,
-    color: "#2f6f4f",
-    fontSize: 12,
-    fontWeight: "700",
-  },
   cardUnreadText: {
     marginTop: 8,
     color: "#b45309",
     fontSize: 12,
     fontWeight: "800",
+  },
+  archivedCardDate: {
+    marginTop: 6,
+    color: "#6f6659",
+    fontSize: 12,
+    fontWeight: "700",
   },
   cardAction: {
     marginTop: 12,
@@ -1517,6 +1952,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     lineHeight: 20,
+  },
+  gameActionBanner: {
+    backgroundColor: "#ecfdf3",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#9dd8b8",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  gameActionBannerText: {
+    color: "#166534",
+    fontSize: 14,
+    fontWeight: "800",
+    textAlign: "center",
   },
   friendsSection: {
     flex: 1,
@@ -1700,6 +2149,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
   },
+  friendActionTextDark: {
+    color: "#ffffff",
+  },
   friendActionTextDisabled: {
     color: "#9ca3af",
   },
@@ -1726,5 +2178,47 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 });
+
+const LIGHT_THEME = {
+  background: "#f8f4ed",
+  surface: "#fff",
+  border: "#e3d3b9",
+  activePill: "#2f6f4f",
+  backButton: "#2f6f4f",
+  title: "#22313f",
+  subtitle: "#6a736f",
+  accentText: "#2f6f4f",
+  tabText: "#22313f",
+  tabTextActive: "#fff",
+  cardBackground: "#fffdf8",
+  cardBorder: "#e6d8be",
+  cardTitle: "#22313f",
+  cardBadge: "#2f6f4f",
+  cardMeta: "#6f6659",
+  cardUnreadText: "#b45309",
+  cardAction: "#d97706",
+  inputPlaceholder: "#8b8d7a",
+};
+
+const DARK_THEME = {
+  background: "#0b1220",
+  surface: "#152033",
+  border: "#334155",
+  activePill: "#166534",
+  backButton: "#86efac",
+  title: "#f8fafc",
+  subtitle: "#cbd5e1",
+  accentText: "#86efac",
+  tabText: "#e2e8f0",
+  tabTextActive: "#f8fafc",
+  cardBackground: "#111b2c",
+  cardBorder: "#334155",
+  cardTitle: "#f1f5f9",
+  cardBadge: "#86efac",
+  cardMeta: "#94a3b8",
+  cardUnreadText: "#fdba74",
+  cardAction: "#f59e0b",
+  inputPlaceholder: "#94a3b8",
+};
 
 export default MultiplayerMenuScreen;
