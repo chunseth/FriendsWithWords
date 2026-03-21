@@ -25,6 +25,7 @@ export const buildResolvedSubmitPayload = ({
   words,
   newWords,
   drawOwnerId = null,
+  bonusMode = "classic",
 }) => {
   const scoring = scoreSubmittedWords({
     board,
@@ -32,6 +33,7 @@ export const buildResolvedSubmitPayload = ({
     premiumSquares,
     turnCount,
     placedCells,
+    bonusMode,
   });
 
   const usedIndices = new Set();

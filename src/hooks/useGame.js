@@ -4,16 +4,21 @@ import { dictionary } from "../utils/dictionary";
 import {
   BLANK_LETTER,
   createSeededRandom,
+  initializeMiniTileBag,
   initializeTileBag,
   shuffleArray,
 } from "../game/shared/bag";
 import {
-  BOARD_SIZE,
+  BOARD_SIZE as CLASSIC_BOARD_SIZE,
+  MINI_BOARD_SIZE,
   createClassicPremiumSquares,
+  createMiniPremiumSquares,
 } from "../game/shared/premiumSquares";
 import {
   buildFinalScoreBreakdown,
   scoreSubmittedWords,
+  TIME_BONUS_PROFILE_CLASSIC,
+  TIME_BONUS_PROFILE_MINI,
 } from "../game/shared/scoring";
 import { buildResolvedSubmitPayload } from "../game/shared/turnResolution";
 import { validateSubmitTurn } from "../game/shared/validation";
@@ -25,12 +30,16 @@ const PREVIEW_DICTIONARY = {
   isValid: () => true,
 };
 
+const GAME_MODE_CLASSIC = "classic";
+const GAME_MODE_MINI = "mini";
+
+const createEmptyBoard = (boardSize) =>
+  Array(boardSize)
+    .fill(null)
+    .map(() => Array(boardSize).fill(null));
+
 export const useGame = () => {
-  const [board, setBoard] = useState(() =>
-    Array(BOARD_SIZE)
-      .fill(null)
-      .map(() => Array(BOARD_SIZE).fill(null))
-  );
+  const [board, setBoard] = useState(() => createEmptyBoard(CLASSIC_BOARD_SIZE));
   const [tileRack, setTileRack] = useState([]);
   const [selectedTiles, setSelectedTiles] = useState([]);
   const [selectedCells, setSelectedCells] = useState([]);
@@ -60,6 +69,9 @@ export const useGame = () => {
   const tilesUsedThisTurnRef = useRef(new Set());
   const boardAtTurnStartRef = useRef(null);
   const premiumSquaresRef = useRef(createClassicPremiumSquares());
+  const boardSizeRef = useRef(CLASSIC_BOARD_SIZE);
+  const gameModeRef = useRef(GAME_MODE_CLASSIC);
+  const timeBonusProfileRef = useRef(TIME_BONUS_PROFILE_CLASSIC);
   const gameStartedAtMsRef = useRef(null);
   const invalidWordAttemptsRef = useRef(0);
   const currentConsistencyStreakRef = useRef(0);
@@ -94,7 +106,19 @@ export const useGame = () => {
   }, []);
 
   const startNewGame = useCallback(
-    (seed = null) => {
+    (seed = null, options = {}) => {
+      const mode = options.mode === GAME_MODE_MINI ? GAME_MODE_MINI : GAME_MODE_CLASSIC;
+      gameModeRef.current = mode;
+      boardSizeRef.current = mode === GAME_MODE_MINI ? MINI_BOARD_SIZE : CLASSIC_BOARD_SIZE;
+      premiumSquaresRef.current =
+        mode === GAME_MODE_MINI
+          ? createMiniPremiumSquares()
+          : createClassicPremiumSquares();
+      timeBonusProfileRef.current =
+        mode === GAME_MODE_MINI
+          ? TIME_BONUS_PROFILE_MINI
+          : TIME_BONUS_PROFILE_CLASSIC;
+
       const gameSeed = seed || Math.floor(Math.random() * 1000000).toString();
       randomRef.current = createSeededRandom(gameSeed);
       nextTileIdRef.current = 0;
@@ -105,7 +129,6 @@ export const useGame = () => {
       setScrabbleBonusTotal(0);
       setWordCount(0);
       setTurnCount(0);
-      setTilesRemaining(100);
       setWordHistory([]);
       setSelectedTiles([]);
       setSelectedCells([]);
@@ -119,21 +142,23 @@ export const useGame = () => {
       pendingSubmitRef.current = null;
       tilesUsedThisTurnRef.current = new Set();
       boardAtTurnStartRef.current = null;
-      premiumSquaresRef.current = createClassicPremiumSquares();
       gameStartedAtMsRef.current = null;
       invalidWordAttemptsRef.current = 0;
       currentConsistencyStreakRef.current = 0;
       consistencyBonusTotalRef.current = 0;
 
       // Clear board
-      setBoard(
-        Array(BOARD_SIZE)
-          .fill(null)
-          .map(() => Array(BOARD_SIZE).fill(null))
-      );
+      setBoard(createEmptyBoard(boardSizeRef.current));
 
       // Initialize and shuffle tile bag
-      tileBagRef.current = shuffleArray(initializeTileBag(), randomRef.current.next);
+      tileBagRef.current = shuffleArray(
+        mode === GAME_MODE_MINI
+          ? initializeMiniTileBag(gameSeed)
+          : initializeTileBag(),
+        randomRef.current.next
+      );
+      const totalTilesInBag = tileBagRef.current.length;
+      setTilesRemaining(totalTilesInBag);
 
       // Draw initial 7 tiles (or fewer if bag has fewer)
       const initialRack = [];
@@ -144,16 +169,18 @@ export const useGame = () => {
         tilesDrawn++;
       }
       setTileRack(initialRack);
-      setTilesRemaining(100 - tilesDrawn);
+      setTilesRemaining(totalTilesInBag - tilesDrawn);
     },
     []
   );
 
   const resetGame = useCallback(() => {
+    let resolvedSeed = currentSeed;
     if (!currentSeed) {
       const gameSeed = Math.floor(Math.random() * 1000000).toString();
       randomRef.current = createSeededRandom(gameSeed);
       setCurrentSeed(gameSeed);
+      resolvedSeed = gameSeed;
     } else {
       randomRef.current = createSeededRandom(currentSeed);
     }
@@ -165,7 +192,6 @@ export const useGame = () => {
     setScrabbleBonusTotal(0);
     setWordCount(0);
     setTurnCount(0);
-    setTilesRemaining(100);
     setWordHistory([]);
     setSelectedTiles([]);
     setSelectedCells([]);
@@ -179,19 +205,21 @@ export const useGame = () => {
     pendingSubmitRef.current = null;
     tilesUsedThisTurnRef.current = new Set();
     boardAtTurnStartRef.current = null;
-    premiumSquaresRef.current = createClassicPremiumSquares();
     gameStartedAtMsRef.current = null;
     invalidWordAttemptsRef.current = 0;
     currentConsistencyStreakRef.current = 0;
     consistencyBonusTotalRef.current = 0;
 
-    setBoard(
-      Array(BOARD_SIZE)
-        .fill(null)
-        .map(() => Array(BOARD_SIZE).fill(null))
-    );
+    setBoard(createEmptyBoard(boardSizeRef.current));
 
-    tileBagRef.current = shuffleArray(initializeTileBag(), randomRef.current.next);
+    tileBagRef.current = shuffleArray(
+      gameModeRef.current === GAME_MODE_MINI
+        ? initializeMiniTileBag(resolvedSeed)
+        : initializeTileBag(),
+      randomRef.current.next
+    );
+    const totalTilesInBag = tileBagRef.current.length;
+    setTilesRemaining(totalTilesInBag);
 
     const initialRack = [];
     let tilesDrawn = 0;
@@ -201,7 +229,7 @@ export const useGame = () => {
       tilesDrawn++;
     }
     setTileRack(initialRack);
-    setTilesRemaining(100 - tilesDrawn);
+    setTilesRemaining(totalTilesInBag - tilesDrawn);
   }, [currentSeed]);
 
   const selectTile = useCallback(
@@ -382,8 +410,8 @@ export const useGame = () => {
     (fromIndex, toIndex, releasedIndex = null) => {
       setTileRack((prev) => {
         const usedIndices = new Set();
-        for (let row = 0; row < BOARD_SIZE; row++) {
-          for (let col = 0; col < BOARD_SIZE; col++) {
+        for (let row = 0; row < boardSizeRef.current; row++) {
+          for (let col = 0; col < boardSizeRef.current; col++) {
             const tile = board[row][col];
             if (
               tile?.isFromRack &&
@@ -530,7 +558,7 @@ export const useGame = () => {
       isFirstTurn,
       boardAtTurnStart: boardAtTurnStartRef.current,
       dictionary,
-      boardSize: BOARD_SIZE,
+      boardSize: boardSizeRef.current,
     });
     if (!validation.ok) {
       if (validation?.error?.title === "Invalid Word") {
@@ -551,6 +579,7 @@ export const useGame = () => {
       placedCells,
       words,
       newWords,
+      bonusMode: gameModeRef.current === GAME_MODE_MINI ? "mini" : "classic",
     });
 
     pendingSubmitRef.current = payload;
@@ -606,7 +635,13 @@ export const useGame = () => {
 
     boardAtTurnStartRef.current = payload.nextBoardAtTurnStart;
     premiumSquaresRef.current = payload.newPremiumSquares;
-    if (!payload.earnedScrabbleBonus && !completesGame) {
+    if (!completesGame) {
+      const scrabbleBonusMessage =
+        payload.earnedScrabbleBonus && payload.scrabbleBonus > 0
+          ? payload.scrabbleBonusType === "lite"
+            ? `Scrabble Lite bonus +${payload.scrabbleBonus}`
+            : `Scrabble bonus +${payload.scrabbleBonus}`
+          : null;
       setMessage({
         title: "Word Accepted!",
         text: `Words: ${payload.newWords
@@ -614,6 +649,7 @@ export const useGame = () => {
           .join(", ")}`,
         turnPoints: payload.turnScore,
         consistencyBonus: perTurnConsistencyBonus,
+        scrabbleBonusMessage,
       });
     }
     return true;
@@ -654,6 +690,7 @@ export const useGame = () => {
       invalidWordAttempts: invalidWordAttemptsRef.current,
       wordHistory,
       comboBonusTotal: consistencyBonusTotalRef.current,
+      timeBonusProfile: timeBonusProfileRef.current,
     });
     setFinalScoreBreakdown(breakdown);
     setFinalScore(breakdown.finalScore);
@@ -711,7 +748,7 @@ export const useGame = () => {
         isFirstTurn,
         boardAtTurnStart: boardAtTurnStartRef.current,
         dictionary: PREVIEW_DICTIONARY,
-        boardSize: BOARD_SIZE,
+        boardSize: boardSizeRef.current,
       });
 
       if (!validation.ok) {
@@ -773,6 +810,9 @@ export const useGame = () => {
       isSwapMode: false,
       swapCount,
       premiumSquares: premiumSquaresRef.current,
+      boardSize: boardSizeRef.current,
+      gameMode: gameModeRef.current,
+      timeBonusProfile: timeBonusProfileRef.current,
       tileBag: tileBagRef.current,
       nextTileId: nextTileIdRef.current,
       boardAtTurnStart: boardAtTurnStartRef.current,
@@ -824,10 +864,24 @@ export const useGame = () => {
     boardAtTurnStartRef.current = Array.isArray(snapshot.boardAtTurnStart)
       ? snapshot.boardAtTurnStart
       : null;
+    boardSizeRef.current =
+      typeof snapshot.boardSize === "number" && snapshot.boardSize > 0
+        ? snapshot.boardSize
+        : Array.isArray(snapshot.board)
+          ? snapshot.board.length
+          : CLASSIC_BOARD_SIZE;
+    gameModeRef.current =
+      snapshot.gameMode === GAME_MODE_MINI ? GAME_MODE_MINI : GAME_MODE_CLASSIC;
+    timeBonusProfileRef.current =
+      snapshot.timeBonusProfile === TIME_BONUS_PROFILE_MINI
+        ? TIME_BONUS_PROFILE_MINI
+        : TIME_BONUS_PROFILE_CLASSIC;
     premiumSquaresRef.current =
       snapshot.premiumSquares && typeof snapshot.premiumSquares === "object"
         ? snapshot.premiumSquares
-        : createClassicPremiumSquares();
+        : gameModeRef.current === GAME_MODE_MINI
+          ? createMiniPremiumSquares()
+          : createClassicPremiumSquares();
     gameStartedAtMsRef.current =
       typeof snapshot.gameStartedAtMs === "number"
         ? snapshot.gameStartedAtMs
@@ -855,7 +909,7 @@ export const useGame = () => {
     setScrabbleBonusTotal(snapshot.scrabbleBonusTotal ?? 0);
     setWordCount(snapshot.wordCount ?? 0);
     setTurnCount(snapshot.turnCount ?? 0);
-    setTilesRemaining(snapshot.tilesRemaining ?? 0);
+    setTilesRemaining(snapshot.tilesRemaining ?? tileBagRef.current.length);
     setWordHistory(snapshot.wordHistory ?? []);
     setIsFirstTurn(Boolean(snapshot.isFirstTurn));
     setCurrentSeed(snapshot.currentSeed);
@@ -912,7 +966,7 @@ export const useGame = () => {
     submitWord,
     finishGame,
     setMessage,
-    BOARD_SIZE,
+    BOARD_SIZE: boardSizeRef.current,
     isBlankRackTile,
   };
 };

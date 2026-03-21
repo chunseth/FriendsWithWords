@@ -2,6 +2,8 @@ import {
   buildFinalScoreBreakdown,
   calculateConsistencyBonusTotal,
   calculateTimeBonus,
+  scoreSubmittedWords,
+  TIME_BONUS_PROFILE_MINI,
 } from "../scoring";
 
 describe("calculateTimeBonus", () => {
@@ -10,6 +12,19 @@ describe("calculateTimeBonus", () => {
     expect(calculateTimeBonus((60 * 60 - 1) * 1000)).toBe(10);
     expect(calculateTimeBonus((90 * 60 - 1) * 1000)).toBe(5);
     expect(calculateTimeBonus(90 * 60 * 1000)).toBe(0);
+  });
+
+  it("applies mini mode thresholds", () => {
+    expect(
+      calculateTimeBonus((10 * 60 - 1) * 1000, TIME_BONUS_PROFILE_MINI)
+    ).toBe(15);
+    expect(
+      calculateTimeBonus((20 * 60 - 1) * 1000, TIME_BONUS_PROFILE_MINI)
+    ).toBe(10);
+    expect(
+      calculateTimeBonus((30 * 60 - 1) * 1000, TIME_BONUS_PROFILE_MINI)
+    ).toBe(5);
+    expect(calculateTimeBonus(30 * 60 * 1000, TIME_BONUS_PROFILE_MINI)).toBe(0);
   });
 });
 
@@ -95,5 +110,50 @@ describe("buildFinalScoreBreakdown", () => {
     expect(breakdown.perfectionBonus).toBe(0);
     expect(breakdown.timeBonus).toBe(0);
     expect(breakdown.consistencyBonusTotal).toBe(0);
+  });
+});
+
+describe("scoreSubmittedWords", () => {
+  it("awards mini scrabble lite bonus (+20) when all 7 tiles are used after turn 1", () => {
+    const board = Array.from({ length: 11 }, () => Array(11).fill(null));
+    const placedCells = Array.from({ length: 7 }, (_, index) => ({
+      row: 5,
+      col: index,
+    }));
+
+    const scoring = scoreSubmittedWords({
+      board,
+      newWords: [],
+      premiumSquares: {},
+      turnCount: 1,
+      placedCells,
+      bonusMode: "mini",
+    });
+
+    expect(scoring.earnedScrabbleBonus).toBe(true);
+    expect(scoring.scrabbleBonus).toBe(20);
+    expect(scoring.scrabbleBonusType).toBe("lite");
+    expect(scoring.turnScore).toBe(20);
+  });
+
+  it("does not award mini scrabble lite on the first turn", () => {
+    const board = Array.from({ length: 11 }, () => Array(11).fill(null));
+    const placedCells = Array.from({ length: 7 }, (_, index) => ({
+      row: 5,
+      col: index,
+    }));
+
+    const scoring = scoreSubmittedWords({
+      board,
+      newWords: [],
+      premiumSquares: {},
+      turnCount: 0,
+      placedCells,
+      bonusMode: "mini",
+    });
+
+    expect(scoring.earnedScrabbleBonus).toBe(false);
+    expect(scoring.scrabbleBonus).toBe(0);
+    expect(scoring.turnScore).toBe(0);
   });
 });

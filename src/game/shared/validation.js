@@ -177,7 +177,10 @@ export const validateSubmitTurn = ({
   }
 
   if (isFirstTurn) {
-    const hasCenter = placedCells.some(({ row, col }) => row === 7 && col === 7);
+    const centerIndex = Math.floor(boardSize / 2);
+    const hasCenter = placedCells.some(
+      ({ row, col }) => row === centerIndex && col === centerIndex
+    );
     if (!hasCenter) {
       return {
         ok: false,

@@ -5,11 +5,38 @@ import { loadOrCreatePlayerProfile } from "../utils/playerProfile";
 const SCORES_TABLE = "scores";
 export const LEADERBOARD_SCORE_MODE_SOLO = "solo";
 export const LEADERBOARD_SCORE_MODE_MULTIPLAYER = "multiplayer";
+export const LEADERBOARD_SCORE_MODE_MINI = "mini";
 
 const normalizeScoreMode = (scoreMode) =>
-  scoreMode === LEADERBOARD_SCORE_MODE_MULTIPLAYER
-    ? LEADERBOARD_SCORE_MODE_MULTIPLAYER
+  scoreMode === LEADERBOARD_SCORE_MODE_MULTIPLAYER ||
+  scoreMode === LEADERBOARD_SCORE_MODE_MINI
+    ? scoreMode
     : LEADERBOARD_SCORE_MODE_SOLO;
+
+const dedupeBestScoresByPlayer = (entries, limit = null) => {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return [];
+  }
+
+  const uniqueEntries = [];
+  const seenPlayerIds = new Set();
+
+  for (const entry of entries) {
+    const playerId = entry?.player_id;
+    if (!playerId || seenPlayerIds.has(playerId)) {
+      continue;
+    }
+
+    seenPlayerIds.add(playerId);
+    uniqueEntries.push(entry);
+
+    if (typeof limit === "number" && uniqueEntries.length >= limit) {
+      break;
+    }
+  }
+
+  return uniqueEntries;
+};
 
 export const submitCompletedScore = async ({
   seed,
@@ -223,6 +250,7 @@ export const fetchGlobalLeaderboard = async (
   }
 
   const normalizedScoreMode = normalizeScoreMode(scoreMode);
+  const queryLimit = Math.max(limit * 5, 500);
   const { data, error } = await supabase
     .from(SCORES_TABLE)
     .select(
@@ -231,13 +259,16 @@ export const fetchGlobalLeaderboard = async (
     .eq("score_mode", normalizedScoreMode)
     .order("final_score", { ascending: false })
     .order("completed_at", { ascending: true })
-    .limit(limit);
+    .limit(queryLimit);
 
   if (error) {
     return { ok: false, reason: "fetch_failed", error, leaderboard: [] };
   }
 
-  return { ok: true, leaderboard: data ?? [] };
+  return {
+    ok: true,
+    leaderboard: dedupeBestScoresByPlayer(data, limit),
+  };
 };
 
 export const fetchPlayerHighScorePosition = async (
@@ -269,64 +300,80 @@ export const fetchPlayerHighScorePosition = async (
   }
 
   const normalizedScoreMode = normalizeScoreMode(scoreMode);
-  const { data: bestScore, error: bestScoreError } = await supabase
+  const { data, error } = await supabase
     .from(SCORES_TABLE)
-    .select("final_score, completed_at")
-    .eq("player_id", scopedPlayerId)
+    .select("player_id, final_score, completed_at")
     .eq("score_mode", normalizedScoreMode)
     .order("final_score", { ascending: false })
     .order("completed_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(5000);
 
-  if (bestScoreError) {
+  if (error) {
     return {
       ok: false,
       reason: "fetch_failed",
-      error: bestScoreError,
+      error,
       position: null,
     };
   }
 
-  if (!bestScore) {
+  const rankedPlayers = dedupeBestScoresByPlayer(data);
+  const foundIndex = rankedPlayers.findIndex(
+    (entry) => entry?.player_id === scopedPlayerId
+  );
+  if (foundIndex === -1) {
     return { ok: true, position: null };
   }
 
-  const { count: higherScoreCount, error: higherScoreError } = await supabase
-    .from(SCORES_TABLE)
-    .select("id", { count: "exact", head: true })
-    .eq("score_mode", normalizedScoreMode)
-    .gt("final_score", bestScore.final_score);
+  return { ok: true, position: foundIndex + 1 };
+};
 
-  if (higherScoreError) {
+export const fetchPlayerScoreHistory = async ({ playerId, limit = 2000 } = {}) => {
+  if (!isBackendConfigured()) {
+    return { ok: false, reason: "backend_not_configured", scores: [] };
+  }
+
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { ok: false, reason: "backend_not_configured", scores: [] };
+  }
+
+  const sessionResult = await ensureSupabaseSession();
+  if (!sessionResult.ok) {
     return {
       ok: false,
-      reason: "fetch_failed",
-      error: higherScoreError,
-      position: null,
+      reason: sessionResult.reason ?? "auth_failed",
+      error: sessionResult.error ?? null,
+      scores: [],
     };
   }
 
-  const { count: tiedEarlierCount, error: tiedEarlierError } = await supabase
-    .from(SCORES_TABLE)
-    .select("id", { count: "exact", head: true })
-    .eq("score_mode", normalizedScoreMode)
-    .eq("final_score", bestScore.final_score)
-    .lt("completed_at", bestScore.completed_at);
-
-  if (tiedEarlierError) {
-    return {
-      ok: false,
-      reason: "fetch_failed",
-      error: tiedEarlierError,
-      position: null,
-    };
+  const scopedPlayerId = sessionResult.session?.user?.id ?? playerId;
+  if (!scopedPlayerId) {
+    return { ok: false, reason: "missing_player_id", scores: [] };
   }
 
-  return {
-    ok: true,
-    position: (higherScoreCount ?? 0) + (tiedEarlierCount ?? 0) + 1,
-  };
+  const safeLimit =
+    typeof limit === "number" && Number.isFinite(limit)
+      ? Math.max(1, Math.min(Math.trunc(limit), 5000))
+      : 2000;
+
+  const { data, error } = await supabase
+    .from(SCORES_TABLE)
+    .select("final_score")
+    .eq("player_id", scopedPlayerId)
+    .order("completed_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    return { ok: false, reason: "fetch_failed", error, scores: [] };
+  }
+
+  const scores = (data ?? [])
+    .map((entry) => entry?.final_score)
+    .filter((value) => typeof value === "number" && Number.isFinite(value));
+
+  return { ok: true, scores };
 };
 
 export const fetchAvailableSeeds = async (

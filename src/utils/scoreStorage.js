@@ -5,6 +5,8 @@ const SCORE_STORAGE_KEY = "wwrf.scoreRecords.v1";
 const createDefaultScoreRecords = () => ({
   overallHighScore: null,
   dailySeedScores: {},
+  miniOverallHighScore: null,
+  miniDailySeedScores: {},
 });
 
 const sanitizeScoreRecords = (value) => {
@@ -23,10 +25,25 @@ const sanitizeScoreRecords = (value) => {
           )
         )
       : {};
+  const miniOverallHighScore =
+    typeof value.miniOverallHighScore === "number"
+      ? value.miniOverallHighScore
+      : null;
+  const miniDailySeedScores =
+    value.miniDailySeedScores && typeof value.miniDailySeedScores === "object"
+      ? Object.fromEntries(
+          Object.entries(value.miniDailySeedScores).filter(
+            ([seed, score]) =>
+              typeof seed === "string" && typeof score === "number"
+          )
+        )
+      : {};
 
   return {
     overallHighScore,
     dailySeedScores,
+    miniOverallHighScore,
+    miniDailySeedScores,
   };
 };
 
@@ -64,16 +81,34 @@ export const saveScoreRecords = async (records) => {
 export const buildUpdatedScoreRecords = (
   existingRecords,
   finalScore,
-  dailySeed = null
+  { dailySeed = null, mode = "classic" } = {}
 ) => {
   const records = sanitizeScoreRecords(existingRecords);
-  const nextRecords = {
-    overallHighScore:
-      records.overallHighScore == null
+  const nextRecords = { ...records };
+  const isMiniMode = mode === "mini";
+
+  if (isMiniMode) {
+    nextRecords.miniOverallHighScore =
+      records.miniOverallHighScore == null
         ? finalScore
-        : Math.max(records.overallHighScore, finalScore),
-    dailySeedScores: { ...records.dailySeedScores },
-  };
+        : Math.max(records.miniOverallHighScore, finalScore);
+    nextRecords.miniDailySeedScores = { ...records.miniDailySeedScores };
+
+    if (dailySeed) {
+      const existingDailyScore = nextRecords.miniDailySeedScores[dailySeed];
+      nextRecords.miniDailySeedScores[dailySeed] =
+        typeof existingDailyScore === "number"
+          ? Math.max(existingDailyScore, finalScore)
+          : finalScore;
+    }
+    return nextRecords;
+  }
+
+  nextRecords.overallHighScore =
+    records.overallHighScore == null
+      ? finalScore
+      : Math.max(records.overallHighScore, finalScore);
+  nextRecords.dailySeedScores = { ...records.dailySeedScores };
 
   if (dailySeed) {
     const existingDailyScore = nextRecords.dailySeedScores[dailySeed];

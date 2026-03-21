@@ -1,4 +1,5 @@
 export const BOARD_SIZE = 15;
+export const MINI_BOARD_SIZE = 11;
 export const SCRABBLE_BONUS = 50;
 
 export const createEmptyBoard = (boardSize = BOARD_SIZE) =>
@@ -102,6 +103,62 @@ export const createClassicPremiumSquares = () => {
   dlSquares.forEach(([r, c]) => (premiumSquares[`${r},${c}`] = "dl"));
 
   premiumSquares["7,7"] = "center";
+
+  return premiumSquares;
+};
+
+export const createMiniPremiumSquares = () => {
+  const premiumSquares = {};
+
+  const twSquares = [
+    [0, 0],
+    [10, 0],
+    [0, 10],
+    [10, 10],
+  ];
+  twSquares.forEach(([r, c]) => (premiumSquares[`${r},${c}`] = "tw"));
+
+  const dwSquares = [
+    [1, 1],
+    [2, 2],
+    [1, 9],
+    [2, 8],
+    [9, 1],
+    [8, 2],
+    [8, 8],
+    [9, 9],
+  ];
+  dwSquares.forEach(([r, c]) => (premiumSquares[`${r},${c}`] = "dw"));
+
+  const dlSquares = [
+    [0, 3],
+    [0, 7],
+    [1, 5],
+    [3, 0],
+    [7, 0],
+    [5, 1],
+    [3, 10],
+    [7, 10],
+    [5, 9],
+    [10, 3],
+    [10, 7],
+    [9, 5],
+  ];
+  dlSquares.forEach(([r, c]) => (premiumSquares[`${r},${c}`] = "dl"));
+
+  const tlSquares = [
+    [3, 3],
+    [4, 4],
+    [3, 7],
+    [4, 6],
+    [6, 4],
+    [7, 3],
+    [6, 6],
+    [7, 7],
+  ];
+  tlSquares.forEach(([r, c]) => (premiumSquares[`${r},${c}`] = "tl"));
+
+  premiumSquares["5,5"] = "center";
 
   return premiumSquares;
 };

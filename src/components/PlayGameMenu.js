@@ -18,10 +18,12 @@ const PlayGameMenu = ({
   currentSeed,
   dailySeed,
   dailyHighScore,
+  dailyMiniHighScore,
   hasSavedGame,
   savedGameSeed,
   onClose,
   onDailyGame,
+  onDailyMiniGame,
   onResumeSavedGame,
   onNewGameRandom,
   onNewGameWithSeed,
@@ -35,6 +37,11 @@ const PlayGameMenu = ({
 
   const handleDailyGame = () => {
     onDailyGame();
+    setSeedInput("");
+  };
+
+  const handleDailyMiniGame = () => {
+    onDailyMiniGame?.();
     setSeedInput("");
   };
 
@@ -120,6 +127,28 @@ const PlayGameMenu = ({
                     {dailyHighScore}
                   </Text>
                 )}
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.secondaryButton,
+                styles.dailyMiniButton,
+                {
+                  backgroundColor: theme.surface,
+                },
+              ]}
+              onPress={handleDailyMiniGame}
+            >
+              <View style={styles.buttonRow}>
+                <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                  Daily Mini
+                </Text>
+                {dailyMiniHighScore != null ? (
+                  <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
+                    {dailyMiniHighScore}
+                  </Text>
+                ) : null}
               </View>
             </TouchableOpacity>
 
@@ -378,6 +407,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: "#e2d3bb",
+  },
+  dailyMiniButton: {
+    borderColor: "#d97706",
   },
   secondaryButtonText: {
     color: "#2c3e50",

@@ -127,6 +127,12 @@ const MessageOverlay = ({ message, onClose, isDarkMode = false }) => {
                                     </Text>
                                 </View>
                             </View>
+                            {typeof message?.scrabbleBonusMessage === 'string' &&
+                                message.scrabbleBonusMessage.length > 0 && (
+                                    <Text style={[styles.bonusMessageText, { color: theme.bonusText }]}>
+                                        {message.scrabbleBonusMessage}
+                                    </Text>
+                                )}
                             <Text style={[styles.text, { color: theme.body }]}>{message.text}</Text>
                         </>
                     ) : (
@@ -219,6 +225,12 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '700',
         color: '#2f6f4f',
+    },
+    bonusMessageText: {
+        fontSize: 13,
+        fontWeight: '700',
+        marginBottom: 8,
+        textAlign: 'center',
     },
     button: {
         backgroundColor: '#667eea',

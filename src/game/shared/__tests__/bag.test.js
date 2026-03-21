@@ -1,4 +1,8 @@
-import { createShuffledTileBag, hashSeed } from "../bag";
+import {
+  createShuffledTileBag,
+  hashSeed,
+  initializeMiniTileBag,
+} from "../bag";
 
 describe("bag seed hashing", () => {
   it("does not map adjacent daily seeds to adjacent hash values", () => {
@@ -21,5 +25,30 @@ describe("bag seed hashing", () => {
       .join("");
 
     expect(first).toBe(second);
+  });
+
+  it("builds a deterministic mini bag with rare-letter alternates and 48 tiles", () => {
+    const firstBag = initializeMiniTileBag("20260321");
+    const secondBag = initializeMiniTileBag("20260321");
+    expect(firstBag).toEqual(secondBag);
+    expect(firstBag).toHaveLength(48);
+
+    const count = (letter) =>
+      firstBag.filter((tile) => tile.letter === letter).length;
+
+    expect(count("O")).toBe(5);
+    expect(count("S")).toBe(3);
+    expect(count("Q") + count("Z")).toBe(1);
+    expect(count("J") + count("X")).toBe(1);
+    expect(count("Y")).toBe(1);
+    expect(count("K")).toBe(1);
+    if (count("Q") === 1) {
+      expect(count("U")).toBe(3);
+      expect(count("V") + count("W")).toBe(1);
+    } else {
+      expect(count("U")).toBe(2);
+      expect(count("V")).toBe(1);
+      expect(count("W")).toBe(1);
+    }
   });
 });

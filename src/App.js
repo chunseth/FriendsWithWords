@@ -25,6 +25,7 @@ import SFSymbolIcon from "./components/SFSymbolIcon";
 import { useGame } from "./hooks/useGame";
 import { dictionary } from "./utils/dictionary";
 import GameBoard from "./components/GameBoard";
+import GameBoardMini from "./components/GameBoardMini";
 import TileRack from "./components/TileRack";
 import GameInfo from "./components/GameInfo";
 import PlayGameMenu from "./components/PlayGameMenu";
@@ -63,7 +64,9 @@ import {
 import {
   fetchGlobalLeaderboard,
   fetchPlayerHighScorePosition,
+  fetchPlayerScoreHistory,
   fetchSeedLeaderboardByMode,
+  LEADERBOARD_SCORE_MODE_MINI,
   LEADERBOARD_SCORE_MODE_MULTIPLAYER,
   LEADERBOARD_SCORE_MODE_SOLO,
   submitCompletedScore,
@@ -131,7 +134,10 @@ const SCRABBLE_BANNER_FADE_OUT_DURATION = 220;
 const MULTIPLAYER_BANNER_DEDUPE_WINDOW_MS = 60000;
 const ENABLE_MULTIPLAYER_BANNER_DEBUG_LOGS = false;
 
-const BOARD_SIZE = 15;
+const GAME_MODE_CLASSIC = "classic";
+const GAME_MODE_DAILY_MINI = "daily-mini";
+const DAILY_LEADERBOARD_MODE_FULL = "full";
+const DAILY_LEADERBOARD_MODE_MINI = "mini";
 
 const getDailySeed = (date = new Date()) => {
   const year = date.getFullYear();
@@ -371,6 +377,7 @@ function App() {
   const [activeMultiplayerSessionId, setActiveMultiplayerSessionId] =
     useState("local-multiplayer-prototype");
   const [dailySeed, setDailySeed] = useState(() => getDailySeed());
+  const [activeGameMode, setActiveGameMode] = useState(GAME_MODE_CLASSIC);
   const [scoreRecords, setScoreRecords] = useState(getDefaultScoreRecords);
   const [playerStats, setPlayerStats] = useState(getDefaultStats);
   const [activeDailySeed, setActiveDailySeed] = useState(null);
@@ -408,10 +415,18 @@ function App() {
   const [dailyLeaderboardEntries, setDailyLeaderboardEntries] = useState([]);
   const [dailyLeaderboardLoading, setDailyLeaderboardLoading] = useState(false);
   const [dailyLeaderboardError, setDailyLeaderboardError] = useState(null);
+  const [dailyLeaderboardMode, setDailyLeaderboardMode] = useState(
+    DAILY_LEADERBOARD_MODE_FULL
+  );
   const [leaderboardPosition, setLeaderboardPosition] = useState(null);
   const [leaderboardPositionLoading, setLeaderboardPositionLoading] =
     useState(false);
   const [leaderboardPositionError, setLeaderboardPositionError] =
+    useState(null);
+  const [submittedScoreHistory, setSubmittedScoreHistory] = useState([]);
+  const [submittedScoreHistoryLoading, setSubmittedScoreHistoryLoading] =
+    useState(false);
+  const [submittedScoreHistoryError, setSubmittedScoreHistoryError] =
     useState(null);
   const [leaderboardSelectedDailySeed, setLeaderboardSelectedDailySeed] =
     useState(null);
@@ -423,6 +438,8 @@ function App() {
   const [swapDisplayRack, setSwapDisplayRack] = useState(null);
   const [rackTileAnimationStates, setRackTileAnimationStates] = useState({});
   const [showScrabbleBanner, setShowScrabbleBanner] = useState(false);
+  const [scrabbleBannerText, setScrabbleBannerText] = useState("Scrabble!");
+  const [scrabbleBannerPoints, setScrabbleBannerPoints] = useState("+50");
   const [gameInfoFlavor, setGameInfoFlavor] = useState(null);
   const [pendingGameInfoFlavor, setPendingGameInfoFlavor] = useState(null);
   const game = useGame();
@@ -450,6 +467,8 @@ function App() {
     ? game.finalScore
     : game.totalScore - swapAnimatedPenalty;
   const currentDailyHighScore = scoreRecords.dailySeedScores[dailySeed] ?? null;
+  const currentMiniDailyHighScore =
+    scoreRecords.miniDailySeedScores[dailySeed] ?? null;
   const dailySeeds = Array.from({ length: 7 }, (_, index) => {
     const date = new Date();
     date.setDate(date.getDate() - index);
@@ -748,7 +767,7 @@ function App() {
     let unsubscribePush = () => {};
     void (async () => {
       const result = await initializePushNotifications({
-        appBuild: "1.3.1",
+        appBuild: "1.4",
         deviceId: "local-device",
         onForegroundNotification: (event) => {
           logMultiplayerBannerDebug("foreground push received", event);
@@ -1260,7 +1279,17 @@ function App() {
     []
   );
 
-  const triggerScrabbleBanner = useCallback(() => {
+  const triggerScrabbleBanner = useCallback((options = {}) => {
+    const isLite = options.type === "lite";
+    const bonusValue =
+      typeof options.bonus === "number" && options.bonus > 0
+        ? options.bonus
+        : isLite
+          ? 20
+          : 50;
+    setScrabbleBannerText(isLite ? "Scrabble Lite!" : "Scrabble!");
+    setScrabbleBannerPoints(`+${bonusValue}`);
+
     if (scrabbleBannerTimeoutRef.current != null) {
       clearTimeout(scrabbleBannerTimeoutRef.current);
       scrabbleBannerTimeoutRef.current = null;
@@ -1563,7 +1592,10 @@ function App() {
 
     game.commitPreparedSubmitWord(preparedSubmit);
     if (preparedSubmit.earnedScrabbleBonus) {
-      triggerScrabbleBanner();
+      triggerScrabbleBanner({
+        type: preparedSubmit.scrabbleBonusType,
+        bonus: preparedSubmit.scrabbleBonus,
+      });
     }
     if (preparedSubmit.drawnTiles.length === 0) {
       game.finalizePreparedSubmitRack(preparedSubmit);
@@ -1707,6 +1739,35 @@ function App() {
     setLeaderboardPositionLoading(false);
   }, [playerProfile]);
 
+  const loadSubmittedScoreHistory = useCallback(async () => {
+    if (!isBackendConfigured()) {
+      setSubmittedScoreHistory([]);
+      setSubmittedScoreHistoryError(null);
+      setSubmittedScoreHistoryLoading(false);
+      return;
+    }
+
+    setSubmittedScoreHistoryLoading(true);
+    setSubmittedScoreHistoryError(null);
+
+    const result = await fetchPlayerScoreHistory({
+      playerId: playerProfile?.playerId,
+    });
+    if (!result.ok) {
+      setSubmittedScoreHistory([]);
+      setSubmittedScoreHistoryError(
+        result.reason === "backend_not_configured"
+          ? null
+          : "Unable to load score history"
+      );
+      setSubmittedScoreHistoryLoading(false);
+      return;
+    }
+
+    setSubmittedScoreHistory(result.scores);
+    setSubmittedScoreHistoryLoading(false);
+  }, [playerProfile?.playerId]);
+
   const loadGlobalLeaderboard = useCallback(
     async (scoreMode = LEADERBOARD_SCORE_MODE_SOLO) => {
     setLeaderboardEntries([]);
@@ -1767,7 +1828,7 @@ function App() {
   }, []);
 
   const loadDailyLeaderboard = useCallback(
-    async (seed = selectedDailyLeaderboardSeed) => {
+    async (seed = selectedDailyLeaderboardSeed, mode = dailyLeaderboardMode) => {
       if (!seed) {
         setDailyLeaderboardEntries([]);
         setDailyLeaderboardError(null);
@@ -1783,9 +1844,13 @@ function App() {
       setDailyLeaderboardLoading(true);
       setDailyLeaderboardError(null);
 
+      const scoreMode =
+        mode === DAILY_LEADERBOARD_MODE_MINI
+          ? LEADERBOARD_SCORE_MODE_MINI
+          : LEADERBOARD_SCORE_MODE_SOLO;
       const result = await fetchSeedLeaderboardByMode(
         seed,
-        LEADERBOARD_SCORE_MODE_SOLO
+        scoreMode
       );
       if (!result.ok) {
         setDailyLeaderboardEntries([]);
@@ -1801,7 +1866,7 @@ function App() {
       setDailyLeaderboardEntries(result.leaderboard);
       setDailyLeaderboardLoading(false);
     },
-    [selectedDailyLeaderboardSeed]
+    [dailyLeaderboardMode, selectedDailyLeaderboardSeed]
   );
 
   const submitLatestCompletedScore = useCallback(
@@ -1831,17 +1896,26 @@ function App() {
       if (result.ok) {
         if (scoreMode === LEADERBOARD_SCORE_MODE_MULTIPLAYER) {
           loadMultiplayerLeaderboard();
+        } else if (scoreMode === LEADERBOARD_SCORE_MODE_MINI) {
+          // Mini runs only participate in daily mini leaderboards.
         } else {
           loadGlobalLeaderboard();
         }
         if (scoreMode === LEADERBOARD_SCORE_MODE_SOLO) {
           loadLeaderboardPosition();
         }
+        loadSubmittedScoreHistory();
         if (
-          scoreMode === LEADERBOARD_SCORE_MODE_SOLO &&
+          (scoreMode === LEADERBOARD_SCORE_MODE_SOLO ||
+            scoreMode === LEADERBOARD_SCORE_MODE_MINI) &&
           (activeDailySeed ?? seed) === selectedDailyLeaderboardSeed
         ) {
-          loadDailyLeaderboard(activeDailySeed ?? seed);
+          loadDailyLeaderboard(
+            activeDailySeed ?? seed,
+            scoreMode === LEADERBOARD_SCORE_MODE_MINI
+              ? DAILY_LEADERBOARD_MODE_MINI
+              : DAILY_LEADERBOARD_MODE_FULL
+          );
         }
       }
 
@@ -1849,8 +1923,10 @@ function App() {
     },
     [
       activeDailySeed,
+      dailyLeaderboardMode,
       loadDailyLeaderboard,
       loadGlobalLeaderboard,
+      loadSubmittedScoreHistory,
       loadMultiplayerLeaderboard,
       loadLeaderboardPosition,
       selectedDailyLeaderboardSeed,
@@ -1885,7 +1961,8 @@ function App() {
     }
 
     loadLeaderboardPosition();
-  }, [gameStarted, homeScreen, loadLeaderboardPosition]);
+    loadSubmittedScoreHistory();
+  }, [gameStarted, homeScreen, loadLeaderboardPosition, loadSubmittedScoreHistory]);
 
   useEffect(() => {
     if (!gameStarted || game.gameOver) {
@@ -1913,6 +1990,7 @@ function App() {
     const payload = {
       snapshot,
       activeDailySeed,
+      activeGameMode,
       savedAt: Date.now(),
     };
 
@@ -1920,6 +1998,7 @@ function App() {
     saveGameSnapshotPayload(payload);
   }, [
     activeDailySeed,
+    activeGameMode,
     draggingTile,
     game.getStableSnapshot,
     game.gameOver,
@@ -1954,15 +2033,18 @@ function App() {
 
     const persistedGameKey = `${game.currentSeed ?? ""}:${game.finalScore}:${
       activeDailySeed ?? ""
-    }`;
+    }:${activeGameMode}`;
     if (persistedGameRef.current === persistedGameKey) {
       return;
     }
     persistedGameRef.current = persistedGameKey;
 
+    const isMiniMode = activeGameMode === GAME_MODE_DAILY_MINI;
+    const baselineHighScore = isMiniMode
+      ? scoreRecords.miniOverallHighScore
+      : scoreRecords.overallHighScore;
     const isNewHighScore =
-      scoreRecords.overallHighScore == null ||
-      game.finalScore > scoreRecords.overallHighScore;
+      baselineHighScore == null || game.finalScore > baselineHighScore;
     setEndGameSummary({
       ...game.finalScoreBreakdown,
       isNewHighScore,
@@ -1971,7 +2053,10 @@ function App() {
     const nextRecords = buildUpdatedScoreRecords(
       scoreRecords,
       game.finalScore,
-      activeDailySeed
+      {
+        dailySeed: activeDailySeed,
+        mode: isMiniMode ? "mini" : "classic",
+      }
     );
     setScoreRecords(nextRecords);
     saveScoreRecords(nextRecords);
@@ -1994,6 +2079,9 @@ function App() {
       finalScore: game.finalScore,
       finalScoreBreakdown: game.finalScoreBreakdown,
       isDailySeed: activeDailySeed === game.currentSeed,
+      scoreMode: isMiniMode
+        ? LEADERBOARD_SCORE_MODE_MINI
+        : LEADERBOARD_SCORE_MODE_SOLO,
     };
 
     if (leaderboardConsentStatus === LEADERBOARD_CONSENT_GRANTED) {
@@ -2008,6 +2096,7 @@ function App() {
     }
   }, [
     activeDailySeed,
+    activeGameMode,
     game.finalScore,
     game.finalScoreBreakdown,
     game.gameOver,
@@ -2106,9 +2195,13 @@ function App() {
     setSavedGamePayload(null);
     setLeaderboardPosition(null);
     setLeaderboardPositionError(null);
+    setSubmittedScoreHistory([]);
+    setSubmittedScoreHistoryError(null);
+    setSubmittedScoreHistoryLoading(false);
     setLeaderboardEntries([]);
     setDailyLeaderboardEntries([]);
     setActiveDailySeed(null);
+    setActiveGameMode(GAME_MODE_CLASSIC);
     setEndGameSummary(null);
     setHomeScreen("main");
     setGameStarted(false);
@@ -2255,19 +2348,24 @@ function App() {
     ) {
       return;
     }
-    setLeaderboardSelectedDailySeed(
-      dailySeeds[selectedDailyLeaderboardIndex + 1]
-    );
-  }, [dailySeeds, selectedDailyLeaderboardIndex]);
+    const nextSeed = dailySeeds[selectedDailyLeaderboardIndex + 1];
+    setLeaderboardSelectedDailySeed(nextSeed);
+    loadDailyLeaderboard(nextSeed, dailyLeaderboardMode);
+  }, [
+    dailyLeaderboardMode,
+    dailySeeds,
+    loadDailyLeaderboard,
+    selectedDailyLeaderboardIndex,
+  ]);
 
   const handleNextDailyLeaderboardSeed = useCallback(() => {
     if (selectedDailyLeaderboardIndex <= 0) {
       return;
     }
-    setLeaderboardSelectedDailySeed(
-      dailySeeds[selectedDailyLeaderboardIndex - 1]
-    );
-  }, [dailySeeds, selectedDailyLeaderboardIndex]);
+    const nextSeed = dailySeeds[selectedDailyLeaderboardIndex - 1];
+    setLeaderboardSelectedDailySeed(nextSeed);
+    loadDailyLeaderboard(nextSeed, dailyLeaderboardMode);
+  }, [dailyLeaderboardMode, dailySeeds, loadDailyLeaderboard, selectedDailyLeaderboardIndex]);
 
   useEffect(() => {
     const scheduleDailySeedRefresh = () => {
@@ -2305,9 +2403,16 @@ function App() {
 
   const startGameWithSeed = useCallback(
     (seed, options = {}) => {
+      const nextMode =
+        options.mode === GAME_MODE_DAILY_MINI
+          ? GAME_MODE_DAILY_MINI
+          : GAME_MODE_CLASSIC;
       setSavedGamePayload(null);
       clearGameSnapshotPayload();
-      game.startNewGame(seed);
+      game.startNewGame(seed, {
+        mode: nextMode === GAME_MODE_DAILY_MINI ? "mini" : "classic",
+      });
+      setActiveGameMode(nextMode);
       setActiveDailySeed(options.isDaily ? seed : null);
       setEndGameSummary(null);
       setGameInfoFlavor(null);
@@ -2326,13 +2431,24 @@ function App() {
   );
 
   const handleDailyGameStart = useCallback(() => {
-    startGameWithSeed(dailySeed, { isDaily: true });
+    startGameWithSeed(dailySeed, {
+      isDaily: true,
+      mode: GAME_MODE_CLASSIC,
+    });
+  }, [dailySeed, startGameWithSeed]);
+
+  const handleDailyMiniGameStart = useCallback(() => {
+    startGameWithSeed(dailySeed, {
+      isDaily: true,
+      mode: GAME_MODE_DAILY_MINI,
+    });
   }, [dailySeed, startGameWithSeed]);
 
   const handleRandomGameStart = useCallback(() => {
     setSavedGamePayload(null);
     clearGameSnapshotPayload();
-    game.startNewGame();
+    game.startNewGame(null, { mode: "classic" });
+    setActiveGameMode(GAME_MODE_CLASSIC);
     setActiveDailySeed(null);
     setEndGameSummary(null);
     setGameInfoFlavor(null);
@@ -2372,6 +2488,7 @@ function App() {
       const payload = {
         snapshot,
         activeDailySeed,
+        activeGameMode,
         savedAt: Date.now(),
       };
       setSavedGamePayload(payload);
@@ -2389,7 +2506,7 @@ function App() {
     setDeleteAccountModalVisible(false);
     setGameStarted(false);
     setHomeScreen("main");
-  }, [activeDailySeed, game, game.gameOver]);
+  }, [activeDailySeed, activeGameMode, game, game.gameOver]);
 
   const handleResumeSavedGame = useCallback(() => {
     if (!savedGamePayload?.snapshot) {
@@ -2402,6 +2519,12 @@ function App() {
     }
 
     setActiveDailySeed(savedGamePayload.activeDailySeed ?? null);
+    setActiveGameMode(
+      savedGamePayload.activeGameMode ??
+        (savedGamePayload.snapshot?.gameMode === "mini"
+          ? GAME_MODE_DAILY_MINI
+          : GAME_MODE_CLASSIC)
+    );
     setEndGameSummary(null);
     setGameInfoFlavor(null);
     setPendingGameInfoFlavor(null);
@@ -2535,7 +2658,11 @@ function App() {
                 wordCount={game.wordCount}
                 turnCount={game.turnCount}
                 tilesRemaining={game.tilesRemaining}
-                overallHighScore={scoreRecords.overallHighScore}
+                overallHighScore={
+                  activeGameMode === GAME_MODE_DAILY_MINI
+                    ? scoreRecords.miniOverallHighScore
+                    : scoreRecords.overallHighScore
+                }
                 turnFlavor={gameInfoFlavor}
                 pendingTurnFlavor={pendingGameInfoFlavor}
                 isDarkMode={darkModeEnabled}
@@ -2552,38 +2679,72 @@ function App() {
             </View>
 
             <View style={styles.boardSection}>
-              <GameBoard
-                board={game.board}
-                selectedCells={game.selectedCells}
-                premiumSquares={game.premiumSquares}
-                onCellClick={game.handleCellClick}
-                BOARD_SIZE={game.BOARD_SIZE}
-                boardLayoutRef={boardLayoutRef}
-                optimisticPlacement={optimisticPlacement}
-                dragSourceCell={
-                  draggingTile?.from === "board"
-                    ? { row: draggingTile.row, col: draggingTile.col }
-                    : null
-                }
-                settlingBoardTile={
-                  settlingTile?.destination === "board" ? settlingTile : null
-                }
-                onBoardTilePickup={handleBoardTilePickup}
-                onBoardDragUpdate={handleBoardDragUpdate}
-                onBoardTileDrop={handleBoardTileDrop}
-                getDraggableTileCell={getDraggableTileCell}
-                onBoardTap={handleBoardTap}
-                disableOverlayInteractions={
-                  draggingTile?.from === "rack" || swapAnimating
-                }
-                submitScorePreview={game.submitScorePreview}
-                submitScorePreviewCell={
-                  game.selectedCells.length > 0
-                    ? game.selectedCells[game.selectedCells.length - 1]
-                    : null
-                }
-                isDarkMode={darkModeEnabled}
-              />
+              {activeGameMode === GAME_MODE_DAILY_MINI ? (
+                <GameBoardMini
+                  board={game.board}
+                  selectedCells={game.selectedCells}
+                  premiumSquares={game.premiumSquares}
+                  onCellClick={game.handleCellClick}
+                  boardLayoutRef={boardLayoutRef}
+                  optimisticPlacement={optimisticPlacement}
+                  dragSourceCell={
+                    draggingTile?.from === "board"
+                      ? { row: draggingTile.row, col: draggingTile.col }
+                      : null
+                  }
+                  settlingBoardTile={
+                    settlingTile?.destination === "board" ? settlingTile : null
+                  }
+                  onBoardTilePickup={handleBoardTilePickup}
+                  onBoardDragUpdate={handleBoardDragUpdate}
+                  onBoardTileDrop={handleBoardTileDrop}
+                  getDraggableTileCell={getDraggableTileCell}
+                  onBoardTap={handleBoardTap}
+                  disableOverlayInteractions={
+                    draggingTile?.from === "rack" || swapAnimating
+                  }
+                  submitScorePreview={game.submitScorePreview}
+                  submitScorePreviewCell={
+                    game.selectedCells.length > 0
+                      ? game.selectedCells[game.selectedCells.length - 1]
+                      : null
+                  }
+                  isDarkMode={darkModeEnabled}
+                />
+              ) : (
+                <GameBoard
+                  board={game.board}
+                  selectedCells={game.selectedCells}
+                  premiumSquares={game.premiumSquares}
+                  onCellClick={game.handleCellClick}
+                  BOARD_SIZE={game.BOARD_SIZE}
+                  boardLayoutRef={boardLayoutRef}
+                  optimisticPlacement={optimisticPlacement}
+                  dragSourceCell={
+                    draggingTile?.from === "board"
+                      ? { row: draggingTile.row, col: draggingTile.col }
+                      : null
+                  }
+                  settlingBoardTile={
+                    settlingTile?.destination === "board" ? settlingTile : null
+                  }
+                  onBoardTilePickup={handleBoardTilePickup}
+                  onBoardDragUpdate={handleBoardDragUpdate}
+                  onBoardTileDrop={handleBoardTileDrop}
+                  getDraggableTileCell={getDraggableTileCell}
+                  onBoardTap={handleBoardTap}
+                  disableOverlayInteractions={
+                    draggingTile?.from === "rack" || swapAnimating
+                  }
+                  submitScorePreview={game.submitScorePreview}
+                  submitScorePreviewCell={
+                    game.selectedCells.length > 0
+                      ? game.selectedCells[game.selectedCells.length - 1]
+                      : null
+                  }
+                  isDarkMode={darkModeEnabled}
+                />
+              )}
               {showScrabbleBanner && (
                 <Animated.View
                   pointerEvents="none"
@@ -2595,8 +2756,8 @@ function App() {
                     },
                   ]}
                 >
-                  <Text style={styles.scrabbleBannerTitle}>Scrabble!</Text>
-                  <Text style={styles.scrabbleBannerScore}>+50</Text>
+                  <Text style={styles.scrabbleBannerTitle}>{scrabbleBannerText}</Text>
+                  <Text style={styles.scrabbleBannerScore}>{scrabbleBannerPoints}</Text>
                 </Animated.View>
               )}
             </View>
@@ -2824,6 +2985,7 @@ function App() {
                 dailyLeaderboardEntries={dailyLeaderboardEntries}
                 dailyLeaderboardLoading={dailyLeaderboardLoading}
                 dailyLeaderboardError={dailyLeaderboardError}
+                dailyMode={dailyLeaderboardMode}
                 backendConfigured={isBackendConfigured()}
                 canGoPreviousDailySeed={
                   selectedDailyLeaderboardIndex >= 0 &&
@@ -2832,16 +2994,33 @@ function App() {
                 canGoNextDailySeed={selectedDailyLeaderboardIndex > 0}
                 onPreviousDailySeed={handlePreviousDailyLeaderboardSeed}
                 onNextDailySeed={handleNextDailyLeaderboardSeed}
+                onDailyModeChange={(nextMode) => {
+                  const resolvedMode =
+                    nextMode === DAILY_LEADERBOARD_MODE_MINI
+                      ? DAILY_LEADERBOARD_MODE_MINI
+                      : DAILY_LEADERBOARD_MODE_FULL;
+                  setDailyLeaderboardMode(resolvedMode);
+                  loadDailyLeaderboard(
+                    selectedDailyLeaderboardSeed ?? dailySeed,
+                    resolvedMode
+                  );
+                }}
                 onBack={handleBackToMainMenu}
                 onRefresh={() => {
                   loadGlobalLeaderboard();
                   loadMultiplayerLeaderboard();
-                  loadDailyLeaderboard(selectedDailyLeaderboardSeed ?? dailySeed);
+                  loadDailyLeaderboard(
+                    selectedDailyLeaderboardSeed ?? dailySeed,
+                    dailyLeaderboardMode
+                  );
                 }}
               />
             ) : homeScreen === "stats" ? (
               <StatsScreen
                 stats={playerStats}
+                scoreHistory={submittedScoreHistory}
+                scoreHistoryLoading={submittedScoreHistoryLoading}
+                scoreHistoryError={submittedScoreHistoryError}
                 leaderboardPosition={leaderboardPosition}
                 leaderboardPositionLoading={leaderboardPositionLoading}
                 leaderboardPositionError={leaderboardPositionError}
@@ -2934,15 +3113,20 @@ function App() {
           dailySeed={dailySeed}
           overallHighScore={scoreRecords.overallHighScore}
           dailyHighScore={currentDailyHighScore}
+          dailyMiniHighScore={currentMiniDailyHighScore}
           hasSavedGame={savedGamePayload?.snapshot != null && !gameStarted}
           savedGameSeed={savedGamePayload?.snapshot?.currentSeed ?? null}
           onClose={() => setPlayMenuVisible(false)}
           onDailyGame={() => requestGameReplacement(handleDailyGameStart)}
+          onDailyMiniGame={() => requestGameReplacement(handleDailyMiniGameStart)}
           onResumeSavedGame={handleResumeSavedGame}
           onNewGameRandom={() => requestGameReplacement(handleRandomGameStart)}
           onNewGameWithSeed={(seed) =>
             requestGameReplacement(() =>
-              startGameWithSeed(seed, { isDaily: false })
+              startGameWithSeed(seed, {
+                isDaily: false,
+                mode: GAME_MODE_CLASSIC,
+              })
             )
           }
           onResetSeed={() => requestGameReplacement(handleResetSeed)}

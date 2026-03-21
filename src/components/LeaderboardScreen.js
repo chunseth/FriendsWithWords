@@ -30,11 +30,13 @@ const LeaderboardScreen = ({
   dailyLeaderboardEntries,
   dailyLeaderboardLoading,
   dailyLeaderboardError,
+  dailyMode = "full",
   backendConfigured,
   canGoPreviousDailySeed,
   canGoNextDailySeed,
   onPreviousDailySeed,
   onNextDailySeed,
+  onDailyModeChange,
   isDarkMode = false,
   onBack,
   onRefresh,
@@ -398,6 +400,56 @@ const LeaderboardScreen = ({
               >
                 <Text style={[styles.seedArrowText, { color: theme.seedControlText }]}>
                   {">"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.dailyModeTabs}>
+              <TouchableOpacity
+                style={[
+                  styles.dailyModeTab,
+                  {
+                    backgroundColor: theme.tabBackground,
+                    borderColor: theme.tabBorder,
+                  },
+                  dailyMode === "full" && {
+                    backgroundColor: theme.tabActiveBackground,
+                    borderColor: theme.tabActiveBorder,
+                  },
+                ]}
+                onPress={() => onDailyModeChange?.("full")}
+              >
+                <Text
+                  style={[
+                    styles.dailyModeTabText,
+                    { color: theme.tabText },
+                    dailyMode === "full" && { color: theme.tabTextActive },
+                  ]}
+                >
+                  Full
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.dailyModeTab,
+                  {
+                    backgroundColor: theme.tabBackground,
+                    borderColor: theme.tabBorder,
+                  },
+                  dailyMode === "mini" && {
+                    backgroundColor: theme.tabActiveBackground,
+                    borderColor: theme.tabActiveBorder,
+                  },
+                ]}
+                onPress={() => onDailyModeChange?.("mini")}
+              >
+                <Text
+                  style={[
+                    styles.dailyModeTabText,
+                    { color: theme.tabText },
+                    dailyMode === "mini" && { color: theme.tabTextActive },
+                  ]}
+                >
+                  Mini
                 </Text>
               </TouchableOpacity>
             </View>
@@ -937,6 +989,23 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "900",
     color: "#2f6f4f",
+  },
+  dailyModeTabs: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  dailyModeTab: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 9,
+    alignItems: "center",
+  },
+  dailyModeTabText: {
+    fontSize: 14,
+    fontWeight: "700",
   },
   list: {
     flex: 1,

@@ -88,7 +88,9 @@ def packageVersionName = packageJson.version?.toString() ?: "0.0.0"
 def semverToVersionCode = { String version ->
     def core = version.tokenize("-")[0]
     def parts = core.tokenize(".")
-    if (parts.size() < 3) return 1
+    while (parts.size() < 3) {
+        parts << "0"
+    }
 
     def major = parts[0].isInteger() ? parts[0].toInteger() : 0
     def minor = parts[1].isInteger() ? parts[1].toInteger() : 0

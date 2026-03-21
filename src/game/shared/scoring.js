@@ -1,11 +1,18 @@
 import { SCRABBLE_BONUS } from "./premiumSquares";
 
+const SCRABBLE_LITE_BONUS = 20;
 const TIME_BONUS_UNDER_40_MIN = 15;
 const TIME_BONUS_UNDER_60_MIN = 10;
 const TIME_BONUS_UNDER_90_MIN = 5;
+const TIME_BONUS_UNDER_10_MIN = 15;
+const TIME_BONUS_UNDER_20_MIN = 10;
+const TIME_BONUS_UNDER_30_MIN = 5;
 const PERFECTION_BONUS = 50;
 const CONSISTENCY_THRESHOLD = 20;
 const CONSISTENCY_BONUS_STEP = 2;
+
+export const TIME_BONUS_PROFILE_CLASSIC = "classic";
+export const TIME_BONUS_PROFILE_MINI = "mini";
 
 export const calculateWordScore = ({ board, wordData, premiumSquares }) => {
   let score = 0;
@@ -43,6 +50,7 @@ export const scoreSubmittedWords = ({
   premiumSquares,
   turnCount,
   placedCells,
+  bonusMode = "classic",
 }) => {
   let baseWordScore = 0;
   const newHistory = newWords.map((wordData) => {
@@ -55,13 +63,24 @@ export const scoreSubmittedWords = ({
     };
   });
 
-  const earnedScrabbleBonus = placedCells.length === 7;
-  const scrabbleBonus = earnedScrabbleBonus ? SCRABBLE_BONUS : 0;
+  const isMiniBonusMode = bonusMode === "mini";
+  const isFirstTurn = turnCount === 0;
+  const earnedScrabbleBonus =
+    placedCells.length === 7 && (!isMiniBonusMode || !isFirstTurn);
+  const scrabbleBonus = earnedScrabbleBonus
+    ? isMiniBonusMode
+      ? SCRABBLE_LITE_BONUS
+      : SCRABBLE_BONUS
+    : 0;
+  const scrabbleBonusLabel = isMiniBonusMode
+    ? "SCRABBLE LITE BONUS"
+    : "SCRABBLE BONUS";
+  const scrabbleBonusType = isMiniBonusMode ? "lite" : "classic";
 
   if (earnedScrabbleBonus) {
     newHistory.push({
-      word: "SCRABBLE BONUS",
-      score: SCRABBLE_BONUS,
+      word: scrabbleBonusLabel,
+      score: scrabbleBonus,
       turn: turnCount + 1,
     });
   }
@@ -71,16 +90,28 @@ export const scoreSubmittedWords = ({
     turnScore: baseWordScore + scrabbleBonus,
     earnedScrabbleBonus,
     scrabbleBonus,
+    scrabbleBonusLabel,
+    scrabbleBonusType,
     newHistory,
   };
 };
 
-export const calculateTimeBonus = (durationMs) => {
+export const calculateTimeBonus = (
+  durationMs,
+  profile = TIME_BONUS_PROFILE_CLASSIC
+) => {
   if (typeof durationMs !== "number" || durationMs < 0) {
     return 0;
   }
 
   const elapsedMinutes = durationMs / (60 * 1000);
+  if (profile === TIME_BONUS_PROFILE_MINI) {
+    if (elapsedMinutes < 10) return TIME_BONUS_UNDER_10_MIN;
+    if (elapsedMinutes < 20) return TIME_BONUS_UNDER_20_MIN;
+    if (elapsedMinutes < 30) return TIME_BONUS_UNDER_30_MIN;
+    return 0;
+  }
+
   if (elapsedMinutes < 40) return TIME_BONUS_UNDER_40_MIN;
   if (elapsedMinutes < 60) return TIME_BONUS_UNDER_60_MIN;
   if (elapsedMinutes < 90) return TIME_BONUS_UNDER_90_MIN;
@@ -132,10 +163,11 @@ export const buildFinalScoreBreakdown = ({
   invalidWordAttempts = 0,
   wordHistory = [],
   comboBonusTotal = null,
+  timeBonusProfile = TIME_BONUS_PROFILE_CLASSIC,
 }) => {
   const turnPenalties = turnCount * 2;
   const rackPenalty = rackTiles.reduce((sum, tile) => sum + (tile?.value ?? 0), 0);
-  const timeBonus = calculateTimeBonus(durationMs);
+  const timeBonus = calculateTimeBonus(durationMs, timeBonusProfile);
   const perfectionBonus =
     invalidWordAttempts === 0 ? PERFECTION_BONUS : 0;
   const consistencyBonusTotal =

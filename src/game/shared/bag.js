@@ -30,6 +30,36 @@ export const TILE_DISTRIBUTION = {
   Z: { count: 1, value: 10 },
 };
 
+export const MINI_TILE_DISTRIBUTION = {
+  [BLANK_LETTER]: { count: 1, value: 0 },
+  A: { count: 3, value: 1 },
+  B: { count: 1, value: 3 },
+  C: { count: 1, value: 3 },
+  D: { count: 2, value: 2 },
+  E: { count: 5, value: 1 },
+  F: { count: 1, value: 4 },
+  G: { count: 1, value: 2 },
+  H: { count: 1, value: 4 },
+  I: { count: 3, value: 1 },
+  J: { count: 0, value: 8 },
+  K: { count: 1, value: 5 },
+  L: { count: 2, value: 1 },
+  M: { count: 1, value: 3 },
+  N: { count: 3, value: 1 },
+  O: { count: 5, value: 1 },
+  P: { count: 1, value: 3 },
+  Q: { count: 0, value: 10 },
+  R: { count: 3, value: 1 },
+  S: { count: 3, value: 1 },
+  T: { count: 3, value: 1 },
+  U: { count: 2, value: 1 },
+  V: { count: 1, value: 4 },
+  W: { count: 1, value: 4 },
+  X: { count: 0, value: 8 },
+  Y: { count: 1, value: 4 },
+  Z: { count: 0, value: 10 },
+};
+
 export const hashSeed = (seed) => {
   // FNV-1a with an extra avalanche step so adjacent seeds do not map to
   // nearly-adjacent RNG states.
@@ -76,6 +106,43 @@ export const shuffleArray = (array, randomFn) => {
 export const initializeTileBag = () => {
   const tileBag = [];
   for (const [letter, data] of Object.entries(TILE_DISTRIBUTION)) {
+    for (let i = 0; i < data.count; i += 1) {
+      tileBag.push({ letter, value: data.value });
+    }
+  }
+  return tileBag;
+};
+
+export const initializeMiniTileBag = (seed = "") => {
+  const distribution = Object.fromEntries(
+    Object.entries(MINI_TILE_DISTRIBUTION).map(([letter, data]) => [
+      letter,
+      { ...data },
+    ])
+  );
+  const random = createSeededRandom(`${String(seed)}:mini-distribution`);
+
+  const includeQ = random.next() < 0.5;
+  distribution.Q.count = includeQ ? 1 : 0;
+  distribution.Z.count = includeQ ? 0 : 1;
+
+  const includeJ = random.next() < 0.5;
+  distribution.J.count = includeJ ? 1 : 0;
+  distribution.X.count = includeJ ? 0 : 1;
+
+  // Q-heavy seeds get one extra U and one fewer V or W to keep total stable.
+  if (includeQ) {
+    distribution.U.count = 3;
+    const removeV = random.next() < 0.5;
+    if (removeV) {
+      distribution.V.count = Math.max(0, distribution.V.count - 1);
+    } else {
+      distribution.W.count = Math.max(0, distribution.W.count - 1);
+    }
+  }
+
+  const tileBag = [];
+  for (const [letter, data] of Object.entries(distribution)) {
     for (let i = 0; i < data.count; i += 1) {
       tileBag.push({ letter, value: data.value });
     }

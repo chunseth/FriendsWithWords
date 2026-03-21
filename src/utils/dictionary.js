@@ -2562,6 +2562,7 @@ const VALID_IRREGULAR_ADJECTIVE_FORMS = new Set([
   "more",
   "eldest",    // old → elder, eldest (family)
   "elder",
+  "joker",
 ]);
 
 class Dictionary {

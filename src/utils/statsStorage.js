@@ -6,6 +6,7 @@ const createDefaultStats = () => ({
   gamesPlayed: 0,
   wordsPlayed: 0,
   highestScore: null,
+  scoreHistory: [],
 });
 
 const sanitizeStats = (value) => {
@@ -24,6 +25,11 @@ const sanitizeStats = (value) => {
         : 0,
     highestScore:
       typeof value.highestScore === "number" ? value.highestScore : null,
+    scoreHistory: Array.isArray(value.scoreHistory)
+      ? value.scoreHistory.filter(
+          (score) => typeof score === "number" && Number.isFinite(score)
+        )
+      : [],
   };
 };
 
@@ -60,16 +66,22 @@ export const saveStats = async (stats) => {
 
 export const buildUpdatedStats = (existingStats, { finalScore, wordCount }) => {
   const stats = sanitizeStats(existingStats);
+  const hasValidFinalScore =
+    typeof finalScore === "number" && Number.isFinite(finalScore);
+  const nextScoreHistory = hasValidFinalScore
+    ? [...stats.scoreHistory, finalScore]
+    : [...stats.scoreHistory];
 
   return {
     gamesPlayed: stats.gamesPlayed + 1,
     wordsPlayed:
       stats.wordsPlayed + (typeof wordCount === "number" ? wordCount : 0),
     highestScore:
-      typeof finalScore === "number"
+      hasValidFinalScore
         ? stats.highestScore == null
           ? finalScore
           : Math.max(stats.highestScore, finalScore)
         : stats.highestScore,
+    scoreHistory: nextScoreHistory,
   };
 };

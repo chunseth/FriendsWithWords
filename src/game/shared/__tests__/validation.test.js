@@ -1,7 +1,7 @@
 import { validateSubmitTurn } from "../validation";
 
-const makeBoard = () =>
-  Array.from({ length: 15 }, () => Array.from({ length: 15 }, () => null));
+const makeBoard = (size = 15) =>
+  Array.from({ length: size }, () => Array.from({ length: size }, () => null));
 
 const dictionary = {
   isValid: jest.fn(() => true),
@@ -59,5 +59,21 @@ describe("validateSubmitTurn", () => {
       { row: 7, col: 7 },
       { row: 9, col: 7 },
     ]);
+  });
+
+  it("accepts first turn when a tile is placed on the 11x11 center square", () => {
+    const board = makeBoard(11);
+    board[5][5] = { id: "a", letter: "A", isFromRack: true, scored: false };
+    board[5][6] = { id: "t", letter: "T", isFromRack: true, scored: false };
+
+    const validation = validateSubmitTurn({
+      board,
+      isFirstTurn: true,
+      boardAtTurnStart: null,
+      dictionary,
+      boardSize: 11,
+    });
+
+    expect(validation.ok).toBe(true);
   });
 });
