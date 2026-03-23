@@ -142,6 +142,41 @@ export const validateSubmitTurn = ({
   dictionary,
   boardSize = BOARD_SIZE,
 }) => {
+  const placementValidation = validateSubmitPlacement({
+    board,
+    isFirstTurn,
+    boardAtTurnStart,
+    boardSize,
+  });
+
+  if (!placementValidation.ok) {
+    return placementValidation;
+  }
+
+  const { words } = placementValidation;
+  const invalidWords = words
+    .filter((wordData) => !dictionary.isValid(wordData.word))
+    .map((wordData) => wordData.word.toUpperCase());
+
+  if (invalidWords.length > 0) {
+    return {
+      ok: false,
+      error: {
+        title: "Invalid Word",
+        text: `Invalid words: ${invalidWords.join(", ")}`,
+      },
+    };
+  }
+
+  return placementValidation;
+};
+
+export const validateSubmitPlacement = ({
+  board,
+  isFirstTurn,
+  boardAtTurnStart,
+  boardSize = BOARD_SIZE,
+}) => {
   const placedCells = getPlacedCells(board, boardSize);
 
   if (placedCells.length === 0) {
@@ -237,20 +272,6 @@ export const validateSubmitTurn = ({
       error: {
         title: "No New Words",
         text: "You must place at least one new tile.",
-      },
-    };
-  }
-
-  const invalidWords = words
-    .filter((wordData) => !dictionary.isValid(wordData.word))
-    .map((wordData) => wordData.word.toUpperCase());
-
-  if (invalidWords.length > 0) {
-    return {
-      ok: false,
-      error: {
-        title: "Invalid Word",
-        text: `Invalid words: ${invalidWords.join(", ")}`,
       },
     };
   }

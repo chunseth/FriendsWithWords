@@ -130,7 +130,13 @@ jest.mock("../PendingGameRequestModal", () => {
         <Text>{title}</Text>
         <Text>{friendName}</Text>
         <TouchableOpacity onPress={onConfirm}>
-          <Text>{title === "Delete Active Game?" ? "Delete Game" : "Unsend Request"}</Text>
+          <Text>
+            {title === "Delete Active Game?"
+              ? "Delete Game"
+              : title === "Archive Game?"
+                ? "Archive Game"
+                : "Unsend Request"}
+          </Text>
         </TouchableOpacity>
       </View>
     );
@@ -1071,7 +1077,7 @@ describe("multiplayer menu smoke", () => {
     });
   });
 
-  it("allows deleting an accepted multiplayer game with a long press", async () => {
+  it("allows archiving an accepted multiplayer game with a long press", async () => {
     mockLoadMultiplayerGameRequests
       .mockResolvedValueOnce({
         ok: true,
@@ -1116,24 +1122,29 @@ describe("multiplayer menu smoke", () => {
       activeGameCard.props.onLongPress();
     });
 
-    const deleteButton = tree.root
+    const archiveButton = tree.root
       .findAllByType(TouchableOpacity)
-      .find((node) => nodeHasText(node, "Delete Game"));
+      .find((node) => nodeHasText(node, "Archive Game"));
+
+    expect(
+      tree.root
+        .findAllByType(TouchableOpacity)
+        .some((node) => nodeHasText(node, "Delete Game"))
+    ).toBe(false);
 
     await act(async () => {
-      await deleteButton.props.onPress();
+      await archiveButton.props.onPress();
     });
 
-    const confirmDeleteButton = tree.root
+    const confirmArchiveButton = tree.root
       .findAllByType(TouchableOpacity)
-      .find((node) => nodeHasText(node, "Delete Game"));
+      .find((node) => nodeHasText(node, "Archive Game"));
 
     await act(async () => {
-      await confirmDeleteButton.props.onPress();
+      await confirmArchiveButton.props.onPress();
     });
 
-    expect(mockDeleteAcceptedMultiplayerGame).toHaveBeenCalledWith({
-      requestId: "game-request-22",
+    expect(mockArchiveMultiplayerSessionForUser).toHaveBeenCalledWith({
       sessionId: "mp-session-22",
     });
 

@@ -13,21 +13,38 @@ const normalizeScoreMode = (scoreMode) =>
     ? scoreMode
     : LEADERBOARD_SCORE_MODE_SOLO;
 
-const dedupeBestScoresByPlayer = (entries, limit = null) => {
+const buildMultiplayerPairKey = (entry) => {
+  const displayName =
+    typeof entry?.display_name === "string" ? entry.display_name : "";
+  const participantNames = displayName
+    .split(/\r?\n/)
+    .map((name) => name.trim().toLowerCase())
+    .filter((name) => name.length > 0)
+    .slice(0, 2)
+    .sort((a, b) => a.localeCompare(b));
+
+  if (participantNames.length < 2) {
+    return null;
+  }
+
+  return `pair:${participantNames[0]}::${participantNames[1]}`;
+};
+
+const dedupeBestScores = (entries, keyResolver, limit = null) => {
   if (!Array.isArray(entries) || entries.length === 0) {
     return [];
   }
 
   const uniqueEntries = [];
-  const seenPlayerIds = new Set();
+  const seenKeys = new Set();
 
   for (const entry of entries) {
-    const playerId = entry?.player_id;
-    if (!playerId || seenPlayerIds.has(playerId)) {
+    const entryKey = keyResolver(entry);
+    if (!entryKey || seenKeys.has(entryKey)) {
       continue;
     }
 
-    seenPlayerIds.add(playerId);
+    seenKeys.add(entryKey);
     uniqueEntries.push(entry);
 
     if (typeof limit === "number" && uniqueEntries.length >= limit) {
@@ -37,6 +54,16 @@ const dedupeBestScoresByPlayer = (entries, limit = null) => {
 
   return uniqueEntries;
 };
+
+const dedupeBestScoresByPlayer = (entries, limit = null) =>
+  dedupeBestScores(entries, (entry) => entry?.player_id ?? null, limit);
+
+const dedupeBestScoresByMultiplayerPair = (entries, limit = null) =>
+  dedupeBestScores(
+    entries,
+    (entry) => buildMultiplayerPairKey(entry) ?? (entry?.player_id ?? null),
+    limit
+  );
 
 export const submitCompletedScore = async ({
   seed,
@@ -265,9 +292,14 @@ export const fetchGlobalLeaderboard = async (
     return { ok: false, reason: "fetch_failed", error, leaderboard: [] };
   }
 
+  const dedupedLeaderboard =
+    normalizedScoreMode === LEADERBOARD_SCORE_MODE_MULTIPLAYER
+      ? dedupeBestScoresByMultiplayerPair(data, limit)
+      : dedupeBestScoresByPlayer(data, limit);
+
   return {
     ok: true,
-    leaderboard: dedupeBestScoresByPlayer(data, limit),
+    leaderboard: dedupedLeaderboard,
   };
 };
 

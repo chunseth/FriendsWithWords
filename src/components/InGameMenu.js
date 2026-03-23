@@ -9,7 +9,6 @@ const InGameMenu = ({
   onReturnToMultiplayerMenu,
   onReturnToMainMenu,
   onArchiveGame,
-  onDeleteGame,
 }) => {
   if (!visible) return null;
   const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
@@ -83,17 +82,6 @@ const InGameMenu = ({
             </TouchableOpacity>
           ) : null}
 
-          {onDeleteGame ? (
-            <TouchableOpacity
-              style={[styles.secondaryButton, styles.dangerButton]}
-              onPress={onDeleteGame}
-            >
-              <Text style={[styles.secondaryButtonText, styles.dangerText]}>
-                Delete Game
-              </Text>
-            </TouchableOpacity>
-          ) : null}
-
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
             <Text style={[styles.closeButtonText, { color: theme.closeText }]}>
               Close
@@ -160,13 +148,6 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "800",
     textAlign: "center",
-  },
-  dangerButton: {
-    borderColor: "#f3b3ad",
-    backgroundColor: "#fff5f4",
-  },
-  dangerText: {
-    color: "#b42318",
   },
   closeButton: {
     marginTop: 12,

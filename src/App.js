@@ -27,8 +27,11 @@ import { dictionary } from "./utils/dictionary";
 import GameBoard from "./components/GameBoard";
 import GameBoardMini from "./components/GameBoardMini";
 import TileRack from "./components/TileRack";
+import BoardTileFace from "./components/BoardTileFace";
 import GameInfo from "./components/GameInfo";
 import PlayGameMenu from "./components/PlayGameMenu";
+import PlaySubMenu from "./components/PlaySubMenu";
+import CustomBoardMenuModal from "./components/CustomBoardMenuModal";
 import InGameMenu from "./components/InGameMenu";
 import MainMenuScreen from "./components/MainMenuScreen";
 import LeaderboardScreen from "./components/LeaderboardScreen";
@@ -106,17 +109,21 @@ import {
   initializePushNotifications,
   setApplicationBadgeCount,
 } from "./services/pushNotificationService";
+import { fetchPlayableBoardVariants } from "./services/layoutLabLayoutService";
+import {
+  fetchBoardVariantGlobalHighScores,
+  submitBoardVariantCompletedScore,
+} from "./services/boardVariantScoreService";
+import { resolveRackDropExpansionTop } from "./utils/rackDropExpansion";
 
 const CONTROL_ICON_SIZE = 22;
-const RACK_DROP_EXPANSION_TOP = 200;
-const IPAD_RACK_DROP_EXPANSION_TOP_EXTRA = 1000;
 const DRAG_TILE_HALF_SIZE = 21;
 const DRAG_RACK_SETTLE_DURATION = 30;
 const DRAG_BOARD_SETTLE_DURATION = 30;
 const DRAG_RACK_RETURN_DURATION = 340;
 const BOARD_TILE_PICKUP_SLOP = 35;
-const DRAG_BOARD_PICKUP_DURATION = 30;
-const DRAG_RACK_PICKUP_DURATION = 30;
+const DRAG_BOARD_PICKUP_DURATION = 60;
+const DRAG_RACK_PICKUP_DURATION = 60;
 const SWAP_TILE_LIFT = 20;
 const SWAP_TILE_EXIT_LIFT = 40;
 const SWAP_TILE_LIFT_DURATION = 300;
@@ -136,8 +143,55 @@ const ENABLE_MULTIPLAYER_BANNER_DEBUG_LOGS = false;
 
 const GAME_MODE_CLASSIC = "classic";
 const GAME_MODE_DAILY_MINI = "daily-mini";
+const GAME_TYPE_STANDARD = "standard";
+const GAME_TYPE_CUSTOM_BOARD = "custom_board";
+const CUSTOM_BOARD_DAILY_SEED_PREFIX = "variant-daily";
+const EXCLUDED_BOARD_VARIANT_IDS = new Set([
+  "874345bf-ada5-497c-8591-d4ff5ad45ea2",
+  "e2814bc6-fb63-4d49-bb09-3b0e506b9643",
+]);
+const CLASSIC_BOARD_VARIANT_DISPLAY_ORDER = [
+  "d918140e-5914-4d4d-b34b-fa549fefbc2e",
+  "5f77f614-f548-4fa7-af23-8cc69b4bbc25",
+  "6c639708-8dad-4285-9127-28693b5cfe7c",
+  "c00c1451-3ddc-4ad1-a923-12f4ddaab093",
+  "189e7e9a-1b8d-441b-946c-2a38f2580a16",
+];
+const MINI_BOARD_VARIANT_DISPLAY_ORDER = [
+  "882d304e-9beb-4f89-a5e8-b32f5a0c9dfe",
+  "ccffb0aa-3d86-4f95-bd26-194e01f79416",
+  "733a1322-adc9-42b1-8f84-bd84cf236f6d",
+  "256dbb51-5c9b-4d84-8625-eae8a1de1e71",
+  "45fcf83c-468b-4bee-8b57-f636adcc1373",
+];
 const DAILY_LEADERBOARD_MODE_FULL = "full";
 const DAILY_LEADERBOARD_MODE_MINI = "mini";
+
+const buildNumericSeedFromText = (text) => {
+  let hash = 0;
+  const source = String(text ?? "");
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) >>> 0;
+  }
+  return String(10000000 + (hash % 90000000));
+};
+
+const buildVariantDailySeed = ({ mode = "classic", variantId }) =>
+  buildNumericSeedFromText(
+    `${CUSTOM_BOARD_DAILY_SEED_PREFIX}:${mode}:${String(variantId ?? "")}`
+  );
+
+const sortVariantsByPreferredOrder = (variants = [], preferredIds = []) => {
+  const orderIndex = new Map(preferredIds.map((id, index) => [id, index]));
+  return [...variants].sort((a, b) => {
+    const aIndex = orderIndex.has(a.id) ? orderIndex.get(a.id) : Number.MAX_SAFE_INTEGER;
+    const bIndex = orderIndex.has(b.id) ? orderIndex.get(b.id) : Number.MAX_SAFE_INTEGER;
+    if (aIndex !== bIndex) {
+      return aIndex - bIndex;
+    }
+    return String(a.layoutName || "").localeCompare(String(b.layoutName || ""));
+  });
+};
 
 const getDailySeed = (date = new Date()) => {
   const year = date.getFullYear();
@@ -364,6 +418,8 @@ const buildMultiplayerNotificationEventKey = ({
 function App() {
   const [dictionaryLoaded, setDictionaryLoaded] = useState(false);
   const [playMenuVisible, setPlayMenuVisible] = useState(false);
+  const [playSubMenuVisible, setPlaySubMenuVisible] = useState(false);
+  const [customBoardMenuVisible, setCustomBoardMenuVisible] = useState(false);
   const [inGameMenuVisible, setInGameMenuVisible] = useState(false);
   const [confirmLeaveGameVisible, setConfirmLeaveGameVisible] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
@@ -378,6 +434,19 @@ function App() {
     useState("local-multiplayer-prototype");
   const [dailySeed, setDailySeed] = useState(() => getDailySeed());
   const [activeGameMode, setActiveGameMode] = useState(GAME_MODE_CLASSIC);
+  const [activeGameType, setActiveGameType] = useState(GAME_TYPE_STANDARD);
+  const [activeBoardVariant, setActiveBoardVariant] = useState(null);
+  const [boardVariantsByMode, setBoardVariantsByMode] = useState({
+    classic: [],
+    mini: [],
+  });
+  const [boardVariantHighScoresByMode, setBoardVariantHighScoresByMode] =
+    useState({
+      classic: {},
+      mini: {},
+    });
+  const [boardVariantLoading, setBoardVariantLoading] = useState(false);
+  const [boardVariantError, setBoardVariantError] = useState(null);
   const [scoreRecords, setScoreRecords] = useState(getDefaultScoreRecords);
   const [playerStats, setPlayerStats] = useState(getDefaultStats);
   const [activeDailySeed, setActiveDailySeed] = useState(null);
@@ -476,10 +545,7 @@ function App() {
   });
   const selectedDailyLeaderboardSeed =
     leaderboardSelectedDailySeed ?? dailySeed;
-  const rackDropExpansionTop =
-    Platform.OS === "ios" && Platform.isPad
-      ? RACK_DROP_EXPANSION_TOP + IPAD_RACK_DROP_EXPANSION_TOP_EXTRA
-      : RACK_DROP_EXPANSION_TOP;
+  const rackDropExpansionTop = useMemo(() => resolveRackDropExpansionTop(), []);
   const hasPendingTilesOnBoard = useMemo(
     () =>
       (game.board ?? []).some((row) =>
@@ -767,7 +833,7 @@ function App() {
     let unsubscribePush = () => {};
     void (async () => {
       const result = await initializePushNotifications({
-        appBuild: "1.4",
+        appBuild: "1.5",
         deviceId: "local-device",
         onForegroundNotification: (event) => {
           logMultiplayerBannerDebug("foreground push received", event);
@@ -1712,6 +1778,13 @@ function App() {
     setLeaderboardConsentModalVisible(true);
   }, [leaderboardConsentLoaded, leaderboardConsentStatus]);
 
+  useEffect(() => {
+    if (!customBoardMenuVisible) {
+      return;
+    }
+    loadCustomBoardVariants();
+  }, [customBoardMenuVisible, loadCustomBoardVariants]);
+
   const loadLeaderboardPosition = useCallback(async () => {
     if (!isBackendConfigured() || !playerProfile?.playerId) {
       setLeaderboardPosition(null);
@@ -1869,6 +1942,79 @@ function App() {
     [dailyLeaderboardMode, selectedDailyLeaderboardSeed]
   );
 
+  const loadCustomBoardVariants = useCallback(async () => {
+    if (!isBackendConfigured()) {
+      setBoardVariantsByMode({ classic: [], mini: [] });
+      setBoardVariantHighScoresByMode({ classic: {}, mini: {} });
+      setBoardVariantError(null);
+      setBoardVariantLoading(false);
+      return;
+    }
+
+    setBoardVariantLoading(true);
+    setBoardVariantError(null);
+
+    const excludedIds = [...EXCLUDED_BOARD_VARIANT_IDS];
+    const [classicResult, miniResult] = await Promise.all([
+      fetchPlayableBoardVariants({
+        mode: "classic",
+        limit: 200,
+        excludedIds,
+      }),
+      fetchPlayableBoardVariants({
+        mode: "mini",
+        limit: 200,
+        excludedIds,
+      }),
+    ]);
+
+    if (!classicResult.ok || !miniResult.ok) {
+      setBoardVariantsByMode({ classic: [], mini: [] });
+      setBoardVariantHighScoresByMode({ classic: {}, mini: {} });
+      setBoardVariantError("Could not load custom boards right now.");
+      setBoardVariantLoading(false);
+      return;
+    }
+
+    const variantsByMode = {
+      classic: sortVariantsByPreferredOrder(
+        classicResult.variants ?? [],
+        CLASSIC_BOARD_VARIANT_DISPLAY_ORDER
+      ),
+      mini: sortVariantsByPreferredOrder(
+        miniResult.variants ?? [],
+        MINI_BOARD_VARIANT_DISPLAY_ORDER
+      ),
+    };
+    setBoardVariantsByMode(variantsByMode);
+
+    const [classicHighScoresResult, miniHighScoresResult] = await Promise.all([
+      fetchBoardVariantGlobalHighScores({
+        modeId: "classic",
+        boardVariantIds: variantsByMode.classic.map((variant) => variant.id),
+      }),
+      fetchBoardVariantGlobalHighScores({
+        modeId: "mini",
+        boardVariantIds: variantsByMode.mini.map((variant) => variant.id),
+      }),
+    ]);
+
+    setBoardVariantHighScoresByMode({
+      classic: classicHighScoresResult.ok
+        ? classicHighScoresResult.scoresByVariant
+        : {},
+      mini: miniHighScoresResult.ok ? miniHighScoresResult.scoresByVariant : {},
+    });
+
+    if (!classicHighScoresResult.ok || !miniHighScoresResult.ok) {
+      setBoardVariantError("Custom boards loaded, but high scores could not be fetched.");
+    } else {
+      setBoardVariantError(null);
+    }
+
+    setBoardVariantLoading(false);
+  }, []);
+
   const submitLatestCompletedScore = useCallback(
     async ({
       seed,
@@ -1991,6 +2137,8 @@ function App() {
       snapshot,
       activeDailySeed,
       activeGameMode,
+      activeGameType,
+      activeBoardVariant,
       savedAt: Date.now(),
     };
 
@@ -1998,6 +2146,8 @@ function App() {
     saveGameSnapshotPayload(payload);
   }, [
     activeDailySeed,
+    activeBoardVariant,
+    activeGameType,
     activeGameMode,
     draggingTile,
     game.getStableSnapshot,
@@ -2023,7 +2173,6 @@ function App() {
 
   useEffect(() => {
     if (
-      !leaderboardConsentLoaded ||
       !game.gameOver ||
       typeof game.finalScore !== "number" ||
       !game.finalScoreBreakdown
@@ -2031,15 +2180,78 @@ function App() {
       return;
     }
 
+    const currentVariantId = activeBoardVariant?.id ?? "none";
     const persistedGameKey = `${game.currentSeed ?? ""}:${game.finalScore}:${
       activeDailySeed ?? ""
-    }:${activeGameMode}`;
+    }:${activeGameMode}:${activeGameType}:${currentVariantId}`;
     if (persistedGameRef.current === persistedGameKey) {
       return;
     }
     persistedGameRef.current = persistedGameKey;
 
+    const isCustomBoardGame =
+      activeGameType === GAME_TYPE_CUSTOM_BOARD &&
+      typeof activeBoardVariant?.id === "string";
     const isMiniMode = activeGameMode === GAME_MODE_DAILY_MINI;
+
+    if (isCustomBoardGame) {
+      const boardMode = isMiniMode ? "mini" : "classic";
+      const currentGlobalBoardHigh =
+        boardVariantHighScoresByMode[boardMode]?.[activeBoardVariant.id] ?? null;
+      const isNewHighScore =
+        currentGlobalBoardHigh == null || game.finalScore > currentGlobalBoardHigh;
+
+      setEndGameSummary({
+        ...game.finalScoreBreakdown,
+        isNewHighScore,
+      });
+
+      const backendSubmitKey = `${persistedGameKey}:board-variant-backend`;
+      if (backendSubmitRef.current === backendSubmitKey) {
+        return;
+      }
+      backendSubmitRef.current = backendSubmitKey;
+
+      if (!isBackendConfigured()) {
+        return;
+      }
+
+      submitBoardVariantCompletedScore({
+        boardVariantId: activeBoardVariant.id,
+        modeId: boardMode,
+        seed: game.currentSeed,
+        finalScore: game.finalScore,
+        finalScoreBreakdown: game.finalScoreBreakdown,
+        isDailySeed: true,
+      }).then((result) => {
+        if (!result.ok && result.reason !== "backend_not_configured") {
+          console.warn("Failed to submit board variant score", result);
+          return;
+        }
+
+        setBoardVariantHighScoresByMode((prev) => {
+          const previousModeScores = prev[boardMode] ?? {};
+          const previousHigh = previousModeScores[activeBoardVariant.id];
+          const nextHigh =
+            typeof previousHigh === "number"
+              ? Math.max(previousHigh, game.finalScore)
+              : game.finalScore;
+          return {
+            ...prev,
+            [boardMode]: {
+              ...previousModeScores,
+              [activeBoardVariant.id]: nextHigh,
+            },
+          };
+        });
+      });
+      return;
+    }
+
+    if (!leaderboardConsentLoaded) {
+      return;
+    }
+
     const baselineHighScore = isMiniMode
       ? scoreRecords.miniOverallHighScore
       : scoreRecords.overallHighScore;
@@ -2096,7 +2308,10 @@ function App() {
     }
   }, [
     activeDailySeed,
+    activeBoardVariant,
     activeGameMode,
+    activeGameType,
+    boardVariantHighScoresByMode,
     game.finalScore,
     game.finalScoreBreakdown,
     game.gameOver,
@@ -2202,10 +2417,14 @@ function App() {
     setDailyLeaderboardEntries([]);
     setActiveDailySeed(null);
     setActiveGameMode(GAME_MODE_CLASSIC);
+    setActiveGameType(GAME_TYPE_STANDARD);
+    setActiveBoardVariant(null);
     setEndGameSummary(null);
     setHomeScreen("main");
     setGameStarted(false);
     setPlayMenuVisible(false);
+    setPlaySubMenuVisible(false);
+    setCustomBoardMenuVisible(false);
     setInGameMenuVisible(false);
     setConfirmLeaveGameVisible(false);
     setSettingsModalVisible(false);
@@ -2236,6 +2455,8 @@ function App() {
   }, [dailySeed]);
 
   const handleOpenPlayModeMenu = useCallback(() => {
+    setPlaySubMenuVisible(false);
+    setCustomBoardMenuVisible(false);
     setPlayMenuVisible(true);
   }, []);
 
@@ -2245,6 +2466,9 @@ function App() {
   }, []);
 
   const handleBackToMainMenu = useCallback(() => {
+    setPlayMenuVisible(false);
+    setPlaySubMenuVisible(false);
+    setCustomBoardMenuVisible(false);
     setHomeScreen("main");
   }, []);
 
@@ -2407,12 +2631,28 @@ function App() {
         options.mode === GAME_MODE_DAILY_MINI
           ? GAME_MODE_DAILY_MINI
           : GAME_MODE_CLASSIC;
+      const boardVariant = options.boardVariant ?? null;
+      const isCustomBoardGame = options.gameType === GAME_TYPE_CUSTOM_BOARD;
       setSavedGamePayload(null);
       clearGameSnapshotPayload();
       game.startNewGame(seed, {
         mode: nextMode === GAME_MODE_DAILY_MINI ? "mini" : "classic",
+        boardVariant:
+          boardVariant && typeof boardVariant === "object"
+            ? {
+                id: boardVariant.id,
+                layoutName: boardVariant.layoutName,
+                mode: boardVariant.mode,
+                boardSize: boardVariant.boardSize,
+                premiumSquares: boardVariant.premiumSquares,
+              }
+            : null,
       });
       setActiveGameMode(nextMode);
+      setActiveGameType(
+        isCustomBoardGame ? GAME_TYPE_CUSTOM_BOARD : GAME_TYPE_STANDARD
+      );
+      setActiveBoardVariant(boardVariant);
       setActiveDailySeed(options.isDaily ? seed : null);
       setEndGameSummary(null);
       setGameInfoFlavor(null);
@@ -2421,6 +2661,8 @@ function App() {
       setLeaderboardConsentModalVisible(false);
       setSettingsModalVisible(false);
       setDeleteAccountModalVisible(false);
+      setPlaySubMenuVisible(false);
+      setCustomBoardMenuVisible(false);
       backendSubmitRef.current = null;
       persistedGameRef.current = null;
       setGameStarted(true);
@@ -2434,6 +2676,7 @@ function App() {
     startGameWithSeed(dailySeed, {
       isDaily: true,
       mode: GAME_MODE_CLASSIC,
+      gameType: GAME_TYPE_STANDARD,
     });
   }, [dailySeed, startGameWithSeed]);
 
@@ -2441,46 +2684,39 @@ function App() {
     startGameWithSeed(dailySeed, {
       isDaily: true,
       mode: GAME_MODE_DAILY_MINI,
+      gameType: GAME_TYPE_STANDARD,
     });
   }, [dailySeed, startGameWithSeed]);
 
   const handleRandomGameStart = useCallback(() => {
-    setSavedGamePayload(null);
-    clearGameSnapshotPayload();
-    game.startNewGame(null, { mode: "classic" });
-    setActiveGameMode(GAME_MODE_CLASSIC);
-    setActiveDailySeed(null);
-    setEndGameSummary(null);
-    setGameInfoFlavor(null);
-    setPendingGameInfoFlavor(null);
-    setPendingLeaderboardSubmission(null);
-    setLeaderboardConsentModalVisible(false);
-    setSettingsModalVisible(false);
-    setDeleteAccountModalVisible(false);
-    backendSubmitRef.current = null;
-    persistedGameRef.current = null;
-    setGameStarted(true);
-    setPlayMenuVisible(false);
-    setInGameMenuVisible(false);
-  }, [game]);
+    startGameWithSeed(null, {
+      isDaily: false,
+      mode: GAME_MODE_CLASSIC,
+      gameType: GAME_TYPE_STANDARD,
+    });
+  }, [startGameWithSeed]);
 
-  const handleResetSeed = useCallback(() => {
-    setSavedGamePayload(null);
-    clearGameSnapshotPayload();
-    game.resetGame();
-    setEndGameSummary(null);
-    setGameInfoFlavor(null);
-    setPendingGameInfoFlavor(null);
-    setPendingLeaderboardSubmission(null);
-    setLeaderboardConsentModalVisible(false);
-    setSettingsModalVisible(false);
-    setDeleteAccountModalVisible(false);
-    backendSubmitRef.current = null;
-    persistedGameRef.current = null;
-    setGameStarted(true);
-    setPlayMenuVisible(false);
-    setInGameMenuVisible(false);
-  }, [game]);
+  const handlePlayCustomBoardVariant = useCallback(
+    (variant) => {
+      if (!variant || !variant.id) {
+        return;
+      }
+      const boardMode = variant.mode === "mini" ? "mini" : "classic";
+      const nextMode =
+        boardMode === "mini" ? GAME_MODE_DAILY_MINI : GAME_MODE_CLASSIC;
+      const seed = buildVariantDailySeed({
+        mode: boardMode,
+        variantId: variant.id,
+      });
+      startGameWithSeed(seed, {
+        isDaily: true,
+        mode: nextMode,
+        gameType: GAME_TYPE_CUSTOM_BOARD,
+        boardVariant: variant,
+      });
+    },
+    [startGameWithSeed]
+  );
 
   const handleReturnToMainMenu = useCallback(() => {
     const snapshot = game.getStableSnapshot();
@@ -2489,6 +2725,8 @@ function App() {
         snapshot,
         activeDailySeed,
         activeGameMode,
+        activeGameType,
+        activeBoardVariant,
         savedAt: Date.now(),
       };
       setSavedGamePayload(payload);
@@ -2497,6 +2735,8 @@ function App() {
 
     setInGameMenuVisible(false);
     setPlayMenuVisible(false);
+    setPlaySubMenuVisible(false);
+    setCustomBoardMenuVisible(false);
     setEndGameSummary(null);
     setGameInfoFlavor(null);
     setPendingGameInfoFlavor(null);
@@ -2506,7 +2746,14 @@ function App() {
     setDeleteAccountModalVisible(false);
     setGameStarted(false);
     setHomeScreen("main");
-  }, [activeDailySeed, activeGameMode, game, game.gameOver]);
+  }, [
+    activeBoardVariant,
+    activeDailySeed,
+    activeGameMode,
+    activeGameType,
+    game,
+    game.gameOver,
+  ]);
 
   const handleResumeSavedGame = useCallback(() => {
     if (!savedGamePayload?.snapshot) {
@@ -2519,6 +2766,8 @@ function App() {
     }
 
     setActiveDailySeed(savedGamePayload.activeDailySeed ?? null);
+    setActiveGameType(savedGamePayload.activeGameType ?? GAME_TYPE_STANDARD);
+    setActiveBoardVariant(savedGamePayload.activeBoardVariant ?? null);
     setActiveGameMode(
       savedGamePayload.activeGameMode ??
         (savedGamePayload.snapshot?.gameMode === "mini"
@@ -2534,6 +2783,8 @@ function App() {
     setLeaderboardConsentModalVisible(false);
     setSettingsModalVisible(false);
     setDeleteAccountModalVisible(false);
+    setPlaySubMenuVisible(false);
+    setCustomBoardMenuVisible(false);
     backendSubmitRef.current = null;
     persistedGameRef.current = null;
     setGameStarted(true);
@@ -2563,6 +2814,8 @@ function App() {
 
       pendingGameReplacementActionRef.current = action;
       setPlayMenuVisible(false);
+      setPlaySubMenuVisible(false);
+      setCustomBoardMenuVisible(false);
       setConfirmLeaveGameVisible(true);
     },
     [gameStarted, savedGamePayload]
@@ -2579,6 +2832,8 @@ function App() {
     pendingGameReplacementActionRef.current = null;
     setConfirmLeaveGameVisible(false);
     setPlayMenuVisible(true);
+    setPlaySubMenuVisible(false);
+    setCustomBoardMenuVisible(false);
   }, []);
   const mainMenuBackgroundColor = darkModeEnabled ? "#0b1220" : "#f8f4ed";
   const gameBackgroundColor = darkModeEnabled ? "#0b1220" : "#fff";
@@ -2837,6 +3092,11 @@ function App() {
                     settlingTile?.destination === "rack"
                       ? settlingTile.visibleRackOrder
                       : null
+                  }
+                  settlingRackShouldAnimateReorder={
+                    settlingTile?.destination === "rack"
+                      ? settlingTile.shouldAnimateDisplacedReorder ?? true
+                      : true
                   }
                   onDragStart={handleRackDragStart}
                   onDragUpdate={handleRackDragUpdate}
@@ -3109,9 +3369,6 @@ function App() {
           visible={playMenuVisible}
           isDarkMode={darkModeEnabled}
           canDismiss={gameStarted}
-          currentSeed={game.currentSeed}
-          dailySeed={dailySeed}
-          overallHighScore={scoreRecords.overallHighScore}
           dailyHighScore={currentDailyHighScore}
           dailyMiniHighScore={currentMiniDailyHighScore}
           hasSavedGame={savedGamePayload?.snapshot != null && !gameStarted}
@@ -3120,16 +3377,49 @@ function App() {
           onDailyGame={() => requestGameReplacement(handleDailyGameStart)}
           onDailyMiniGame={() => requestGameReplacement(handleDailyMiniGameStart)}
           onResumeSavedGame={handleResumeSavedGame}
+          onMoreOptions={() => {
+            setPlayMenuVisible(false);
+            setPlaySubMenuVisible(true);
+          }}
+        />
+        <PlaySubMenu
+          visible={playSubMenuVisible}
+          isDarkMode={darkModeEnabled}
+          onClose={() => setPlaySubMenuVisible(false)}
+          onBack={() => {
+            setPlaySubMenuVisible(false);
+            setPlayMenuVisible(true);
+          }}
           onNewGameRandom={() => requestGameReplacement(handleRandomGameStart)}
           onNewGameWithSeed={(seed) =>
             requestGameReplacement(() =>
               startGameWithSeed(seed, {
                 isDaily: false,
                 mode: GAME_MODE_CLASSIC,
+                gameType: GAME_TYPE_STANDARD,
               })
             )
           }
-          onResetSeed={() => requestGameReplacement(handleResetSeed)}
+          onOpenCustomBoards={() => {
+            setPlaySubMenuVisible(false);
+            setCustomBoardMenuVisible(true);
+          }}
+        />
+        <CustomBoardMenuModal
+          visible={customBoardMenuVisible}
+          isDarkMode={darkModeEnabled}
+          variantsByMode={boardVariantsByMode}
+          highScoresByMode={boardVariantHighScoresByMode}
+          loading={boardVariantLoading}
+          error={boardVariantError}
+          onRefresh={loadCustomBoardVariants}
+          onPlayVariant={(variant) =>
+            requestGameReplacement(() => handlePlayCustomBoardVariant(variant))
+          }
+          onClose={() => {
+            setCustomBoardMenuVisible(false);
+            setPlaySubMenuVisible(true);
+          }}
         />
         <ConfirmLeaveGameModal
           visible={confirmLeaveGameVisible}

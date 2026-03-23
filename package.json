@@ -1,6 +1,6 @@
 {
   "name": "words-with-real-friends",
-  "version": "1.4",
+  "version": "1.5",
   "main": "index.js",
   "scripts": {
     "android": "react-native run-android",
@@ -10,6 +10,15 @@
     "start:reset": "react-native start --reset-cache",
     "test": "jest",
     "test:android-smoke": "jest src/components/__tests__/androidSymbolImportSmoke.test.js",
+    "analysis:solve": "node scripts/analysis/solve-seed-greedy.js",
+    "analysis:game": "node scripts/analysis/analyze-game.js",
+    "analysis:layouts": "node scripts/analysis/simulate-board-layouts.js",
+    "analysis:search-layouts": "node scripts/analysis/search-layouts.js",
+    "dev:board-player:metro": "node scripts/start-board-player-metro.js",
+    "dev:board-player:ios": "react-native run-ios",
+    "dev:board-player:android": "react-native run-android",
+    "dev:board-player:ios:oneshot": "node scripts/run-board-player.js ios",
+    "dev:board-player:android:oneshot": "node scripts/run-board-player.js android",
     "check:android-prereqs": "node scripts/check-android-prereqs.js",
     "lint": "eslint .",
     "postinstall": "node scripts/patch-gesture-handler.js && node scripts/patch-reanimated.js"

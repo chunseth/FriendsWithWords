@@ -4,61 +4,6 @@ import { ensureSupabaseSession, getSupabaseClient } from "../lib/supabase";
 const FRIENDS_TABLE = "friends";
 const FRIEND_REQUESTS_TABLE = "friend_requests";
 const PROFILES_TABLE = "profiles";
-const FRIEND_PUSH_FALLBACK_LABEL = "A friend";
-
-const resolveProfileLabelById = async (supabase, playerId) => {
-  if (!supabase || !playerId) {
-    return FRIEND_PUSH_FALLBACK_LABEL;
-  }
-
-  try {
-    const { data, error } = await supabase
-      .from(PROFILES_TABLE)
-      .select("username, display_name")
-      .eq("id", playerId)
-      .maybeSingle();
-    if (error) {
-      return FRIEND_PUSH_FALLBACK_LABEL;
-    }
-    return data?.username ?? data?.display_name ?? FRIEND_PUSH_FALLBACK_LABEL;
-  } catch (_error) {
-    return FRIEND_PUSH_FALLBACK_LABEL;
-  }
-};
-
-const notifyFriendPushEvent = async ({
-  supabase,
-  userId,
-  type,
-  title,
-  body,
-  payload = {},
-}) => {
-  if (!supabase?.functions?.invoke || !userId || !type) {
-    return;
-  }
-
-  const result = await supabase.functions.invoke("notify-multiplayer-event", {
-    body: {
-      user_id: userId,
-      type,
-      title,
-      body,
-      entity_id: payload?.requestId ?? null,
-      payload,
-      send_push: true,
-      skip_enqueue: true,
-    },
-  });
-
-  if (result?.error) {
-    console.warn("[friend-push] notify invoke failed", {
-      userId,
-      type,
-      error: result.error?.message ?? "unknown_error",
-    });
-  }
-};
 
 const getSupabaseAuthUserId = async () => {
   if (!isBackendConfigured()) {
@@ -336,20 +281,6 @@ export const sendFriendRequest = async (receiverId) => {
     };
   }
 
-  await notifyFriendPushEvent({
-    supabase,
-    userId: receiverId,
-    type: "friend_request",
-    title: "Friend request",
-    body: `${await resolveProfileLabelById(supabase, userId)} sent you a friend request.`,
-    payload: {
-      friendId: userId,
-      route: "multiplayer-menu",
-      tab: "friends",
-      version: 1,
-    },
-  });
-
   return { ok: true, reason: "request_sent" };
 };
 
@@ -410,23 +341,6 @@ export const acceptFriendRequest = async (requestId, senderId) => {
       errorMessage: "Could not accept that friend request.",
     };
   }
-
-  await notifyFriendPushEvent({
-    supabase,
-    userId: senderId,
-    type: "friend_request_accepted",
-    title: "Friend request accepted",
-    body: `${await resolveProfileLabelById(
-      supabase,
-      userId
-    )} accepted your friend request.`,
-    payload: {
-      friendId: userId,
-      route: "multiplayer-menu",
-      tab: "friends",
-      version: 1,
-    },
-  });
 
   return { ok: true, reason: "request_accepted" };
 };

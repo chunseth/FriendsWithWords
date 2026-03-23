@@ -5,13 +5,20 @@ import { SLOT_WIDTH as RACK_SLOT_WIDTH } from "../components/TileRack";
 const DRAG_TILE_HALF_SIZE = 21;
 const DRAG_RACK_SETTLE_DURATION = 30;
 const DRAG_BOARD_SETTLE_DURATION = 30;
-const DRAG_RACK_RETURN_DURATION = 340;
-const DRAG_BOARD_PICKUP_DURATION = 1;
-const DRAG_RACK_PICKUP_DURATION = 1;
+const DRAG_BOARD_INVALID_RETURN_DURATION = 170;
+const DRAG_RACK_RETURN_DURATION = 170;
+const DRAG_RACK_RELEASE_CATCHUP_DURATION = 40;
+const DRAG_RACK_RELEASE_CATCHUP_MIN_DISTANCE_PX = 10;
+const DRAG_BOARD_PICKUP_DURATION = 2;
+const DRAG_RACK_PICKUP_DURATION = 2;
 const BOARD_TILE_PICKUP_SLOP = 35;
 const RACK_HOVER_STEP_DURATION = 18;
 const RACK_HOVER_MAX_DURATION = 90;
 const BOARD_SETTLE_CLEANUP_FALLBACK_MS = 48;
+const RACK_REORDER_INTENT_THRESHOLD_PX = 12;
+const ENABLE_RACK_DRAG_LOGS =
+  (typeof __DEV__ !== "undefined" ? __DEV__ : false) &&
+  global.__RACK_DRAG_LOGS__ === true;
 
 export const useTileDragDropController = ({
   containerRef,
@@ -21,6 +28,7 @@ export const useTileDragDropController = ({
   board,
   boardSize,
   rackDropExpansionTop = 270,
+  rackDropExpansionBottom = 100,
   canInteract = true,
   isBoardTileDraggable,
   isBlankRackTile,
@@ -40,6 +48,9 @@ export const useTileDragDropController = ({
     y: DRAG_TILE_HALF_SIZE,
   });
   const dragTargetRef = useRef({ x: 0, y: 0 });
+  const rackDragMetricsRef = useRef(null);
+  const rackSettleActiveRef = useRef(null);
+  const rackSettleIdRef = useRef(0);
   const dragAnimatingPickupRef = useRef(false);
   const dragPendingFinalizeRef = useRef(null);
   const dragReleasedDuringPickupRef = useRef(false);
@@ -53,6 +64,23 @@ export const useTileDragDropController = ({
   const rackSettleClearTimeoutRef = useRef(null);
   const boardReturnCommitTimeoutRef = useRef(null);
   const boardSettleCleanupTimeoutRef = useRef(null);
+  const getNow = useCallback(
+    () =>
+      typeof globalThis?.performance?.now === "function"
+        ? globalThis.performance.now()
+        : Date.now(),
+    []
+  );
+  const getWallClockNow = useCallback(() => Date.now(), []);
+  const logRackDrag = useCallback((event, details = {}) => {
+    if (!ENABLE_RACK_DRAG_LOGS) return;
+    const wallClockMs = getWallClockNow();
+    console.log(`[rack-drag] ${event}`, {
+      wallClockMs,
+      isoTime: new Date(wallClockMs).toISOString(),
+      ...details,
+    });
+  }, [getWallClockNow]);
 
   const dragPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const dragScale = useRef(new Animated.Value(1)).current;
@@ -153,6 +181,8 @@ export const useTileDragDropController = ({
   }, []);
 
   const resetController = useCallback(() => {
+    rackSettleActiveRef.current = null;
+    rackDragMetricsRef.current = null;
     hoverIndexRef.current = null;
     boardHoverRackIndexRef.current = null;
     boardDragPayloadRef.current = null;
@@ -224,14 +254,21 @@ export const useTileDragDropController = ({
     dragScale.setValue(1);
   }, [dragPosition, dragScale]);
 
-  const setDragPositionFromScreen = useCallback(
+  const getDragPositionFromScreen = useCallback(
     (screenX, screenY) => {
       const { x: ox, y: oy } = containerWindowRef.current;
       const { x: touchOffsetX, y: touchOffsetY } = dragTouchOffsetRef.current;
-      dragTargetRef.current = {
+      return {
         x: screenX - ox - touchOffsetX,
         y: screenY - oy - touchOffsetY,
       };
+    },
+    []
+  );
+
+  const setDragPositionFromScreen = useCallback(
+    (screenX, screenY) => {
+      dragTargetRef.current = getDragPositionFromScreen(screenX, screenY);
       if (dragAnimatingPickupRef.current) {
         dragAnimatingPickupRef.current = false;
         dragPendingFinalizeRef.current = null;
@@ -242,7 +279,7 @@ export const useTileDragDropController = ({
       }
       dragPosition.setValue(dragTargetRef.current);
     },
-    [dragPosition]
+    [dragPosition, getDragPositionFromScreen]
   );
 
   const getRackTileSourceTarget = useCallback((visibleIndex, slotCount) => {
@@ -357,7 +394,23 @@ export const useTileDragDropController = ({
           : 1;
       const tileScreenSize =
         Math.min(screenCellWidth, screenCellHeight) * tileRatio;
-      const tileScale = tileScreenSize / (DRAG_TILE_HALF_SIZE * 2);
+      let tileScale = tileScreenSize / (DRAG_TILE_HALF_SIZE * 2);
+      const zoomState =
+        typeof layout.getZoomPan === "function" ? layout.getZoomPan() : null;
+      const zoomValue =
+        zoomState && Number.isFinite(zoomState.zoom) ? zoomState.zoom : null;
+      if (
+        zoomValue != null &&
+        typeof layout.cellSize === "number" &&
+        layout.cellSize > 0
+      ) {
+        // `measureInWindow` can briefly lag while pinch-zoom is active, so floor the
+        // settle scale by the live zoom-derived tile size to avoid false "shrink" drops.
+        const zoomDerivedTileScale =
+          (Math.max(1, layout.cellSize - 3) * Math.max(1, zoomValue)) /
+          (DRAG_TILE_HALF_SIZE * 2);
+        tileScale = Math.max(tileScale, zoomDerivedTileScale);
+      }
       const cellCenterX =
         screenLeft - containerScreenX + (col + 0.5) * screenCellWidth;
       const cellCenterY =
@@ -396,27 +449,31 @@ export const useTileDragDropController = ({
       dragScale.stopAnimation();
       dragPosition.setValue({ x: sourceTarget.x, y: sourceTarget.y });
       dragScale.setValue(sourceTarget.scale);
-      Animated.parallel([
-        Animated.timing(dragPosition, {
-          toValue: dragTargetRef.current,
-          duration: DRAG_BOARD_PICKUP_DURATION,
-          useNativeDriver: true,
-        }),
-        Animated.timing(dragScale, {
-          toValue: 1,
-          duration: DRAG_BOARD_PICKUP_DURATION,
-          useNativeDriver: true,
-        }),
-      ]).start(({ finished }) => {
-        dragAnimatingPickupRef.current = false;
-        dragPosition.setValue(dragTargetRef.current);
-        dragScale.setValue(1);
-        if (!finished) return;
-        const pendingFinalize = dragPendingFinalizeRef.current;
-        if (pendingFinalize) {
-          dragPendingFinalizeRef.current = null;
-          pendingFinalize();
-        }
+      requestAnimationFrame(() => {
+        if (!dragAnimatingPickupRef.current) return;
+        const pickupTarget = { ...dragTargetRef.current };
+        Animated.parallel([
+          Animated.timing(dragPosition, {
+            toValue: pickupTarget,
+            duration: DRAG_BOARD_PICKUP_DURATION,
+            useNativeDriver: true,
+          }),
+          Animated.timing(dragScale, {
+            toValue: 1,
+            duration: DRAG_BOARD_PICKUP_DURATION,
+            useNativeDriver: true,
+          }),
+        ]).start(({ finished }) => {
+          dragAnimatingPickupRef.current = false;
+          dragPosition.setValue(dragTargetRef.current);
+          dragScale.setValue(1);
+          if (!finished) return;
+          const pendingFinalize = dragPendingFinalizeRef.current;
+          if (pendingFinalize) {
+            dragPendingFinalizeRef.current = null;
+            pendingFinalize();
+          }
+        });
       });
     },
     [animateDragPickup, dragPosition, dragScale, getBoardTileSettleTarget]
@@ -545,7 +602,11 @@ export const useTileDragDropController = ({
       commit,
       options = {}
     ) => {
-      const { deferCommit = false, useSettlingState = true } = options;
+      const {
+        deferCommit = false,
+        useSettlingState = true,
+        settleDuration = DRAG_BOARD_SETTLE_DURATION,
+      } = options;
       if (!settleTarget) {
         updateDraggingTile(null);
         updateDropTargetRackIndex(null);
@@ -593,12 +654,12 @@ export const useTileDragDropController = ({
       Animated.parallel([
         Animated.timing(dragPosition, {
           toValue: { x: settleTarget.x, y: settleTarget.y },
-          duration: DRAG_BOARD_SETTLE_DURATION,
+          duration: settleDuration,
           useNativeDriver: true,
         }),
         Animated.timing(dragScale, {
           toValue: settleTarget.scale,
-          duration: DRAG_BOARD_SETTLE_DURATION,
+          duration: settleDuration,
           useNativeDriver: true,
         }),
       ]).start(() => {
@@ -606,7 +667,7 @@ export const useTileDragDropController = ({
       });
       boardSettleCleanupTimeoutRef.current = setTimeout(
         finalizeBoardSettle,
-        DRAG_BOARD_SETTLE_DURATION + BOARD_SETTLE_CLEANUP_FALLBACK_MS
+        settleDuration + BOARD_SETTLE_CLEANUP_FALLBACK_MS
       );
       if (deferCommit) {
         requestAnimationFrame(() => {
@@ -627,7 +688,12 @@ export const useTileDragDropController = ({
   );
 
   const completeRackReturn = useCallback(
-    (tile, slotIndex, slotCount, commit) => {
+    (tile, slotIndex, slotCount, commit, options = {}) => {
+      const {
+        releasePosition = null,
+        shouldAnimateDisplacedReorder = false,
+        forceReleaseCatchup = false,
+      } = options;
       const settleTarget = getRackSlotTarget(slotIndex, slotCount);
       if (!settleTarget) {
         updateDraggingTile(null);
@@ -639,61 +705,159 @@ export const useTileDragDropController = ({
       dragAnimatingPickupRef.current = false;
       dragPendingFinalizeRef.current = null;
       dragReleasedDuringPickupRef.current = false;
-      dragPosition.stopAnimation();
-      dragScale.stopAnimation();
-      dragTargetRef.current = settleTarget;
-      Animated.parallel([
-        Animated.timing(dragPosition, {
-          toValue: { x: settleTarget.x, y: settleTarget.y },
-          duration: DRAG_RACK_RETURN_DURATION,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(dragScale, {
-          toValue: 1,
-          duration: DRAG_RACK_RETURN_DURATION,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        if (rackSettleClearTimeoutRef.current != null) {
-          clearTimeout(rackSettleClearTimeoutRef.current);
-          rackSettleClearTimeoutRef.current = null;
+      let dragStartPosition = dragTargetRef.current;
+      let dragStartScale = 1;
+      dragPosition.stopAnimation((value) => {
+        if (value && typeof value.x === "number" && typeof value.y === "number") {
+          dragStartPosition = value;
         }
-        updateDraggingTile(null);
-        updateSettlingTile(null);
-        resetDragAnimation();
       });
+      dragScale.stopAnimation((value) => {
+        if (typeof value === "number") {
+          dragStartScale = value;
+        }
+      });
+      settlePosition.stopAnimation();
+      settleScale.stopAnimation();
+      dragTargetRef.current = settleTarget;
+      settlePosition.setValue({
+        x: dragStartPosition.x,
+        y: dragStartPosition.y,
+      });
+      settleScale.setValue(dragStartScale);
+      const animateToSettleTarget = () => {
+        Animated.parallel([
+          Animated.timing(settlePosition, {
+            toValue: { x: settleTarget.x, y: settleTarget.y },
+            duration: DRAG_RACK_RETURN_DURATION,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(settleScale, {
+            toValue: 1,
+            duration: DRAG_RACK_RETURN_DURATION,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start(({ finished }) => {
+          if (rackSettleActiveRef.current?.id === settleId) {
+            rackSettleActiveRef.current = null;
+          }
+          logRackDrag("settle-end", {
+            settleId,
+            finished,
+            slotIndex,
+            slotCount,
+            hasReleaseCatchup: false,
+          });
+          if (!finished) return;
+          if (rackSettleClearTimeoutRef.current != null) {
+            clearTimeout(rackSettleClearTimeoutRef.current);
+            rackSettleClearTimeoutRef.current = null;
+          }
+          updateDraggingTile(null);
+          updateSettlingTile(null);
+          resetDragAnimation();
+        });
+      };
+      const hasReleasePosition =
+        releasePosition != null &&
+        typeof releasePosition.x === "number" &&
+        typeof releasePosition.y === "number";
+      const releaseDistancePx = hasReleasePosition
+        ? Math.hypot(
+            releasePosition.x - dragStartPosition.x,
+            releasePosition.y - dragStartPosition.y
+          )
+        : 0;
+      const shouldAnimateReleaseCatchup =
+        hasReleasePosition &&
+        (forceReleaseCatchup ||
+          releaseDistancePx > DRAG_RACK_RELEASE_CATCHUP_MIN_DISTANCE_PX);
+      const settleId = rackSettleIdRef.current + 1;
+      rackSettleIdRef.current = settleId;
+      const settleDurationMs = shouldAnimateReleaseCatchup
+        ? DRAG_RACK_RELEASE_CATCHUP_DURATION + DRAG_RACK_RETURN_DURATION
+        : DRAG_RACK_RETURN_DURATION;
+      const settleStartedAt = getNow();
+      rackSettleActiveRef.current = {
+        id: settleId,
+        startedAt: settleStartedAt,
+        expectedEndAt: settleStartedAt + settleDurationMs,
+      };
+      logRackDrag("settle-start", {
+        settleId,
+        slotIndex,
+        slotCount,
+        hasReleaseCatchup: shouldAnimateReleaseCatchup,
+        releaseDistancePx: Math.round(releaseDistancePx * 10) / 10,
+        durationMs: settleDurationMs,
+      });
+      if (shouldAnimateReleaseCatchup) {
+        Animated.parallel([
+          Animated.sequence([
+            Animated.timing(settlePosition, {
+              toValue: { x: releasePosition.x, y: releasePosition.y },
+              duration: DRAG_RACK_RELEASE_CATCHUP_DURATION,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+            Animated.timing(settlePosition, {
+              toValue: { x: settleTarget.x, y: settleTarget.y },
+              duration: DRAG_RACK_RETURN_DURATION,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+          ]),
+          Animated.timing(settleScale, {
+            toValue: 1,
+            duration:
+              DRAG_RACK_RELEASE_CATCHUP_DURATION + DRAG_RACK_RETURN_DURATION,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start(({ finished }) => {
+          if (rackSettleActiveRef.current?.id === settleId) {
+            rackSettleActiveRef.current = null;
+          }
+          logRackDrag("settle-end", {
+            settleId,
+            finished,
+            slotIndex,
+            slotCount,
+            hasReleaseCatchup: true,
+          });
+          if (!finished) return;
+          if (rackSettleClearTimeoutRef.current != null) {
+            clearTimeout(rackSettleClearTimeoutRef.current);
+            rackSettleClearTimeoutRef.current = null;
+          }
+          updateDraggingTile(null);
+          updateSettlingTile(null);
+          resetDragAnimation();
+        });
+      } else {
+        animateToSettleTarget();
+      }
       updateSettlingTile({
         ...tile,
         destination: "rack",
         slotIndex,
         slotCount,
+        shouldAnimateDisplacedReorder,
         from: "rack",
         visibleRackOrder: visibleRackTiles
           .filter((rackTile) => rackTile.id !== tile.id)
           .map((rackTile) => rackTile.id),
       });
-      updateDraggingTile({
-        ...(draggingTileRef.current ?? {
-          from: "rack",
-          index: tile.rackIndex,
-          visibleIndex: slotIndex,
-          tile: {
-            id: tile.id,
-            letter: tile.letter,
-            value: tile.value,
-            rackIndex: tile.rackIndex,
-          },
-        }),
-        settlingDestination: "rack",
-      });
+      updateDraggingTile(null);
       updateDropTargetRackIndex(null);
       rackDraggingVisibleIndexValue.setValue(-1);
       rackHoverIndexValue.setValue(-1);
       hoverIndexRef.current = null;
       if (rackSettleClearTimeoutRef.current != null) {
         clearTimeout(rackSettleClearTimeoutRef.current);
+        rackSettleClearTimeoutRef.current = null;
       }
       if (boardReturnCommitTimeoutRef.current != null) {
         clearTimeout(boardReturnCommitTimeoutRef.current);
@@ -702,9 +866,9 @@ export const useTileDragDropController = ({
       commit?.();
     },
     [
-      dragPosition,
-      dragScale,
+      getNow,
       getRackSlotTarget,
+      logRackDrag,
       rackDraggingVisibleIndexValue,
       rackHoverIndexValue,
       resetDragAnimation,
@@ -748,7 +912,10 @@ export const useTileDragDropController = ({
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
-      ]).start(() => {
+      ]).start(({ finished }) => {
+        // A quick subsequent pickup interrupts this animation; ignore stale completion so
+        // we do not clear the next drag's state/overlay.
+        if (!finished) return;
         if (rackSettleClearTimeoutRef.current != null) {
           clearTimeout(rackSettleClearTimeoutRef.current);
           rackSettleClearTimeoutRef.current = null;
@@ -845,7 +1012,7 @@ export const useTileDragDropController = ({
       const tileCenterY = screenY - touchOffsetY + DRAG_TILE_HALF_SIZE;
       if (
         tileCenterY < rack.y - rackDropExpansionTop ||
-        tileCenterY > rack.y + rack.height
+        tileCenterY > rack.y + rack.height + rackDropExpansionBottom
       ) {
         return null;
       }
@@ -863,7 +1030,7 @@ export const useTileDragDropController = ({
       );
       return Math.min(rackLength - 1, Math.max(0, index));
     },
-    [rackDropExpansionTop]
+    [rackDropExpansionBottom, rackDropExpansionTop]
   );
 
   const isWithinRackDropZone = useCallback(
@@ -879,10 +1046,10 @@ export const useTileDragDropController = ({
         tileCenterX >= rack.x &&
         tileCenterX <= rack.x + rack.width &&
         tileCenterY >= rack.y - rackDropExpansionTop &&
-        tileCenterY <= rack.y + rack.height
+        tileCenterY <= rack.y + rack.height + rackDropExpansionBottom
       );
     },
-    [rackDropExpansionTop]
+    [rackDropExpansionBottom, rackDropExpansionTop]
   );
 
   const screenToBoardCell = useCallback(
@@ -969,6 +1136,18 @@ export const useTileDragDropController = ({
     [screenToBoardCell]
   );
 
+  const withFreshBoardGridBounds = useCallback(
+    (work) => {
+      const measureGridBounds = boardLayoutRef.current?.measureGridBounds;
+      if (typeof measureGridBounds === "function") {
+        // Kick off transformed-bound refresh, but do not block tile release UX.
+        measureGridBounds();
+      }
+      work?.();
+    },
+    [boardLayoutRef]
+  );
+
   const getDraggableTileCell = useCallback(
     (screenX, screenY) => {
       const cell = getCellAtPosition(screenX, screenY);
@@ -1031,6 +1210,28 @@ export const useTileDragDropController = ({
   const handleRackDragStart = useCallback(
     (index, tile, x, y, touchOffsetX, touchOffsetY) => {
       if (!canInteract) return;
+      const now = getNow();
+      const activeSettle = rackSettleActiveRef.current;
+      rackDragMetricsRef.current = {
+        startedAt: now,
+        lastUpdateAt: now,
+        updateCount: 0,
+        maxUpdateGapMs: 0,
+        sourceRackIndex: index,
+        sourceVisibleIndex: tile?.visibleIndex ?? null,
+      };
+      logRackDrag("start", {
+        rackIndex: index,
+        visibleIndex: tile?.visibleIndex ?? null,
+        x,
+        y,
+        settleActive: !!activeSettle,
+        settleId: activeSettle?.id ?? null,
+        settleEndsInMs:
+          activeSettle != null
+            ? Math.max(0, Math.round(activeSettle.expectedEndAt - now))
+            : 0,
+      });
       let interruptedSettlePosition = null;
       if (
         settlingTileRef.current?.destination === "rack" &&
@@ -1081,6 +1282,8 @@ export const useTileDragDropController = ({
       animateDragPickup,
       animateRackPickupToDragTarget,
       canInteract,
+      getNow,
+      logRackDrag,
       rackDraggingVisibleIndexValue,
       rackHoverIndexValue,
       setDragPositionFromScreen,
@@ -1095,6 +1298,16 @@ export const useTileDragDropController = ({
   const handleRackDragUpdate = useCallback(
     (x, y) => {
       if (!canInteract) return;
+      const now = getNow();
+      const metrics = rackDragMetricsRef.current;
+      if (metrics) {
+        const gap = Math.max(0, now - metrics.lastUpdateAt);
+        metrics.lastUpdateAt = now;
+        metrics.updateCount += 1;
+        if (gap > metrics.maxUpdateGapMs) {
+          metrics.maxUpdateGapMs = gap;
+        }
+      }
       setDragPositionFromScreen(x, y);
       const nextIndex = computeRackIndex(x, y, visibleRackTiles.length);
       if (nextIndex !== hoverIndexRef.current) {
@@ -1102,10 +1315,23 @@ export const useTileDragDropController = ({
         hoverIndexRef.current = nextIndex;
         const targetValue = nextIndex ?? -1;
         if (nextIndex == null) {
+          logRackDrag("hover-change", {
+            to: null,
+            x,
+            y,
+            elapsedMs: Math.round(now - (metrics?.startedAt ?? now)),
+          });
           rackHoverIndexValue.stopAnimation();
           rackHoverIndexValue.setValue(-1);
           return;
         }
+        logRackDrag("hover-change", {
+          from: previousIndex,
+          to: nextIndex,
+          x,
+          y,
+          elapsedMs: Math.round(now - (metrics?.startedAt ?? now)),
+        });
         if (previousIndex == null || previousIndex < 0) {
           rackHoverIndexValue.stopAnimation();
           rackHoverIndexValue.setValue(targetValue);
@@ -1133,6 +1359,8 @@ export const useTileDragDropController = ({
     [
       canInteract,
       computeRackIndex,
+      getNow,
+      logRackDrag,
       rackHoverIndexValue,
       setDragPositionFromScreen,
       visibleRackTiles.length,
@@ -1140,90 +1368,137 @@ export const useTileDragDropController = ({
   );
 
   const handleTileDrop = useCallback(
-    (tileIndex, screenX, screenY) => {
+    (tileIndex, screenX, screenY, gesture = null) => {
       if (!canInteract) return;
-      hoverIndexRef.current = null;
-      setDragPositionFromScreen(screenX, screenY);
-      const placeAt = getDropTargetCell(screenX, screenY);
-      const rackTargetIndex = computeRackIndex(
-        screenX,
-        screenY,
-        visibleRackTiles.length
-      );
-      const returnRackIndex =
-        rackTargetIndex ??
-        (draggingTileRef.current?.from === "rack"
-          ? draggingTileRef.current.visibleIndex
-          : null);
+      withFreshBoardGridBounds(() => {
+        const now = getNow();
+        const metrics = rackDragMetricsRef.current;
+        const pickupWasAnimatingOnDrop = dragAnimatingPickupRef.current;
+        hoverIndexRef.current = null;
+        const releasePosition = getDragPositionFromScreen(screenX, screenY);
+        const placeAt = getDropTargetCell(screenX, screenY);
+        const draggedFromRack = draggingTileRef.current?.from === "rack";
+        const originalVisibleIndex = draggedFromRack
+          ? draggingTileRef.current?.visibleIndex
+          : null;
+        const hasGestureDeltaX = typeof gesture?.deltaX === "number";
+        const hasHorizontalIntent =
+          !hasGestureDeltaX ||
+          Math.abs(gesture.deltaX) >= RACK_REORDER_INTENT_THRESHOLD_PX;
+        const rackTargetIndex =
+          draggedFromRack && !hasHorizontalIntent
+            ? originalVisibleIndex
+            : computeRackIndex(screenX, screenY, visibleRackTiles.length);
+        const returnRackIndex =
+          rackTargetIndex ??
+          (draggedFromRack ? originalVisibleIndex : null);
+        const msSinceLastUpdate =
+          metrics?.lastUpdateAt != null ? Math.max(0, now - metrics.lastUpdateAt) : 0;
+        const forceReleaseCatchup =
+          draggedFromRack &&
+          !!gesture?.didMove &&
+          msSinceLastUpdate > 24;
+        if (draggedFromRack) {
+          const elapsedMs = Math.round(now - (metrics?.startedAt ?? now));
+          const updateCount = metrics?.updateCount ?? 0;
+          const avgUpdateGapMs =
+            updateCount > 0 && metrics?.startedAt != null
+              ? Math.round(elapsedMs / updateCount)
+              : 0;
+          logRackDrag("drop", {
+            from: metrics?.sourceVisibleIndex ?? originalVisibleIndex ?? null,
+            to: returnRackIndex,
+            computedTarget: rackTargetIndex,
+            elapsedMs,
+            updateCount,
+            avgUpdateGapMs,
+            maxUpdateGapMs: Math.round(metrics?.maxUpdateGapMs ?? 0),
+            releaseX: Math.round(screenX),
+            releaseY: Math.round(screenY),
+            deltaX: Math.round(gesture?.deltaX ?? 0),
+            deltaY: Math.round(gesture?.deltaY ?? 0),
+            msSinceLastUpdate: Math.round(msSinceLastUpdate),
+            forceReleaseCatchup,
+          });
+        }
+        rackDragMetricsRef.current = null;
 
-      if (placeAt) {
-        const tile = getRackTileByIndex(tileIndex);
-        if (!tile) return;
-        if (isBlankRackTile(tile)) {
-          finalizeDrag(
-            () => onBlankPlacementRequested?.(tileIndex, placeAt.row, placeAt.col),
-            undefined,
-            { interruptPickup: true }
+        if (placeAt) {
+          setDragPositionFromScreen(screenX, screenY);
+          const tile = getRackTileByIndex(tileIndex);
+          if (!tile) return;
+          if (isBlankRackTile(tile)) {
+            finalizeDrag(
+              () => onBlankPlacementRequested?.(tileIndex, placeAt.row, placeAt.col),
+              undefined,
+              { interruptPickup: true }
+            );
+            return;
+          }
+
+          completeBoardDrop(
+            {
+              id: tile.id,
+              letter: tile.letter,
+              value: tile.value,
+              rackIndex: tileIndex,
+            },
+            getBoardTileSettleTarget(placeAt.row, placeAt.col),
+            {
+              row: placeAt.row,
+              col: placeAt.col,
+              id: tile.id,
+              letter: tile.letter,
+              value: tile.value,
+              rackIndex: tileIndex,
+              renderTarget: false,
+            },
+            () => onPlaceRackTile(tileIndex, placeAt.row, placeAt.col)
           );
           return;
         }
 
-        completeBoardDrop(
-          {
-            id: tile.id,
-            letter: tile.letter,
-            value: tile.value,
-            rackIndex: tileIndex,
-          },
-          getBoardTileSettleTarget(placeAt.row, placeAt.col),
-          {
-            row: placeAt.row,
-            col: placeAt.col,
-            id: tile.id,
-            letter: tile.letter,
-            value: tile.value,
-            rackIndex: tileIndex,
-            renderTarget: false,
-          },
-          () => onPlaceRackTile(tileIndex, placeAt.row, placeAt.col)
-        );
-        return;
-      }
+        if (
+          returnRackIndex != null &&
+          visibleRackTiles.length > 0 &&
+          draggedFromRack
+        ) {
+          completeRackReturn(
+            {
+              id: draggingTileRef.current.tile.id,
+              letter: draggingTileRef.current.tile.letter,
+              value: draggingTileRef.current.tile.value,
+              rackIndex: draggingTileRef.current.index,
+            },
+            returnRackIndex,
+            visibleRackTiles.length,
+            () => onReorderRack(tileIndex, returnRackIndex),
+            {
+              releasePosition,
+              shouldAnimateDisplacedReorder: pickupWasAnimatingOnDrop,
+              forceReleaseCatchup,
+            }
+          );
+          return;
+        }
 
-      if (
-        returnRackIndex != null &&
-        visibleRackTiles.length > 0 &&
-        draggingTileRef.current?.from === "rack"
-      ) {
-        completeRackReturn(
-          {
-            id: draggingTileRef.current.tile.id,
-            letter: draggingTileRef.current.tile.letter,
-            value: draggingTileRef.current.tile.value,
-            rackIndex: draggingTileRef.current.index,
+        setDragPositionFromScreen(screenX, screenY);
+        finalizeDrag(
+          () => {
+            if (rackTargetIndex != null && visibleRackTiles.length > 0) {
+              onReorderRack(tileIndex, rackTargetIndex);
+            }
           },
-          returnRackIndex,
-          visibleRackTiles.length,
-          () => onReorderRack(tileIndex, returnRackIndex)
+          rackTargetIndex != null && visibleRackTiles.length > 0
+            ? (finish) =>
+                animateDragIntoRackSlot(
+                  returnRackIndex,
+                  visibleRackTiles.length,
+                  finish
+                )
+            : undefined
         );
-        return;
-      }
-
-      finalizeDrag(
-        () => {
-          if (rackTargetIndex != null && visibleRackTiles.length > 0) {
-            onReorderRack(tileIndex, rackTargetIndex);
-          }
-        },
-        rackTargetIndex != null && visibleRackTiles.length > 0
-          ? (finish) =>
-              animateDragIntoRackSlot(
-                returnRackIndex,
-                visibleRackTiles.length,
-                finish
-              )
-          : undefined
-      );
+      });
     },
     [
       animateDragIntoRackSlot,
@@ -1232,14 +1507,18 @@ export const useTileDragDropController = ({
       completeRackReturn,
       computeRackIndex,
       finalizeDrag,
+      getDragPositionFromScreen,
+      getNow,
       getBoardTileSettleTarget,
       getDropTargetCell,
       getRackTileByIndex,
+      logRackDrag,
       isBlankRackTile,
       onBlankPlacementRequested,
       onPlaceRackTile,
       onReorderRack,
       setDragPositionFromScreen,
+      withFreshBoardGridBounds,
       visibleRackTiles.length,
     ]
   );
@@ -1284,6 +1563,17 @@ export const useTileDragDropController = ({
         x: sx - ox - DRAG_TILE_HALF_SIZE,
         y: sy - oy - DRAG_TILE_HALF_SIZE,
       };
+      const pickupSourceTarget = getBoardTileSettleTarget(row, col);
+      if (pickupSourceTarget) {
+        dragPosition.setValue({
+          x: pickupSourceTarget.x,
+          y: pickupSourceTarget.y,
+        });
+        dragScale.setValue(pickupSourceTarget.scale);
+      } else {
+        dragPosition.setValue(dragTargetRef.current);
+        dragScale.setValue(1);
+      }
       rackDraggingVisibleIndexValue.setValue(-1);
       boardRackPlaceholderIndexValue.setValue(-1);
       updateDraggingTile(payload);
@@ -1294,6 +1584,9 @@ export const useTileDragDropController = ({
       boardRackPlaceholderIndexValue,
       board,
       canInteract,
+      dragPosition,
+      dragScale,
+      getBoardTileSettleTarget,
       isBoardTileDraggable,
       rackDraggingVisibleIndexValue,
       settlePosition,
@@ -1369,13 +1662,7 @@ export const useTileDragDropController = ({
       hoverIndexRef.current = null;
       boardHoverRackIndexRef.current = null;
       setBoardHoverRackIndex(null);
-      setDragPositionFromScreen(screenX, screenY);
-      const sameCellDrop = (() => {
-        const cell = screenToBoardCell(screenX, screenY);
-        if (!cell) return null;
-        return cell.row === payload.row && cell.col === payload.col ? cell : null;
-      })();
-      const target = sameCellDrop ?? getDropTargetCell(screenX, screenY);
+      const releasedInRackDropZone = isWithinRackDropZone(screenX, screenY);
       let rackTargetIndex =
         lastHoverIndex ??
         computeRackIndex(screenX, screenY, visibleRackTiles.length + 1, {
@@ -1383,7 +1670,7 @@ export const useTileDragDropController = ({
         });
       if (
         rackTargetIndex == null &&
-        isWithinRackDropZone(screenX, screenY) &&
+        releasedInRackDropZone &&
         visibleRackTiles.length + 1 > 0
       ) {
         rackTargetIndex = computeRackIndex(
@@ -1395,91 +1682,133 @@ export const useTileDragDropController = ({
           }
         );
       }
-      if (target != null) {
+
+      if (
+        dragAnimatingPickupRef.current &&
+        releasedInRackDropZone &&
+        rackTargetIndex != null
+      ) {
         const { tile, row: fromRow, col: fromCol } = payload;
-        const rackIndex = tile?.rackIndex;
-        if (rackIndex !== undefined && tile) {
-          if (target.row === fromRow && target.col === fromCol) {
-          completeBoardDrop(
-            { id: tile.id, letter: tile.letter, value: tile.value, rackIndex },
-            getBoardTileSettleTarget(target.row, target.col),
-            null,
-            () => {},
+        const rackIndex =
+          tile?.id != null
+            ? getRackIndexByTileId?.(tile.id) ?? tile?.rackIndex
+            : tile?.rackIndex;
+        if (rackIndex !== undefined && rackIndex != null && tile) {
+          completeBoardReturnToRack(
             {
-              deferCommit: true,
-              useSettlingState: false,
-            }
-          );
-            return;
-          }
-          completeBoardDrop(
-            { id: tile.id, letter: tile.letter, value: tile.value, rackIndex },
-            getBoardTileSettleTarget(target.row, target.col),
-            {
-              fromRow,
-              fromCol,
-              row: target.row,
-              col: target.col,
               id: tile.id,
               letter: tile.letter,
               value: tile.value,
               rackIndex,
-              renderTarget: false,
             },
-            () => onMoveBoardTile(fromRow, fromCol, target.row, target.col),
-            {
-              deferCommit: true,
-              useSettlingState: false,
-            }
+            rackTargetIndex,
+            visibleRackTiles.length + 1,
+            () => {
+              onRemoveBoardTile(fromRow, fromCol);
+              onReorderRack(rackIndex, rackTargetIndex, rackIndex);
+            },
+            { useSettlingState: false }
           );
         }
         return;
       }
 
-      if (rackTargetIndex == null) {
+      withFreshBoardGridBounds(() => {
+        const sameCellDrop = (() => {
+          const cell = screenToBoardCell(screenX, screenY);
+          if (!cell) return null;
+          return cell.row === payload.row && cell.col === payload.col ? cell : null;
+        })();
+        const target = sameCellDrop ?? getDropTargetCell(screenX, screenY);
+        setDragPositionFromScreen(screenX, screenY);
+        if (target != null) {
+          const { tile, row: fromRow, col: fromCol } = payload;
+          const rackIndex = tile?.rackIndex;
+          if (rackIndex !== undefined && tile) {
+            if (target.row === fromRow && target.col === fromCol) {
+              completeBoardDrop(
+                { id: tile.id, letter: tile.letter, value: tile.value, rackIndex },
+                getBoardTileSettleTarget(target.row, target.col),
+                null,
+                () => {},
+                {
+                  deferCommit: true,
+                  useSettlingState: false,
+                  settleDuration: DRAG_BOARD_INVALID_RETURN_DURATION,
+                }
+              );
+              return;
+            }
+            completeBoardDrop(
+              { id: tile.id, letter: tile.letter, value: tile.value, rackIndex },
+              getBoardTileSettleTarget(target.row, target.col),
+              {
+                fromRow,
+                fromCol,
+                row: target.row,
+                col: target.col,
+                id: tile.id,
+                letter: tile.letter,
+                value: tile.value,
+                rackIndex,
+                renderTarget: false,
+              },
+              () => onMoveBoardTile(fromRow, fromCol, target.row, target.col),
+              {
+                deferCommit: true,
+                useSettlingState: false,
+              }
+            );
+          }
+          return;
+        }
+
+        if (rackTargetIndex == null) {
+          const { tile, row: fromRow, col: fromCol } = payload;
+          if (tile) {
+            completeBoardDrop(
+              {
+                id: tile.id,
+                letter: tile.letter,
+                value: tile.value,
+                rackIndex: tile.rackIndex,
+              },
+              getBoardTileSettleTarget(fromRow, fromCol),
+              null,
+              () => {},
+              {
+                deferCommit: true,
+                useSettlingState: false,
+                settleDuration: DRAG_BOARD_INVALID_RETURN_DURATION,
+              }
+            );
+          }
+          return;
+        }
+
         const { tile, row: fromRow, col: fromCol } = payload;
-        if (tile) {
-          completeBoardDrop(
+        const rackIndex =
+          tile?.id != null
+            ? getRackIndexByTileId?.(tile.id) ?? tile?.rackIndex
+            : tile?.rackIndex;
+        if (rackIndex !== undefined && rackIndex != null && tile) {
+          completeBoardReturnToRack(
             {
               id: tile.id,
               letter: tile.letter,
               value: tile.value,
-              rackIndex: tile.rackIndex,
+              rackIndex,
             },
-            getBoardTileSettleTarget(fromRow, fromCol),
-            null,
-            () => {},
-            {
-              deferCommit: true,
-              useSettlingState: false,
-            }
+            rackTargetIndex,
+            visibleRackTiles.length + 1,
+            () => {
+              onRemoveBoardTile(fromRow, fromCol);
+              onReorderRack(rackIndex, rackTargetIndex, rackIndex);
+            },
+            { useSettlingState: false }
           );
         }
-        return;
-      }
-
-      const { tile, row: fromRow, col: fromCol } = payload;
-      const rackIndex =
-        tile?.id != null
-          ? getRackIndexByTileId?.(tile.id) ?? tile?.rackIndex
-          : tile?.rackIndex;
-      if (rackIndex !== undefined && rackIndex != null && tile) {
-        completeBoardReturnToRack(
-          {
-            id: tile.id,
-            letter: tile.letter,
-            value: tile.value,
-            rackIndex,
-          },
-          rackTargetIndex,
-          visibleRackTiles.length + 1,
-          () => {
-            onRemoveBoardTile(fromRow, fromCol);
-            onReorderRack(rackIndex, rackTargetIndex, rackIndex);
-          },
-          { useSettlingState: false }
-        );
-      }
+      });
     },
     [
       canInteract,
@@ -1495,6 +1824,7 @@ export const useTileDragDropController = ({
       onReorderRack,
       screenToBoardCell,
       setDragPositionFromScreen,
+      withFreshBoardGridBounds,
       visibleRackTiles.length,
     ]
   );

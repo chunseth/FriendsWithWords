@@ -83,6 +83,7 @@ const createInitialSession = ({
   return {
     schemaVersion: SESSION_SCHEMA_VERSION,
     modeId: MULTIPLAYER_MODE_ID,
+    boardVariantId: null,
     sessionId,
     seed,
     gameType,

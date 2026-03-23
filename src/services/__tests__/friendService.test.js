@@ -136,7 +136,7 @@ describe("friendService friend request transitions", () => {
     expect(result.reason).toBe("request_not_found");
   });
 
-  it("sendFriendRequest triggers push notification for receiver", async () => {
+  it("sendFriendRequest succeeds without client-side push invoke", async () => {
     const friendshipLookup = {
       select: jest.fn(),
       match: jest.fn(),
@@ -165,46 +165,21 @@ describe("friendService friend request transitions", () => {
     requestInsert.insert.mockResolvedValue({
       error: null,
     });
-    const profileLookup = {
-      select: jest.fn(),
-      eq: jest.fn(),
-      maybeSingle: jest.fn(),
-    };
-    profileLookup.select.mockReturnValue(profileLookup);
-    profileLookup.eq.mockReturnValue(profileLookup);
-    profileLookup.maybeSingle.mockResolvedValue({
-      data: { username: "sender_user", display_name: "Sender User" },
-      error: null,
-    });
-
     const from = jest
       .fn()
       .mockImplementationOnce(() => friendshipLookup)
       .mockImplementationOnce(() => requestLookup)
-      .mockImplementationOnce(() => requestInsert)
-      .mockImplementationOnce(() => profileLookup);
-    const functions = { invoke: jest.fn().mockResolvedValue({ data: { ok: true } }) };
-
+      .mockImplementationOnce(() => requestInsert);
     getSupabaseClient.mockReturnValue({
       from,
-      functions,
     });
 
     const result = await sendFriendRequest("user-2");
 
     expect(result).toEqual({ ok: true, reason: "request_sent" });
-    expect(functions.invoke).toHaveBeenCalledWith("notify-multiplayer-event", {
-      body: expect.objectContaining({
-        user_id: "user-2",
-        type: "friend_request",
-        body: "sender_user sent you a friend request.",
-        send_push: true,
-        skip_enqueue: true,
-      }),
-    });
   });
 
-  it("acceptFriendRequest triggers push notification for original sender", async () => {
+  it("acceptFriendRequest succeeds without client-side push invoke", async () => {
     const updateQuery = {
       update: jest.fn(),
       eq: jest.fn(),
@@ -223,41 +198,16 @@ describe("friendService friend request transitions", () => {
     friendshipUpsert.upsert.mockResolvedValue({
       error: null,
     });
-    const profileLookup = {
-      select: jest.fn(),
-      eq: jest.fn(),
-      maybeSingle: jest.fn(),
-    };
-    profileLookup.select.mockReturnValue(profileLookup);
-    profileLookup.eq.mockReturnValue(profileLookup);
-    profileLookup.maybeSingle.mockResolvedValue({
-      data: { username: "acceptor_user", display_name: "Acceptor User" },
-      error: null,
-    });
-
     const from = jest
       .fn()
       .mockImplementationOnce(() => updateQuery)
-      .mockImplementationOnce(() => friendshipUpsert)
-      .mockImplementationOnce(() => profileLookup);
-    const functions = { invoke: jest.fn().mockResolvedValue({ data: { ok: true } }) };
-
+      .mockImplementationOnce(() => friendshipUpsert);
     getSupabaseClient.mockReturnValue({
       from,
-      functions,
     });
 
     const result = await acceptFriendRequest("req-1", "user-2");
 
     expect(result).toEqual({ ok: true, reason: "request_accepted" });
-    expect(functions.invoke).toHaveBeenCalledWith("notify-multiplayer-event", {
-      body: expect.objectContaining({
-        user_id: "user-2",
-        type: "friend_request_accepted",
-        body: "acceptor_user accepted your friend request.",
-        send_push: true,
-        skip_enqueue: true,
-      }),
-    });
   });
 });

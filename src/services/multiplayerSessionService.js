@@ -9,6 +9,10 @@ const SESSION_UPDATE_DEBOUNCE_MS = 150;
 const buildSessionRow = (session) => ({
   session_id: session.sessionId,
   mode_id: session.modeId,
+  board_variant_id:
+    typeof session.boardVariantId === "string" && session.boardVariantId.length > 0
+      ? session.boardVariantId
+      : null,
   seed: session.seed,
   status: session.status,
   board_revision: session.boardRevision ?? 0,
@@ -301,74 +305,7 @@ export const commitRemoteMultiplayerTurn = async ({
     };
   }
 
-  const actorId = sessionResult.session?.user?.id ?? null;
   const committedSession = data.session ?? nextSession;
-  const nextActivePlayerId = committedSession?.turn?.activePlayerId ?? null;
-  const participantIds = Array.isArray(committedSession?.players)
-    ? committedSession.players.map((player) => player?.id).filter(Boolean)
-    : [];
-  const otherParticipantId = actorId
-    ? participantIds.find((playerId) => playerId !== actorId) ?? null
-    : null;
-  const recipientUserId = otherParticipantId ?? nextActivePlayerId ?? null;
-  const activePlayerChanged = recipientUserId && recipientUserId !== actorId;
-  const actionType = typeof action === "string" ? action : action?.action;
-  const shouldSendTurnPush =
-    activePlayerChanged &&
-    (actionType === "play" ||
-      actionType === "swap" ||
-      actionType === "finish_request" ||
-      actionType === "finish_decline");
-
-  if (shouldSendTurnPush) {
-    const actorPlayer =
-      committedSession?.players?.find((player) => player?.id === actorId) ?? null;
-    const actorLabel =
-      actorPlayer?.displayName ?? actorPlayer?.username ?? "Your friend";
-
-    // Server-side path: trigger push via notify function without inserting another notification row.
-    const notifyPushResult = await supabase.functions.invoke(
-      "notify-multiplayer-event",
-      {
-        body: {
-          user_id: recipientUserId,
-          type: "turn_ready",
-          entity_id: sessionId,
-          payload: {
-            type: "turn_ready",
-            route: "multiplayer-game",
-            sessionId,
-            friendId: actorId,
-            actorLabel,
-          },
-          title: "Your turn is ready",
-          body: `${actorLabel} just played a turn.`,
-          send_push: true,
-          skip_enqueue: true,
-        },
-      }
-    );
-
-    if (notifyPushResult?.error) {
-      console.warn("[multiplayer-push] turn notify invoke failed", {
-        sessionId,
-        actionType,
-        actorId,
-        recipientUserId,
-        nextActivePlayerId,
-        error: notifyPushResult.error?.message ?? "unknown_error",
-      });
-    } else {
-      console.log("[multiplayer-push] turn notify invoke result", {
-        sessionId,
-        actionType,
-        actorId,
-        recipientUserId,
-        nextActivePlayerId,
-        push: notifyPushResult?.data?.push ?? null,
-      });
-    }
-  }
 
   return {
     ok: true,

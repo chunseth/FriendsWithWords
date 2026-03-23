@@ -32,6 +32,48 @@ const PREVIEW_DICTIONARY = {
 
 const GAME_MODE_CLASSIC = "classic";
 const GAME_MODE_MINI = "mini";
+const DEFAULT_CLASSIC_BOARD_VARIANT_ID = "classic-default";
+const DEFAULT_MINI_BOARD_VARIANT_ID = "mini-default";
+
+const normalizeGameMode = (mode) =>
+  mode === GAME_MODE_MINI ? GAME_MODE_MINI : GAME_MODE_CLASSIC;
+
+const sanitizeBoardVariant = (value, fallbackMode = GAME_MODE_CLASSIC) => {
+  if (!value || typeof value !== "object") {
+    const mode = normalizeGameMode(fallbackMode);
+    return {
+      id:
+        mode === GAME_MODE_MINI
+          ? DEFAULT_MINI_BOARD_VARIANT_ID
+          : DEFAULT_CLASSIC_BOARD_VARIANT_ID,
+      mode,
+      boardSize: mode === GAME_MODE_MINI ? MINI_BOARD_SIZE : CLASSIC_BOARD_SIZE,
+    };
+  }
+
+  const mode = normalizeGameMode(value.mode ?? fallbackMode);
+  const boardSize =
+    typeof value.boardSize === "number" && value.boardSize > 0
+      ? value.boardSize
+      : mode === GAME_MODE_MINI
+        ? MINI_BOARD_SIZE
+        : CLASSIC_BOARD_SIZE;
+
+  return {
+    id:
+      typeof value.id === "string" && value.id.trim().length > 0
+        ? value.id.trim()
+        : mode === GAME_MODE_MINI
+          ? DEFAULT_MINI_BOARD_VARIANT_ID
+          : DEFAULT_CLASSIC_BOARD_VARIANT_ID,
+    mode,
+    boardSize,
+    layoutName:
+      typeof value.layoutName === "string" && value.layoutName.trim().length > 0
+        ? value.layoutName.trim()
+        : null,
+  };
+};
 
 const createEmptyBoard = (boardSize) =>
   Array(boardSize)
@@ -71,6 +113,14 @@ export const useGame = () => {
   const premiumSquaresRef = useRef(createClassicPremiumSquares());
   const boardSizeRef = useRef(CLASSIC_BOARD_SIZE);
   const gameModeRef = useRef(GAME_MODE_CLASSIC);
+  const boardVariantRef = useRef(
+    sanitizeBoardVariant({
+      id: DEFAULT_CLASSIC_BOARD_VARIANT_ID,
+      mode: GAME_MODE_CLASSIC,
+      boardSize: CLASSIC_BOARD_SIZE,
+      layoutName: "Classic",
+    })
+  );
   const timeBonusProfileRef = useRef(TIME_BONUS_PROFILE_CLASSIC);
   const gameStartedAtMsRef = useRef(null);
   const invalidWordAttemptsRef = useRef(0);
@@ -107,13 +157,25 @@ export const useGame = () => {
 
   const startNewGame = useCallback(
     (seed = null, options = {}) => {
-      const mode = options.mode === GAME_MODE_MINI ? GAME_MODE_MINI : GAME_MODE_CLASSIC;
+      const mode = normalizeGameMode(options.mode);
+      const inputVariant = sanitizeBoardVariant(options.boardVariant, mode);
+      const resolvedBoardSize = inputVariant.boardSize;
+      const resolvedPremiumSquares =
+        options.boardVariant?.premiumSquares &&
+        typeof options.boardVariant.premiumSquares === "object"
+          ? options.boardVariant.premiumSquares
+          : mode === GAME_MODE_MINI
+            ? createMiniPremiumSquares()
+            : createClassicPremiumSquares();
+
       gameModeRef.current = mode;
-      boardSizeRef.current = mode === GAME_MODE_MINI ? MINI_BOARD_SIZE : CLASSIC_BOARD_SIZE;
-      premiumSquaresRef.current =
-        mode === GAME_MODE_MINI
-          ? createMiniPremiumSquares()
-          : createClassicPremiumSquares();
+      boardSizeRef.current = resolvedBoardSize;
+      premiumSquaresRef.current = resolvedPremiumSquares;
+      boardVariantRef.current = {
+        ...inputVariant,
+        mode,
+        boardSize: resolvedBoardSize,
+      };
       timeBonusProfileRef.current =
         mode === GAME_MODE_MINI
           ? TIME_BONUS_PROFILE_MINI
@@ -812,6 +874,7 @@ export const useGame = () => {
       premiumSquares: premiumSquaresRef.current,
       boardSize: boardSizeRef.current,
       gameMode: gameModeRef.current,
+      boardVariant: boardVariantRef.current,
       timeBonusProfile: timeBonusProfileRef.current,
       tileBag: tileBagRef.current,
       nextTileId: nextTileIdRef.current,
@@ -872,6 +935,12 @@ export const useGame = () => {
           : CLASSIC_BOARD_SIZE;
     gameModeRef.current =
       snapshot.gameMode === GAME_MODE_MINI ? GAME_MODE_MINI : GAME_MODE_CLASSIC;
+    boardVariantRef.current = sanitizeBoardVariant(
+      snapshot.boardVariant,
+      gameModeRef.current
+    );
+    boardVariantRef.current.boardSize = boardSizeRef.current;
+    boardVariantRef.current.mode = gameModeRef.current;
     timeBonusProfileRef.current =
       snapshot.timeBonusProfile === TIME_BONUS_PROFILE_MINI
         ? TIME_BONUS_PROFILE_MINI
@@ -945,6 +1014,7 @@ export const useGame = () => {
     isSwapMode,
     swapCount,
     premiumSquares: premiumSquaresRef.current,
+    boardVariant: boardVariantRef.current,
     getStableSnapshot,
     resumeSavedGame,
     startNewGame,

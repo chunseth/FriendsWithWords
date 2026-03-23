@@ -21,6 +21,20 @@ const sanitizeGameSnapshotPayload = (value) => {
       value.activeDailySeed.length > 0
         ? value.activeDailySeed
         : null,
+    activeGameMode:
+      typeof value.activeGameMode === "string" &&
+      value.activeGameMode.length > 0
+        ? value.activeGameMode
+        : null,
+    activeGameType:
+      typeof value.activeGameType === "string" &&
+      value.activeGameType.length > 0
+        ? value.activeGameType
+        : null,
+    activeBoardVariant:
+      value.activeBoardVariant && typeof value.activeBoardVariant === "object"
+        ? value.activeBoardVariant
+        : null,
     savedAt: isFiniteNumber(value.savedAt) ? value.savedAt : Date.now(),
   };
 };

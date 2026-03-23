@@ -1,22 +1,15 @@
-import React, { useMemo, useState } from "react";
+import React from "react";
 import {
   Modal,
-  Platform,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-import Clipboard from "@react-native-clipboard/clipboard";
 
 const PlayGameMenu = ({
   visible,
   isDarkMode = false,
-  canDismiss,
-  currentSeed,
-  dailySeed,
   dailyHighScore,
   dailyMiniHighScore,
   hasSavedGame,
@@ -25,60 +18,11 @@ const PlayGameMenu = ({
   onDailyGame,
   onDailyMiniGame,
   onResumeSavedGame,
-  onNewGameRandom,
-  onNewGameWithSeed,
-  onResetSeed,
+  onMoreOptions,
 }) => {
   const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
-  const [seedInput, setSeedInput] = useState("");
-
-  const trimmedSeed = useMemo(() => seedInput.trim(), [seedInput]);
-  const canPlayCustomSeed = trimmedSeed.length > 0;
-
-  const handleDailyGame = () => {
-    onDailyGame();
-    setSeedInput("");
-  };
-
-  const handleDailyMiniGame = () => {
-    onDailyMiniGame?.();
-    setSeedInput("");
-  };
-
-  const handleNewGameRandom = () => {
-    onNewGameRandom();
-    setSeedInput("");
-  };
-
-  const handleResumeSavedGame = () => {
-    onResumeSavedGame?.();
-    setSeedInput("");
-  };
-
-  const handlePlayWithSeed = () => {
-    if (!canPlayCustomSeed) {
-      return;
-    }
-    onNewGameWithSeed(trimmedSeed);
-    setSeedInput("");
-  };
-
-  const handleResetSeed = () => {
-    onResetSeed();
-    setSeedInput("");
-    onClose?.();
-  };
-
-  const handleCopySeed = () => {
-    if (currentSeed != null && currentSeed !== "") {
-      Clipboard.setString(String(currentSeed));
-    }
-  };
-
   const handleBackdropPress = () => {
-    if (canDismiss) {
-      onClose?.();
-    }
+    onClose?.();
   };
 
   return (
@@ -103,77 +47,44 @@ const PlayGameMenu = ({
           ]}
           onStartShouldSetResponder={() => true}
         >
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
+          <Text style={[styles.eyebrow, { color: theme.eyebrow }]}>
+            Friends With Words
+          </Text>
+          <Text style={[styles.title, { color: theme.title }]}>Play Game</Text>
+
+          <TouchableOpacity style={styles.primaryButton} onPress={onDailyGame}>
+            <View style={styles.buttonRow}>
+              <Text style={styles.primaryButtonText}>Daily Game</Text>
+              {dailyHighScore != null ? (
+                <Text style={styles.primaryButtonScore}>{dailyHighScore}</Text>
+              ) : null}
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.secondaryButton,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.surfaceBorder,
+              },
+              styles.dailyMiniHighlight,
+            ]}
+            onPress={onDailyMiniGame}
           >
-            <Text style={[styles.eyebrow, { color: theme.eyebrow }]}>
-              Friends With Words
-            </Text>
-            <Text style={[styles.title, { color: theme.title }]}>Play Game</Text>
-            <Text style={[styles.subtitle, { color: theme.subtitle }]}>
-              Choose a board and start playing.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={handleDailyGame}
-            >
-              <View style={styles.buttonRow}>
-                <Text style={styles.primaryButtonText}>Daily Game</Text>
-                {dailyHighScore != null && (
-                  <Text style={styles.primaryButtonScore}>
-                    {dailyHighScore}
-                  </Text>
-                )}
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.secondaryButton,
-                styles.dailyMiniButton,
-                {
-                  backgroundColor: theme.surface,
-                },
-              ]}
-              onPress={handleDailyMiniGame}
-            >
-              <View style={styles.buttonRow}>
-                <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-                  Daily Mini
+            <View style={styles.buttonRow}>
+              <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                Daily Mini
+              </Text>
+              {dailyMiniHighScore != null ? (
+                <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
+                  {dailyMiniHighScore}
                 </Text>
-                {dailyMiniHighScore != null ? (
-                  <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
-                    {dailyMiniHighScore}
-                  </Text>
-                ) : null}
-              </View>
-            </TouchableOpacity>
+              ) : null}
+            </View>
+          </TouchableOpacity>
 
-            {hasSavedGame && (
-              <TouchableOpacity
-                style={[
-                  styles.secondaryButton,
-                  {
-                    backgroundColor: theme.surface,
-                    borderColor: theme.surfaceBorder,
-                  },
-                ]}
-                onPress={handleResumeSavedGame}
-              >
-                <View style={styles.buttonRow}>
-                  <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-                    Resume Game
-                  </Text>
-                  <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
-                    {savedGameSeed ? `Seed ${savedGameSeed}` : "Saved board"}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            )}
-
+          {hasSavedGame ? (
             <TouchableOpacity
               style={[
                 styles.secondaryButton,
@@ -182,115 +93,41 @@ const PlayGameMenu = ({
                   borderColor: theme.surfaceBorder,
                 },
               ]}
-              onPress={handleNewGameRandom}
+              onPress={onResumeSavedGame}
             >
               <View style={styles.buttonRow}>
                 <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-                  New Game
+                  Resume Game
                 </Text>
                 <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
-                  Random seed
+                  {savedGameSeed ? `Seed ${savedGameSeed}` : "Saved board"}
                 </Text>
               </View>
             </TouchableOpacity>
+          ) : null}
 
-            <View
-              style={[
-                styles.seedSection,
-                {
-                  backgroundColor: theme.surface,
-                  borderColor: theme.surfaceBorder,
-                },
-              ]}
-            >
-              <Text style={[styles.seedSectionLabel, { color: theme.title }]}>
-                Seeded run
+          <TouchableOpacity
+            style={[
+              styles.secondaryButton,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.surfaceBorder,
+              },
+            ]}
+            onPress={onMoreOptions}
+          >
+            <View style={styles.buttonRow}>
+              <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                More Modes
               </Text>
-              <View style={styles.seedRow}>
-                <TextInput
-                  style={[
-                    styles.seedInput,
-                    {
-                      borderColor: theme.inputBorder,
-                      color: theme.title,
-                      backgroundColor: theme.inputBackground,
-                    },
-                  ]}
-                  value={seedInput}
-                  onChangeText={setSeedInput}
-                  placeholder="000000"
-                  placeholderTextColor={theme.inputPlaceholder}
-                  keyboardType={
-                    Platform.OS === "ios" ? "number-pad" : "numeric"
-                  }
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  returnKeyType="go"
-                  onSubmitEditing={handlePlayWithSeed}
-                />
-                <TouchableOpacity
-                  style={[
-                    styles.playButton,
-                    !canPlayCustomSeed && styles.disabledButton,
-                  ]}
-                  onPress={handlePlayWithSeed}
-                  disabled={!canPlayCustomSeed}
-                >
-                  <Text style={styles.playButtonText}>Play</Text>
-                </TouchableOpacity>
-              </View>
             </View>
+          </TouchableOpacity>
 
-            {canDismiss && currentSeed != null && currentSeed !== "" && (
-              <View
-                style={[
-                  styles.seedDisplayRow,
-                  {
-                    backgroundColor: theme.surface,
-                    borderColor: theme.surfaceBorder,
-                  },
-                ]}
-              >
-                <Text style={[styles.seedLabel, { color: theme.meta }]}>Current seed</Text>
-                <Text style={[styles.seedValue, { color: theme.title }]} numberOfLines={1}>
-                  {String(currentSeed)}
-                </Text>
-                <TouchableOpacity
-                  style={styles.copyButton}
-                  onPress={handleCopySeed}
-                >
-                  <Text style={styles.copyButtonText}>Copy</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {canDismiss && (
-              <TouchableOpacity
-                style={[
-                  styles.tertiaryButton,
-                  {
-                    backgroundColor: theme.surface,
-                    borderColor: theme.surfaceBorder,
-                  },
-                ]}
-                onPress={handleResetSeed}
-              >
-                <Text style={[styles.tertiaryButtonText, { color: theme.title }]}>
-                  Reset Current Seed
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={onClose}
-              hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
-            >
-              <Text style={[styles.closeButtonText, { color: theme.closeText }]}>
-                Cancel
-              </Text>
-            </TouchableOpacity>
-          </ScrollView>
+          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+            <Text style={[styles.closeButtonText, { color: theme.closeText }]}>
+              Cancel
+            </Text>
+          </TouchableOpacity>
         </View>
       </TouchableOpacity>
     </Modal>
@@ -301,14 +138,10 @@ const LIGHT_THEME = {
   modalBackground: "#fffaf2",
   modalBorder: "#eadfcd",
   surface: "#fff",
-  surfaceBorder: "#e2d3bb",
+  surfaceBorder: "#d89f5f",
   eyebrow: "#9a6b2f",
   title: "#2c3e50",
-  subtitle: "#6b7280",
   meta: "#7f8c8d",
-  inputBorder: "#cbb89a",
-  inputBackground: "#fffdf8",
-  inputPlaceholder: "#95a5a6",
   closeText: "#9a6b2f",
 };
 
@@ -319,207 +152,93 @@ const DARK_THEME = {
   surfaceBorder: "#334155",
   eyebrow: "#fdba74",
   title: "#f8fafc",
-  subtitle: "#cbd5e1",
   meta: "#94a3b8",
-  inputBorder: "#334155",
-  inputBackground: "#111b2c",
-  inputPlaceholder: "#94a3b8",
   closeText: "#fdba74",
 };
 
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.46)",
+    backgroundColor: "rgba(15, 23, 42, 0.48)",
     justifyContent: "center",
     alignItems: "center",
-    padding: 24,
+    paddingHorizontal: 20,
   },
   modal: {
     width: "100%",
-    maxWidth: 360,
-    maxHeight: "88%",
-    backgroundColor: "#fffaf2",
-    borderRadius: 20,
-    padding: 22,
+    maxWidth: 420,
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: "#eadfcd",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    elevation: 10,
-  },
-  scrollView: {
-    width: "100%",
-  },
-  scrollContent: {
-    paddingBottom: 4,
+    padding: 18,
   },
   eyebrow: {
     fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.1,
+    fontWeight: "800",
+    letterSpacing: 1,
     textTransform: "uppercase",
-    color: "#9a6b2f",
-    marginBottom: 6,
+    marginBottom: 4,
   },
   title: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: "#2c3e50",
-  },
-  subtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: "#6b7280",
-    marginTop: 6,
-    marginBottom: 18,
+    fontSize: 38,
+    fontWeight: "900",
+    marginBottom: 20,
   },
   primaryButton: {
-    backgroundColor: "#d97706",
+    backgroundColor: "#c77a2a",
+    borderColor: "#9a5a1a",
+    borderWidth: 1,
     borderRadius: 14,
+    width: "92%",
+    alignSelf: "center",
     paddingVertical: 14,
     paddingHorizontal: 16,
-    marginBottom: 10,
+    marginBottom: 6,
+  },
+  primaryButtonText: {
+    color: "#fff",
+    fontSize: 19,
+    fontWeight: "800",
+  },
+  primaryButtonScore: {
+    color: "#fff3e0",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  secondaryButton: {
+    borderRadius: 14,
+    borderWidth: 1,
+    width: "92%",
+    alignSelf: "center",
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    marginBottom: 6,
+  },
+  dailyMiniHighlight: {
+    borderColor: "#c77a2a",
+    borderWidth: 1.5,
+  },
+  secondaryButtonText: {
+    fontSize: 19,
+    fontWeight: "800",
+  },
+  secondaryButtonMeta: {
+    fontSize: 14,
+    fontWeight: "700",
   },
   buttonRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
-  },
-  primaryButtonText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  primaryButtonScore: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  secondaryButton: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "#e2d3bb",
-  },
-  dailyMiniButton: {
-    borderColor: "#d97706",
-  },
-  secondaryButtonText: {
-    color: "#2c3e50",
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  secondaryButtonMeta: {
-    color: "#7f8c8d",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  seedSection: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#e2d3bb",
-  },
-  seedSectionLabel: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#2c3e50",
-    marginBottom: 10,
-  },
-  seedRow: {
-    flexDirection: "row",
     gap: 10,
-    alignItems: "center",
-  },
-  seedInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: "#cbb89a",
-    borderRadius: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    fontSize: 18,
-    color: "#2c3e50",
-    backgroundColor: "#fffdf8",
-  },
-  playButton: {
-    backgroundColor: "#d97706",
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  playButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 16,
-  },
-  disabledButton: {
-    opacity: 0.45,
-  },
-  seedDisplayRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: "#f5f1e8",
-    borderRadius: 10,
-  },
-  seedLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#7f8c8d",
-  },
-  seedValue: {
-    flex: 1,
-    fontSize: 14,
-    color: "#2c3e50",
-  },
-  copyButton: {
-    backgroundColor: "#7f8c8d",
-    borderRadius: 8,
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-  },
-  copyButtonText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 13,
-  },
-  tertiaryButton: {
-    marginTop: 14,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#e2d3bb",
-  },
-  tertiaryButtonText: {
-    color: "#2c3e50",
-    fontWeight: "700",
-    fontSize: 15,
   },
   closeButton: {
-    marginTop: 30,
+    marginTop: 4,
     alignItems: "center",
+    paddingVertical: 8,
   },
   closeButtonText: {
-    color: "#9a6b2f",
-    fontWeight: "700",
-    fontSize: 15,
+    fontSize: 16,
+    fontWeight: "800",
   },
 });
 

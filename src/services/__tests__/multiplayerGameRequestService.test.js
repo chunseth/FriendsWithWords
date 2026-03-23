@@ -47,9 +47,6 @@ describe("acceptMultiplayerGameRequest", () => {
         data: { ok: true, reason: "request_accepted", session_id: "mp-123" },
         error: null,
       }),
-      functions: {
-        invoke: jest.fn().mockResolvedValue({ data: { ok: true } }),
-      },
     };
 
     getSupabaseClient.mockReturnValue(supabase);
@@ -72,18 +69,6 @@ describe("acceptMultiplayerGameRequest", () => {
     });
     expect(supabase.rpc).toHaveBeenCalledTimes(1);
     expect(supabase.from).toHaveBeenCalledTimes(1);
-    expect(supabase.functions.invoke).toHaveBeenCalledWith(
-      "notify-multiplayer-event",
-      {
-        body: expect.objectContaining({
-          user_id: "sender-1",
-          type: "request_accepted",
-          entity_id: "mp-123",
-          send_push: true,
-          skip_enqueue: true,
-        }),
-      }
-    );
   });
 
   it("surfaces rpc failures without attempting second write path", async () => {
@@ -256,7 +241,7 @@ describe("sendMultiplayerGameRequest", () => {
     jest.clearAllMocks();
   });
 
-  it("sends request and invokes game_request notification push", async () => {
+  it("sends request without client-side push invoke", async () => {
     const pendingLookupBuilder = {
       select: jest.fn(),
       eq: jest.fn(),
@@ -275,27 +260,11 @@ describe("sendMultiplayerGameRequest", () => {
     insertBuilder.select.mockReturnValue(insertBuilder);
     insertBuilder.single.mockResolvedValue({ data: { id: "req-123" }, error: null });
 
-    const profileBuilder = {
-      select: jest.fn(),
-      eq: jest.fn(),
-      maybeSingle: jest.fn(),
-    };
-    profileBuilder.select.mockReturnValue(profileBuilder);
-    profileBuilder.eq.mockReturnValue(profileBuilder);
-    profileBuilder.maybeSingle.mockResolvedValue({
-      data: { username: "sender_name", display_name: "Sender Name" },
-      error: null,
-    });
-
     const supabase = {
       from: jest
         .fn()
         .mockReturnValueOnce(pendingLookupBuilder)
-        .mockReturnValueOnce(insertBuilder)
-        .mockReturnValueOnce(profileBuilder),
-      functions: {
-        invoke: jest.fn().mockResolvedValue({ data: { ok: true }, error: null }),
-      },
+        .mockReturnValueOnce(insertBuilder),
     };
 
     getSupabaseClient.mockReturnValue(supabase);
@@ -315,21 +284,9 @@ describe("sendMultiplayerGameRequest", () => {
       reason: "request_sent",
       requestId: "req-123",
     });
-    expect(supabase.functions.invoke).toHaveBeenCalledWith(
-      "notify-multiplayer-event",
-      {
-        body: expect.objectContaining({
-          user_id: "receiver-1",
-          type: "game_request",
-          entity_id: "req-123",
-          send_push: true,
-          skip_enqueue: true,
-        }),
-      }
-    );
   });
 
-  it("returns already_pending without invoking notification when request exists", async () => {
+  it("returns already_pending when request exists", async () => {
     const pendingLookupBuilder = {
       select: jest.fn(),
       eq: jest.fn(),
@@ -344,9 +301,6 @@ describe("sendMultiplayerGameRequest", () => {
 
     const supabase = {
       from: jest.fn().mockReturnValueOnce(pendingLookupBuilder),
-      functions: {
-        invoke: jest.fn(),
-      },
     };
 
     getSupabaseClient.mockReturnValue(supabase);
@@ -366,6 +320,5 @@ describe("sendMultiplayerGameRequest", () => {
       reason: "already_pending",
       requestId: "req-existing",
     });
-    expect(supabase.functions.invoke).not.toHaveBeenCalled();
   });
 });

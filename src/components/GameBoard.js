@@ -2,10 +2,14 @@ import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Animated, Platform, Easing } from 'react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import LinearGradient from 'react-native-linear-gradient';
+import BoardTileFace from './BoardTileFace';
 
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 1.75;
-const ZOOM_STEP = 0.010;
+const MAX_ZOOM = 2;
+const PINCH_ZOOM_IN_SENSITIVITY = 0.38;
+const PINCH_ZOOM_OUT_SENSITIVITY = 0.72;
+const PINCH_ZOOM_IN_DEADZONE = 0.02;
+const PINCH_ZOOM_OUT_DEADZONE = 0.01;
 const BOARD_BORDER = 2;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -29,13 +33,98 @@ const OVERLAY_PAN_MIN_DISTANCE = 0;
 
 const CELL_SIZE_EFFECTIVE = TILE_SIZE + 2 * CELL_MARGIN;
 const BOARD_INDICES = Array.from({ length: BOARD_SIZE }, (_, index) => index);
+const INTERACTION_MODE_IDLE = 'idle';
+const INTERACTION_MODE_TILE_DRAG = 'tile_drag';
+const INTERACTION_MODE_PINCH_ZOOM = 'pinch_zoom';
+const ZOOM_BOUND_EPSILON = 0.0005;
+const ZOOM_BOUND_LOCK_RELEASE_DELTA = 0.015;
+const ZOOM_DIRECTION_LOCK_DEADZONE = 0.002;
 
-const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, settlingBoardTile = null, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false, allowEmptyCellPress = false, submitScorePreview = null, submitScorePreviewCell = null, isDarkMode = false }) => {
+function dampenPinchScale(rawScale) {
+    if (!Number.isFinite(rawScale) || rawScale <= 0) {
+        return 1;
+    }
+    const delta = rawScale - 1;
+    const isZoomIn = delta > 0;
+    const deadzone = isZoomIn ? PINCH_ZOOM_IN_DEADZONE : PINCH_ZOOM_OUT_DEADZONE;
+    const sensitivity = isZoomIn ? PINCH_ZOOM_IN_SENSITIVITY : PINCH_ZOOM_OUT_SENSITIVITY;
+    if (Math.abs(delta) < deadzone) {
+        return 1;
+    }
+    return 1 + delta * sensitivity;
+}
+
+function shouldSkipZoomAtBounds(currentZoom, scale) {
+    if (!Number.isFinite(scale) || scale === 1) return false;
+    if (currentZoom >= MAX_ZOOM - ZOOM_BOUND_EPSILON && scale > 1) return true;
+    if (currentZoom <= MIN_ZOOM + ZOOM_BOUND_EPSILON && scale < 1) return true;
+    return false;
+}
+
+function resolveBoundedZoom(startZoom, scale, boundLockRef) {
+    const minScale = MIN_ZOOM / startZoom;
+    const maxScale = MAX_ZOOM / startZoom;
+    const lock = boundLockRef.current;
+
+    if (lock === 'max') {
+        if (scale >= maxScale - ZOOM_BOUND_LOCK_RELEASE_DELTA) {
+            return MAX_ZOOM;
+        }
+        boundLockRef.current = null;
+    } else if (lock === 'min') {
+        if (scale <= minScale + ZOOM_BOUND_LOCK_RELEASE_DELTA) {
+            return MIN_ZOOM;
+        }
+        boundLockRef.current = null;
+    }
+
+    if (scale >= maxScale) {
+        boundLockRef.current = 'max';
+        return MAX_ZOOM;
+    }
+    if (scale <= minScale) {
+        boundLockRef.current = 'min';
+        return MIN_ZOOM;
+    }
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, startZoom * scale));
+}
+
+function resolveDirectionLockedScale(rawScale, scale, directionLockRef) {
+    if (!Number.isFinite(rawScale) || !Number.isFinite(scale)) return 1;
+    const direction = directionLockRef.current;
+    if (!direction) {
+        if (rawScale > 1 + ZOOM_DIRECTION_LOCK_DEADZONE) {
+            directionLockRef.current = 'in';
+            return scale;
+        }
+        if (rawScale < 1 - ZOOM_DIRECTION_LOCK_DEADZONE) {
+            directionLockRef.current = 'out';
+            return scale;
+        }
+        return 1;
+    }
+    if (direction === 'in' && rawScale < 1) return 1;
+    if (direction === 'out' && rawScale > 1) return 1;
+    return scale;
+}
+
+function enforceDirectionLockedZoom(nextZoom, currentZoom, direction) {
+    if (!direction) return nextZoom;
+    if (direction === 'out') {
+        return Math.min(nextZoom, currentZoom);
+    }
+    if (direction === 'in') {
+        return Math.max(nextZoom, currentZoom);
+    }
+    return nextZoom;
+}
+
+const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, settlingBoardTile = null, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false, allowEmptyCellPress = false, submitScorePreview = null, submitScorePreviewIsValid = false, submitScorePreviewCell = null, isDarkMode = false }) => {
     const boardViewRef = useRef(null);
     const zoomWrapperRef = useRef(null);
     const [zoom, setZoom] = useState(1);
-    const zoomRef = useRef(zoom);
-    zoomRef.current = zoom;
+    const zoomRef = useRef(1);
+    const zoomAnim = useRef(new Animated.Value(1)).current;
 
     // Pan as Animated.ValueXY so updates run on native driver (no re-render per frame = smooth)
     const panAnim = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
@@ -43,7 +132,12 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
     const panStartRef = useRef({ x: 0, y: 0 });
     const twoTouchStart = useRef(null); // { centerX, centerY, initialMaxDist, zoom, panX, panY } when active
     const pinchStartRef = useRef(null); // { zoom, panX, panY, focalX, focalY }
+    const zoomBoundLockRef = useRef(null); // 'max' | 'min' | null
+    const zoomDirectionLockRef = useRef(null); // 'in' | 'out' | null
+    const tileDragActiveRef = useRef(false);
+    const interactionModeRef = useRef(INTERACTION_MODE_IDLE);
     const draggingTileFromOverlayRef = useRef(false);
+    const lastOverlayPointRef = useRef(null);
     const onBoardTilePickupRef = useRef(onBoardTilePickup);
     const onBoardDragUpdateRef = useRef(onBoardDragUpdate);
     const onBoardTileDropRef = useRef(onBoardTileDrop);
@@ -55,21 +149,37 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
     getDraggableTileCellRef.current = getDraggableTileCell;
     onBoardTapRef.current = onBoardTap;
 
+    const commitZoom = useCallback((nextZoom, flush = false) => {
+        zoomRef.current = nextZoom;
+        zoomAnim.setValue(nextZoom);
+        if (flush) {
+            setZoom((prev) => (Math.abs(prev - nextZoom) < 0.0005 ? prev : nextZoom));
+        }
+    }, [zoomAnim]);
+
     const handleOverlayBoardPickup = useCallback((absoluteX, absoluteY) => {
         const cell = getDraggableTileCellRef.current?.(absoluteX, absoluteY);
         if (cell) {
             draggingTileFromOverlayRef.current = true;
+            tileDragActiveRef.current = true;
+            interactionModeRef.current = INTERACTION_MODE_TILE_DRAG;
+            lastOverlayPointRef.current = { x: absoluteX, y: absoluteY };
             onBoardTilePickupRef.current?.(cell.row, cell.col, absoluteX, absoluteY);
             return true;
         }
 
         draggingTileFromOverlayRef.current = false;
+        tileDragActiveRef.current = false;
+        if (interactionModeRef.current === INTERACTION_MODE_TILE_DRAG) {
+            interactionModeRef.current = INTERACTION_MODE_IDLE;
+        }
         panStartRef.current = { x: panCurrentRef.current.x, y: panCurrentRef.current.y };
         return false;
     }, []);
 
     const handleOverlayBoardMove = useCallback((absoluteX, absoluteY, translationX, translationY) => {
         if (draggingTileFromOverlayRef.current) {
+            lastOverlayPointRef.current = { x: absoluteX, y: absoluteY };
             onBoardDragUpdateRef.current?.(absoluteX, absoluteY);
             return;
         }
@@ -91,6 +201,23 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
             onBoardTapRef.current?.(absoluteX, absoluteY);
         }
         draggingTileFromOverlayRef.current = false;
+        tileDragActiveRef.current = false;
+        interactionModeRef.current = INTERACTION_MODE_IDLE;
+        lastOverlayPointRef.current = null;
+    }, []);
+
+    const handleOverlayPanFinalize = useCallback((absoluteX, absoluteY) => {
+        if (!draggingTileFromOverlayRef.current) return;
+        const point = Number.isFinite(absoluteX) && Number.isFinite(absoluteY)
+            ? { x: absoluteX, y: absoluteY }
+            : lastOverlayPointRef.current;
+        if (point) {
+            onBoardTileDropRef.current?.(point.x, point.y);
+        }
+        draggingTileFromOverlayRef.current = false;
+        tileDragActiveRef.current = false;
+        interactionModeRef.current = INTERACTION_MODE_IDLE;
+        lastOverlayPointRef.current = null;
     }, []);
 
     useEffect(() => {
@@ -139,9 +266,14 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
     }, []);
 
     const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    const isTileDragActive = useCallback(
+        () => tileDragActiveRef.current || draggingTileFromOverlayRef.current || !!dragSourceCell,
+        [dragSourceCell]
+    );
 
     // Two-touch zoom: focal = bottom finger (fixed at start). Scale = longest drag from center (either finger).
     const handleTwoTouchMove = useCallback((e) => {
+        if (interactionModeRef.current !== INTERACTION_MODE_PINCH_ZOOM || isTileDragActive()) return;
         const start = twoTouchStart.current;
         if (!start || !e.nativeEvent.touches || e.nativeEvent.touches.length < 2) return;
         const t0 = e.nativeEvent.touches[0];
@@ -153,8 +285,21 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
         const d1 = dist(p1, center);
         const currentMaxDist = Math.max(d0, d1);
         if (start.initialMaxDist <= 0) return;
-        const scale = currentMaxDist / start.initialMaxDist;
-        const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, start.zoom * scale));
+        const rawScale = currentMaxDist / start.initialMaxDist;
+        const dampenedScale = dampenPinchScale(rawScale);
+        const scale = resolveDirectionLockedScale(
+            rawScale,
+            dampenedScale,
+            zoomDirectionLockRef
+        );
+        if (shouldSkipZoomAtBounds(zoomRef.current, scale)) return;
+        const boundedZoom = resolveBoundedZoom(start.zoom, scale, zoomBoundLockRef);
+        const newZoom = enforceDirectionLockedZoom(
+            boundedZoom,
+            zoomRef.current,
+            zoomDirectionLockRef.current
+        );
+        if (Math.abs(newZoom - zoomRef.current) < ZOOM_BOUND_EPSILON) return;
         const C = GRID_SIZE / 2;
         // Keep focal (bottom finger at start) fixed: pan_new = pan_old + (focal - C)*(z_old - z_new)
         const panX = start.panX + (start.focalX - C) * (start.zoom - newZoom);
@@ -163,11 +308,13 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
         const clampedY = clampPan(panY, newZoom);
         panCurrentRef.current = { x: clampedX, y: clampedY };
         panAnim.setValue({ x: clampedX, y: clampedY });
-        setZoom(newZoom);
-    }, [touchToContent, panAnim]);
+        commitZoom(newZoom);
+    }, [touchToContent, panAnim, isTileDragActive, commitZoom]);
 
     const handleTwoTouchGrant = useCallback((e) => {
+        if (isTileDragActive()) return;
         if (!e.nativeEvent.touches || e.nativeEvent.touches.length < 2) return;
+        interactionModeRef.current = INTERACTION_MODE_PINCH_ZOOM;
         const t0 = e.nativeEvent.touches[0];
         const t1 = e.nativeEvent.touches[1];
         const p0 = touchToContent(t0.pageX, t0.pageY);
@@ -177,9 +324,11 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
         const center = { x: centerX, y: centerY };
         const d0 = dist(p0, center);
         const d1 = dist(p1, center);
-        const initialMaxDist = Math.max(d0, d1, 1); // avoid 0
+        const initialMaxDist = Math.max(d0, d1, 1); // avoid divide-by-zero only
         const pan = panCurrentRef.current;
         const bottom = p0.y >= p1.y ? p0 : p1;
+        zoomBoundLockRef.current = null;
+        zoomDirectionLockRef.current = null;
         twoTouchStart.current = {
             focalX: bottom.x,
             focalY: bottom.y,
@@ -191,13 +340,23 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
             panX: pan.x,
             panY: pan.y,
         };
-    }, [touchToContent]);
+    }, [touchToContent, isTileDragActive]);
 
     const handleTwoTouchRelease = useCallback(() => {
         twoTouchStart.current = null;
-    }, []);
+        zoomBoundLockRef.current = null;
+        zoomDirectionLockRef.current = null;
+        commitZoom(zoomRef.current, true);
+        if (interactionModeRef.current === INTERACTION_MODE_PINCH_ZOOM) {
+            interactionModeRef.current = INTERACTION_MODE_IDLE;
+        }
+    }, [commitZoom]);
 
     const handlePinchBegin = useCallback((focalX, focalY) => {
+        if (isTileDragActive()) return;
+        interactionModeRef.current = INTERACTION_MODE_PINCH_ZOOM;
+        zoomBoundLockRef.current = null;
+        zoomDirectionLockRef.current = null;
         const focal = touchToContent(focalX, focalY);
         const pan = panCurrentRef.current;
         pinchStartRef.current = {
@@ -207,13 +366,31 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
             focalX: focal.x,
             focalY: focal.y,
         };
-    }, [touchToContent]);
+    }, [touchToContent, isTileDragActive]);
 
     const handlePinchUpdate = useCallback((scale, focalX, focalY) => {
+        if (interactionModeRef.current !== INTERACTION_MODE_PINCH_ZOOM || isTileDragActive()) return;
         const start = pinchStartRef.current;
         if (!start) return;
+        const dampenedScale = dampenPinchScale(scale);
+        const effectiveScale = resolveDirectionLockedScale(
+            scale,
+            dampenedScale,
+            zoomDirectionLockRef
+        );
+        if (shouldSkipZoomAtBounds(zoomRef.current, effectiveScale)) return;
         const focal = touchToContent(focalX, focalY);
-        const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, start.zoom * scale));
+        const boundedZoom = resolveBoundedZoom(
+            start.zoom,
+            effectiveScale,
+            zoomBoundLockRef
+        );
+        const nextZoom = enforceDirectionLockedZoom(
+            boundedZoom,
+            zoomRef.current,
+            zoomDirectionLockRef.current
+        );
+        if (Math.abs(nextZoom - zoomRef.current) < ZOOM_BOUND_EPSILON) return;
         const C = GRID_SIZE / 2;
         const focalXForPan = Number.isFinite(focal.x) ? focal.x : start.focalX;
         const focalYForPan = Number.isFinite(focal.y) ? focal.y : start.focalY;
@@ -223,14 +400,27 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
         const clampedY = clampPan(panY, nextZoom);
         panCurrentRef.current = { x: clampedX, y: clampedY };
         panAnim.setValue({ x: clampedX, y: clampedY });
-        setZoom(nextZoom);
-    }, [panAnim, touchToContent]);
+        commitZoom(nextZoom);
+    }, [panAnim, touchToContent, isTileDragActive, commitZoom]);
 
     const handlePinchEnd = useCallback(() => {
         pinchStartRef.current = null;
-    }, []);
+        zoomBoundLockRef.current = null;
+        zoomDirectionLockRef.current = null;
+        commitZoom(zoomRef.current, true);
+        if (interactionModeRef.current === INTERACTION_MODE_PINCH_ZOOM) {
+            interactionModeRef.current = INTERACTION_MODE_IDLE;
+        }
+    }, [commitZoom]);
 
-    const wantTwoTouch = useCallback((e) => e.nativeEvent.touches && e.nativeEvent.touches.length >= 2, []);
+    const wantTwoTouch = useCallback(
+        (e) =>
+            interactionModeRef.current !== INTERACTION_MODE_TILE_DRAG &&
+            !isTileDragActive() &&
+            e.nativeEvent.touches &&
+            e.nativeEvent.touches.length >= 2,
+        [isTileDragActive]
+    );
     const onMoveShouldSetResponderCapture = wantTwoTouch;
     const onMoveShouldSetResponder = wantTwoTouch;
 
@@ -277,6 +467,9 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                 })
                 .onEnd((e) => {
                     handleOverlayBoardEnd(e.absoluteX, e.absoluteY);
+                })
+                .onFinalize((e) => {
+                    handleOverlayPanFinalize(e?.absoluteX, e?.absoluteY);
                 });
         }
 
@@ -295,8 +488,11 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
             })
             .onEnd((e) => {
                 handleOverlayBoardEnd(e.absoluteX, e.absoluteY);
+            })
+            .onFinalize((e) => {
+                handleOverlayPanFinalize(e?.absoluteX, e?.absoluteY);
             });
-    }, [handleOverlayBoardEnd, handleOverlayBoardMove, handleOverlayBoardPickup]);
+    }, [handleOverlayBoardEnd, handleOverlayBoardMove, handleOverlayBoardPickup, handleOverlayPanFinalize]);
 
     const overlayPinchGesture = useMemo(() => {
         if (!ANDROID_GESTURE_PIPELINE_V2) return null;
@@ -321,8 +517,11 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
         return overlayPanGesture;
     }, [overlayPanGesture, overlayPinchGesture]);
 
-    const updateGridBounds = useCallback(() => {
-        if (!boardLayoutRef || !zoomWrapperRef.current) return;
+    const measureGridBounds = useCallback((onComplete) => {
+        if (!zoomWrapperRef.current || !boardLayoutRef?.current) {
+            onComplete?.();
+            return;
+        }
         zoomWrapperRef.current.measureInWindow((lx, ly, w, h) => {
             if (boardLayoutRef.current) {
                 boardLayoutRef.current.screenLeft = lx;
@@ -330,8 +529,13 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                 boardLayoutRef.current.screenRight = lx + w;
                 boardLayoutRef.current.screenBottom = ly + h;
             }
+            onComplete?.();
         });
     }, [boardLayoutRef]);
+
+    const updateGridBounds = useCallback(() => {
+        measureGridBounds();
+    }, [measureGridBounds]);
 
     const updateBoardLayout = useCallback(() => {
         if (!boardLayoutRef || !boardViewRef.current) return;
@@ -347,10 +551,11 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                 contentOriginX: effectivePad,
                 contentOriginY: effectivePad,
                 getZoomPan: () => ({ zoom: zoomRef.current, pan: panCurrentRef.current }),
+                measureGridBounds,
             };
             updateGridBounds();
         });
-    }, [boardLayoutRef, updateGridBounds]);
+    }, [boardLayoutRef, measureGridBounds, updateGridBounds]);
 
     useEffect(() => {
         if (!boardLayoutRef) return;
@@ -386,7 +591,6 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
         if (!submitScorePreviewCell) return null;
         return `${submitScorePreviewCell.row},${submitScorePreviewCell.col}`;
     }, [submitScorePreviewCell]);
-
     return (
         <View
             ref={boardViewRef}
@@ -406,7 +610,7 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                             transform: [
                                 { translateX: -GRID_SIZE / 2 },
                                 { translateY: -GRID_SIZE / 2 },
-                                { scale: zoom },
+                                { scale: zoomAnim },
                                 { translateX: GRID_SIZE / 2 },
                                 { translateY: GRID_SIZE / 2 },
                                 { translateX: panAnim.x },
@@ -448,7 +652,14 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
                                         submitScorePreviewCellKey === `${row},${col}`
                                     }
                                     submitScorePreview={submitScorePreview}
+                                    submitScorePreviewIsValid={submitScorePreviewIsValid}
                                     isDarkMode={isDarkMode}
+                                    onTilePickupStateChange={(active) => {
+                                        tileDragActiveRef.current = active;
+                                        interactionModeRef.current = active
+                                            ? INTERACTION_MODE_TILE_DRAG
+                                            : INTERACTION_MODE_IDLE;
+                                    }}
                                 />
                             ); })}
                         </View>
@@ -507,31 +718,83 @@ const GRID_SIZE = BOARD_SIZE * (TILE_SIZE + 2 * CELL_MARGIN);
 
 // Base viewport inset (border + padding). Pan viewport is adjusted by a zoom-dependent multiplier.
 const PAN_VIEWPORT_INSET_BASE = (2 + BOARD_PADDING); // 12
+const REFERENCE_PRO_MAX_SCREEN_WIDTH = 430;
+const INSET_DEVICE_SCALE = Math.max(
+    0.78,
+    Math.min(1, SCREEN_WIDTH / REFERENCE_PRO_MAX_SCREEN_WIDTH)
+);
 
 // Inset multiplier varies continuously with zoom (1–1.75) so pinch on iPhone works at any zoom level.
 function getInsetMultiplier(zoom) {
     const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
-    if (z <= 1.05) return -0.1;
-    if (z <= 1.10) return 0.1;
-    if (z <= 1.25) {
-        const t = (z - 1.1) / (1.25 - 1.1);
-        return 0.1 + t * (2 - 0.1);
-    }
-    if (z >= 1.75) return 15;
-    if (z <= 1.4) {
-        const t = (z - 1.25) / (1.4 - 1.25);
-        return 2 + t * (4.4 - 2);
-    }
-    if (z <= 1.5) {
+    let base = 23.5;
+    if (z <= 1.02) base = -0.4;
+    else if (z <= 1.05) base = -0.25;
+    else if (z <= 1.075) base = -0.1;
+    else if (z <= 1.10) base = 0;
+    else if (z <= 1.17) {
+        const t = (z - 1.1) / (1.17 - 1.1);
+        base = 0.1 + t * (1 - 0.1);
+    } else if (z <= 1.25) {
+        const t = (z - 1.17) / (1.25 - 1.17);
+        base = 1 + t * (1.8 - 1);
+    } else if (z <= 1.32) {
+        const t = (z - 1.25) / (1.32 - 1.25);
+        base = 1.8 + t * (3.2 - 1.8);
+    } else if (z <= 1.4) {
+        const t = (z - 1.32) / (1.4 - 1.32);
+        base = 3.2 + t * (5.2 - 3.2);
+    } else if (z <= 1.5) {
         const t = (z - 1.4) / (1.5 - 1.4);
-        return 4.4 + t * (6.7 - 4.4);
-    }
-    if (z <= 1.6) {
+        base = 5.2 + t * (7.55 - 5.2);
+    } else if (z <= 1.6) {
         const t = (z - 1.5) / (1.6 - 1.5);
-        return 6.7 + t * (9 - 6.7);
+        base = 7.55 + t * (10.5 - 7.55);
+    } else if (z <= 1.75) {
+        const t = (z - 1.6) / (1.75 - 1.6);
+        base = 10.5 + t * (15 - 10.5);
+    } else if (z <= 1.77) {
+        const t = (z - 1.75) / (1.77 - 1.75);
+        base = 15 + t * (15.7 - 15);
+    } else if (z <= 1.79) {
+        const t = (z - 1.77) / (1.79 - 1.77);
+        base = 15.7 + t * (16.2 - 15.7);
+    } else if (z > 1.79 && z <= 1.82) {
+        const t = (z - 1.79) / (1.82 - 1.79);
+        base = 16.2 + t * (17.1 - 16.2);
+    } else if (z <= 1.85) {
+        const t = (z - 1.82) / (1.85 - 1.82);
+        base = 17.1 + t * (18.2 - 17.1);
+    } else if (z <= 1.9) {
+        const t = (z - 1.85) / (1.9 - 1.85);
+        base = 18.2 + t * (19.8 - 18.2);
+    } else if (z <= 1.95) {
+        const t = (z - 1.9) / (1.95 - 1.9);
+        base = 19.8 + t * (21.4 - 19.8);
+    } else if (INSET_DEVICE_SCALE == 1) {
+        if (z <= 1.97) {
+            const t = (z - 1.95) / (1.97 - 1.95);
+            base = 21.4 + t * (21.9 - 21.4);    
+        } else if (z <= 1.98) {
+            const t = (z - 1.97) / (1.98 - 1.97);
+            base = 21.9 + t * (22.4 - 21.9);
+        } else if (z <= 2.0) {
+            const t = (z - 1.98) / (1.99 - 1.98);
+            base = 22.4 + t * (23 - 22.4);
+        }
+    } else if (INSET_DEVICE_SCALE < 1) {
+        if (z <= 1.97) {
+            const t = (z - 1.95) / (1.97 - 1.95);
+            base = 21.4 + t * (21.9 - 21.4);    
+        } else if (z <= 1.98) {
+            const t = (z - 1.97) / (1.98 - 1.97);
+            base = 21.9 + t * (22.4 - 21.9);
+        } else if (z <= 2.0) {
+            const t = (z - 1.98) / (1.99 - 1.98);
+            base = 22.4 + t * (22.7 - 22.4);
+        }
     }
-    const t = (z - 1.6) / (1.75 - 1.6);
-    return 11 + t * (15 - 11);
+    return base * INSET_DEVICE_SCALE;
 }
 
 function clampPan(value, zoom) {
@@ -708,12 +971,16 @@ const styles = StyleSheet.create({
     },
     tileValue: {
         position: 'absolute',
-        top: 2,
-        right: 3,
+        top: 1,
+        right: 1,
         fontSize: TILE_SIZE * 0.2,
         color: '#7f8c8d',
     },
     tileValueDark: {
+        position: 'absolute',
+        top: 1,
+        right: 1,
+        fontSize: TILE_SIZE * 0.2,
         color: '#000000',
     },
     tileEdgeTop: {
@@ -763,6 +1030,12 @@ const styles = StyleSheet.create({
     submitScorePreviewBadgeDark: {
         backgroundColor: '#d1d5db',
     },
+    submitScorePreviewBadgeValid: {
+        backgroundColor: '#22c55e',
+    },
+    submitScorePreviewBadgeValidDark: {
+        backgroundColor: '#16a34a',
+    },
     submitScorePreviewText: {
         fontSize: 5,
         lineHeight: 10,
@@ -783,11 +1056,14 @@ const PREMIUM_LABELS = { dw: 'DW', tw: 'TW', dl: 'DL', tl: 'TL', center: '★' }
 const BoardCell = React.memo(function BoardCell({
     row, col, tile, isSelected, isDragSource, premium,
     onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, onCellClick, allowEmptyCellPress,
-    showSubmitScorePreview, submitScorePreview,
+    showSubmitScorePreview, submitScorePreview, submitScorePreviewIsValid = false,
+    onTilePickupStateChange,
     isDarkMode = false,
 }) {
     const previewBadgeScale = useRef(new Animated.Value(1)).current;
     const previousPreviewValueRef = useRef(null);
+    const pickupPointerIdRef = useRef(null);
+    const pickupLastPointRef = useRef(null);
     const darkShadowGradientColors = ['rgba(0,0,0,0.22)', 'rgba(0,0,0,0.08)', 'rgba(0,0,0,0)'];
     const showTileInCell = tile && !isDragSource;
 
@@ -798,10 +1074,11 @@ const BoardCell = React.memo(function BoardCell({
             return;
         }
 
+        const previewSignature = `${submitScorePreview}:${submitScorePreviewIsValid ? 1 : 0}`;
         const shouldPulse =
             previousPreviewValueRef.current == null ||
-            previousPreviewValueRef.current !== submitScorePreview;
-        previousPreviewValueRef.current = submitScorePreview;
+            previousPreviewValueRef.current !== previewSignature;
+        previousPreviewValueRef.current = previewSignature;
 
         if (!shouldPulse) return;
 
@@ -820,7 +1097,7 @@ const BoardCell = React.memo(function BoardCell({
                 useNativeDriver: true,
             }),
         ]).start();
-    }, [previewBadgeScale, showSubmitScorePreview, submitScorePreview]);
+    }, [previewBadgeScale, showSubmitScorePreview, submitScorePreview, submitScorePreviewIsValid]);
 
     const cellStyle = useMemo(() => [
         styles.cell,
@@ -857,18 +1134,13 @@ const BoardCell = React.memo(function BoardCell({
     const cellContent = (
         <View style={styles.cellInner}>
             {showTileInCell ? (
-                <View style={[styles.tile, isDarkMode ? styles.tileDark : null]}>
-                    {!isDarkMode && <View style={styles.tileEdgeTop} pointerEvents="none" />}
-                    {!isDarkMode && <View style={styles.tileEdgeRight} pointerEvents="none" />}
-                    {!isDarkMode && <View style={styles.tileEdgeLeftLower} pointerEvents="none" />}
-                    {!isDarkMode && <View style={styles.tileEdgeBottomLower} pointerEvents="none" />}
-                    <Text style={[styles.tileLetter, isDarkMode ? styles.tileLetterDark : null]}>{tile.letter}</Text>
-                    {!tile.isBlank && (
-                        <Text style={[styles.tileValue, isDarkMode ? styles.tileValueDark : null]}>
-                            {tile.value}
-                        </Text>
-                    )}
-                </View>
+                <BoardTileFace
+                    letter={tile.letter}
+                    value={tile.value}
+                    size={TILE_SIZE}
+                    isDarkMode={isDarkMode}
+                    fitContainer
+                />
             ) : (
                 premium && (
                     <Text style={styles.premiumLabel}>{PREMIUM_LABELS[premium] ?? premium}</Text>
@@ -886,13 +1158,20 @@ const BoardCell = React.memo(function BoardCell({
                     style={[
                         styles.submitScorePreviewBadge,
                         isDarkMode ? styles.submitScorePreviewBadgeDark : null,
+                        submitScorePreviewIsValid
+                            ? (isDarkMode
+                                ? styles.submitScorePreviewBadgeValidDark
+                                : styles.submitScorePreviewBadgeValid)
+                            : null,
                         { transform: [{ scale: previewBadgeScale }] },
                     ]}
                 >
                     <Text
                         style={[
                             styles.submitScorePreviewText,
-                            isDarkMode ? styles.submitScorePreviewTextDark : null,
+                            isDarkMode && !submitScorePreviewIsValid
+                                ? styles.submitScorePreviewTextDark
+                                : null,
                         ]}
                     >
                         {submitScorePreview}
@@ -909,19 +1188,60 @@ const BoardCell = React.memo(function BoardCell({
                 onStartShouldSetResponder={() => true}
                 onTouchStart={(e) => {
                     if (!(tile && tile.isFromRack && !tile.scored) || !onBoardTilePickup) return;
-                    const { pageX, pageY } = e.nativeEvent;
+                    if ((e.nativeEvent.touches?.length ?? 0) >= 2) return;
+                    const starterTouch =
+                        e.nativeEvent.changedTouches?.[0] ??
+                        e.nativeEvent.touches?.[0] ??
+                        e.nativeEvent;
+                    const { pageX, pageY } = starterTouch;
+                    const pointerId = Number.isFinite(starterTouch.identifier)
+                        ? starterTouch.identifier
+                        : null;
+                    pickupPointerIdRef.current = pointerId;
+                    pickupLastPointRef.current = { pageX, pageY };
+                    onTilePickupStateChange?.(true);
                     onBoardTilePickup(row, col, pageX, pageY);
                 }}
                 onResponderMove={(e) => {
                     if (onBoardDragUpdate) {
-                        const { pageX, pageY } = e.nativeEvent;
+                        const pointerId = pickupPointerIdRef.current;
+                        const pointerTouch =
+                            pointerId == null
+                                ? e.nativeEvent.touches?.[0] ?? e.nativeEvent
+                                : e.nativeEvent.touches?.find((touch) => touch.identifier === pointerId);
+                        if (!pointerTouch) return;
+                        const { pageX, pageY } = pointerTouch;
+                        pickupLastPointRef.current = { pageX, pageY };
                         onBoardDragUpdate(pageX, pageY);
                     }
                 }}
                 onResponderRelease={(e) => {
-                    const { pageX, pageY } = e.nativeEvent;
+                    const pointerId = pickupPointerIdRef.current;
+                    const releasedTouch =
+                        pointerId == null
+                            ? e.nativeEvent.changedTouches?.[0] ??
+                              e.nativeEvent.touches?.[0] ??
+                              e.nativeEvent
+                            : e.nativeEvent.changedTouches?.find(
+                                  (touch) => touch.identifier === pointerId
+                              );
+                    if (!releasedTouch) return;
+                    const { pageX, pageY } = releasedTouch;
+                    pickupLastPointRef.current = { pageX, pageY };
+                    pickupPointerIdRef.current = null;
+                    onTilePickupStateChange?.(false);
                     if (onBoardTileDrop && canPickup) onBoardTileDrop(pageX, pageY);
                     else if (tile && onCellClick) onCellClick(row, col);
+                }}
+                onResponderTerminate={() => {
+                    pickupPointerIdRef.current = null;
+                    onTilePickupStateChange?.(false);
+                    if (onBoardTileDrop && canPickup && pickupLastPointRef.current) {
+                        onBoardTileDrop(
+                            pickupLastPointRef.current.pageX,
+                            pickupLastPointRef.current.pageY
+                        );
+                    }
                 }}
             >
                 {cellContent}

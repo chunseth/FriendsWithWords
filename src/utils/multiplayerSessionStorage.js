@@ -48,6 +48,10 @@ const sanitizeMultiplayerSession = (value) => {
     schemaVersion:
       typeof value.schemaVersion === "number" ? value.schemaVersion : 1,
     modeId: typeof value.modeId === "string" ? value.modeId : null,
+    boardVariantId:
+      typeof value.boardVariantId === "string" && value.boardVariantId.length > 0
+        ? value.boardVariantId
+        : null,
     sessionId: value.sessionId,
     seed: typeof value.seed === "string" ? value.seed : null,
     status: typeof value.status === "string" ? value.status : "active",

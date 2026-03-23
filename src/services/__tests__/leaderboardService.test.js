@@ -100,34 +100,34 @@ describe("submitCompletedScore multiplayer normalization", () => {
   });
 });
 
-describe("global leaderboard player deduping", () => {
+describe("global leaderboard deduping", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("keeps only the highest submitted score per player", async () => {
+  it("keeps only the highest submitted score per multiplayer pair", async () => {
     const data = [
       {
         player_id: "player-1",
-        display_name: "Player 1",
+        display_name: "Seth\nMomo",
         final_score: 220,
         completed_at: "2026-03-07T10:00:00.000Z",
       },
       {
         player_id: "player-1",
-        display_name: "Player 1",
+        display_name: "Momo\nSeth",
         final_score: 215,
         completed_at: "2026-03-06T10:00:00.000Z",
       },
       {
-        player_id: "player-2",
-        display_name: "Player 2",
+        player_id: "player-1",
+        display_name: "Seth\nSeth3",
         final_score: 210,
         completed_at: "2026-03-08T10:00:00.000Z",
       },
       {
         player_id: "player-3",
-        display_name: "Player 3",
+        display_name: "Alice\nBob",
         final_score: 205,
         completed_at: "2026-03-09T10:00:00.000Z",
       },
@@ -155,10 +155,10 @@ describe("global leaderboard player deduping", () => {
 
     expect(result.ok).toBe(true);
     expect(result.leaderboard).toHaveLength(3);
-    expect(result.leaderboard.map((entry) => entry.player_id)).toEqual([
-      "player-1",
-      "player-2",
-      "player-3",
+    expect(result.leaderboard.map((entry) => entry.display_name)).toEqual([
+      "Seth\nMomo",
+      "Seth\nSeth3",
+      "Alice\nBob",
     ]);
     expect(result.leaderboard[0].final_score).toBe(220);
   });

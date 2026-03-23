@@ -1623,12 +1623,6 @@ const MultiplayerMenuScreen = ({
               <Text style={styles.actionModalButtonText}>Archive Game</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.actionModalButton, styles.actionModalButtonDanger]}
-              onPress={() => setSelectedActiveGameActionType("delete")}
-            >
-              <Text style={styles.actionModalButtonDangerText}>Delete Game</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               style={styles.actionModalCancelButton}
               onPress={() => setSelectedActiveGameForDeletion(null)}
             >

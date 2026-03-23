@@ -6,6 +6,10 @@ const TILE_MARGIN = 2;
 export const SLOT_WIDTH = TILE_SIZE + 2 * TILE_MARGIN;
 const SHUFFLE_ANIM_DURATION = 280;
 const CLEAR_RETURN_ANIM_DURATION = 380;
+const CLEAR_RETURN_SHRINK_DURATION = 100;
+const CLEAR_RETURN_START_SCALE = 0.8;
+const CLEAR_RETURN_SHRINK_SCALE = 0.6;
+const RACK_REORDER_SETTLE_ANIM_DURATION = 220;
 
 const TAP_SLOP = 14;
 const RACK_TILE_PICKUP_SLOP = 10;
@@ -58,6 +62,7 @@ function DraggableTileInner({
 
   const handleTouchStart = (e) => {
     if (isUsed || interactionsDisabled) return;
+    if (touchStartRef.current) return;
     const { pageX, pageY } = getTouchPoint(e);
     const { locationX = 0, locationY = 0 } = e.nativeEvent;
     touchStartRef.current = { x: pageX, y: pageY };
@@ -100,13 +105,20 @@ function DraggableTileInner({
       return;
     }
     const { pageX, pageY } = getTouchPoint(e);
+    const touchStart = touchStartRef.current;
+    const deltaX = touchStart ? pageX - touchStart.x : 0;
+    const deltaY = touchStart ? pageY - touchStart.y : 0;
     if (onPress && !didMoveRef.current) {
       onPress(index);
       touchStartRef.current = null;
       lastTouchRef.current = null;
       return;
     }
-    onDrop(index, pageX, pageY);
+    onDrop(index, pageX, pageY, {
+      didMove: didMoveRef.current,
+      deltaX,
+      deltaY,
+    });
     touchStartRef.current = null;
     lastTouchRef.current = null;
   };
@@ -177,7 +189,7 @@ function DraggableTileInner({
         left: RACK_TILE_PICKUP_SLOP,
         right: RACK_TILE_PICKUP_SLOP,
       }}
-      onTouchStart={USE_ANDROID_RESPONDER_INPUT ? undefined : handleTouchStart}
+      onTouchStart={handleTouchStart}
       onTouchMove={USE_ANDROID_RESPONDER_INPUT ? undefined : handleTouchMove}
       onTouchEnd={USE_ANDROID_RESPONDER_INPUT ? undefined : handleTouchEnd}
       onTouchCancel={USE_ANDROID_RESPONDER_INPUT ? undefined : handleTouchCancel}
@@ -308,6 +320,7 @@ const TileRack = ({
   settlingRackSlotCount = null,
   settlingRackTileId = null,
   settlingRackOrder = null,
+  settlingRackShouldAnimateReorder = true,
   shuffleTrigger,
   clearedRackTileIds = [],
   onClearReturnAnimationComplete,
@@ -356,19 +369,26 @@ const TileRack = ({
     return clearReturnScaleRef.current[tileId];
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (clearedRackTileIds.length === 0) return;
     const tileIds = clearedRackTileIds;
     const runAnimation = () => {
       tileIds.forEach((tileId) => {
         const scale = getClearReturnScale(tileId);
-        scale.setValue(0.25);
-        Animated.spring(scale, {
-          toValue: 1,
-          useNativeDriver: true,
-          friction: 7,
-          tension: 100,
-        }).start();
+        scale.setValue(CLEAR_RETURN_START_SCALE);
+        Animated.sequence([
+          Animated.timing(scale, {
+            toValue: CLEAR_RETURN_SHRINK_SCALE,
+            duration: CLEAR_RETURN_SHRINK_DURATION,
+            useNativeDriver: true,
+          }),
+          Animated.spring(scale, {
+            toValue: 1,
+            useNativeDriver: true,
+            friction: 7,
+            tension: 100,
+          }),
+        ]).start();
       });
     };
     const frameId = requestAnimationFrame(runAnimation);
@@ -413,6 +433,31 @@ const TileRack = ({
       }
     });
   }, [shuffleTrigger]);
+
+  // When rack order changes during drag-settle, animate non-dragged tiles into place
+  // so adjacent swaps do not visually snap.
+  useLayoutEffect(() => {
+    if (settlingRackTileId == null || !settlingRackShouldAnimateReorder) return;
+    const prevOrder = lastOrderRef.current;
+    const newOrder = tiles.map((t) => t.id);
+    if (prevOrder.length !== newOrder.length || prevOrder.length === 0) return;
+    const orderChanged = prevOrder.some((id, idx) => id !== newOrder[idx]);
+    if (!orderChanged) return;
+
+    tiles.forEach((tile, newIndex) => {
+      if (tile.id === settlingRackTileId) return;
+      const oldIndex = prevOrder.indexOf(tile.id);
+      if (oldIndex < 0 || oldIndex === newIndex) return;
+      const anim = getAnimatedValue(tile.id);
+      const delta = (oldIndex - newIndex) * SLOT_WIDTH;
+      anim.setValue(delta);
+      Animated.timing(anim, {
+        toValue: 0,
+        duration: RACK_REORDER_SETTLE_ANIM_DURATION,
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [settlingRackShouldAnimateReorder, settlingRackTileId, tiles]);
 
   // Update displacement Animated.Values only when hover index changes; only affected tiles get setValue.
   useEffect(() => {
@@ -483,6 +528,11 @@ const TileRack = ({
     },
     [tiles]
   );
+
+  useEffect(() => {
+    if (!isDraggingOutsideRack) return;
+    applyDisplacementOffsets(-1, -1);
+  }, [applyDisplacementOffsets, isDraggingOutsideRack]);
 
   useEffect(() => {
     applyDisplacementOffsets(
@@ -608,8 +658,9 @@ const TileRack = ({
   const slotIndices = Array.from({ length: slotCount }, (_, i) => i);
 
   const hasDisplacement =
-    (draggingVisibleIndexValue != null && hoverIndexValue != null) ||
-    (draggingVisibleIndex != null && predictedInsertionIndex != null);
+    !collapseDraggedTile &&
+    ((draggingVisibleIndexValue != null && hoverIndexValue != null) ||
+      (draggingVisibleIndex != null && predictedInsertionIndex != null));
 
   const handleRackLayout = () => {
     rackRowRef.current?.measureInWindow?.((x, y, width, height) => {

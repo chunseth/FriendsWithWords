@@ -19,7 +19,10 @@ import PendingGameRequestModal from "./PendingGameRequestModal";
 import { useAsyncCoopSession } from "../hooks/useAsyncCoopSession";
 import { useTileDragDropController } from "../hooks/useTileDragDropController";
 import { buildResolvedSubmitPayload } from "../game/shared/turnResolution";
-import { validateSubmitTurn } from "../game/shared/validation";
+import {
+  validateSubmitPlacement,
+  validateSubmitTurn,
+} from "../game/shared/validation";
 import { scoreSubmittedWords } from "../game/shared/scoring";
 import { BLANK_LETTER } from "../game/shared/bag";
 import { dictionary } from "../utils/dictionary";
@@ -36,6 +39,7 @@ import {
 } from "../services/multiplayerInboxService";
 import { deleteAcceptedMultiplayerGame } from "../services/multiplayerGameRequestService";
 import { trackMultiplayerEvent } from "../services/analyticsService";
+import { resolveRackDropExpansionTop } from "../utils/rackDropExpansion";
 
 const DRAG_TILE_HALF_SIZE = 21;
 const BOARD_SIZE = 15;
@@ -310,6 +314,7 @@ const MultiplayerModeScreen = ({
   const [waitingRackTileAnimationStates, setWaitingRackTileAnimationStates] =
     useState({});
   const [isSubmitAnimating, setIsSubmitAnimating] = useState(false);
+  const rackDropExpansionTop = useMemo(() => resolveRackDropExpansionTop(), []);
   const [preSubmitScoreDelta, setPreSubmitScoreDelta] = useState(0);
   const [isSwapMode, setIsSwapMode] = useState(false);
   const [remoteUpdateBannerText, setRemoteUpdateBannerText] = useState("");
@@ -1017,29 +1022,36 @@ const MultiplayerModeScreen = ({
       return null;
     }
 
-    const validation = validateSubmitTurn({
+    const placementValidation = validateSubmitPlacement({
       board: draftBoard,
       isFirstTurn: session.sharedBoard.every((row) => row.every((cell) => cell == null)),
       boardAtTurnStart: boardAtTurnStartRef.current,
-      dictionary,
       boardSize: BOARD_SIZE,
     });
 
-    if (!validation.ok) {
+    if (!placementValidation.ok) {
       return null;
     }
 
     const previewScoring = scoreSubmittedWords({
       board: draftBoard,
-      newWords: validation.newWords,
+      newWords: placementValidation.newWords,
       premiumSquares: session.sharedPremiumSquares,
       turnCount: session.turn.number - 1,
-      placedCells: validation.placedCells,
+      placedCells: placementValidation.placedCells,
     });
 
-    return previewScoring.turnScore ?? null;
+    const allWordsValid = placementValidation.words.every((wordData) =>
+      dictionary.isValid(wordData.word)
+    );
+
+    return {
+      score: previewScoring.turnScore ?? 0,
+      isValid: allWordsValid,
+    };
   }, [
     draftBoard,
+    dictionary,
     isSwapMode,
     selectedCells.length,
     session.sharedBoard,
@@ -1539,6 +1551,7 @@ const MultiplayerModeScreen = ({
     isRackTileUsed: isDraftRackTileUsed,
     board: draftBoard,
     boardSize: BOARD_SIZE,
+    rackDropExpansionTop,
     canInteract: canLocalPlayerAct && !isSubmitAnimating && !isSwapMode,
     isBoardTileDraggable: isDraftBoardTileDraggable,
     isBlankRackTile,
@@ -2147,7 +2160,8 @@ const MultiplayerModeScreen = ({
               isSubmitAnimating ||
               draggingTile?.from === "rack"
             }
-            submitScorePreview={submitScorePreview}
+            submitScorePreview={submitScorePreview?.score ?? null}
+            submitScorePreviewIsValid={submitScorePreview?.isValid ?? false}
             submitScorePreviewCell={
               selectedCells.length > 0
                 ? selectedCells[selectedCells.length - 1]
@@ -2214,22 +2228,36 @@ const MultiplayerModeScreen = ({
               settlingRackPlaceholderIndex={
                 settlingTile?.destination === "rack"
                   ? settlingTile.slotIndex
+                  : draggingTile?.settlingDestination === "rack" &&
+                      draggingTile?.from === "board"
+                    ? draggingTile.settlingSlotIndex ?? null
                   : null
               }
               settlingRackSlotCount={
                 settlingTile?.destination === "rack"
                   ? settlingTile.slotCount
+                  : draggingTile?.settlingDestination === "rack" &&
+                      draggingTile?.from === "board"
+                    ? draggingTile.settlingSlotCount ?? null
                   : null
               }
               settlingRackTileId={
                 settlingTile?.destination === "rack"
                   ? settlingTile.id
+                  : draggingTile?.settlingDestination === "rack" &&
+                      draggingTile?.from === "board"
+                    ? draggingTile?.tile?.id ?? null
                   : null
               }
               settlingRackOrder={
                 settlingTile?.destination === "rack"
                   ? settlingTile.visibleRackOrder
                   : null
+              }
+              settlingRackShouldAnimateReorder={
+                settlingTile?.destination === "rack"
+                  ? settlingTile.shouldAnimateDisplacedReorder ?? true
+                  : true
               }
               shuffleTrigger={0}
               clearedRackTileIds={clearedRackTileIds}
@@ -2408,10 +2436,6 @@ const MultiplayerModeScreen = ({
         onArchiveGame={() => {
           setMenuVisible(false);
           setConfirmGameActionType("archive");
-        }}
-        onDeleteGame={() => {
-          setMenuVisible(false);
-          setConfirmGameActionType("delete");
         }}
       />
       <PendingGameRequestModal
