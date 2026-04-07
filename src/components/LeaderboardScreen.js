@@ -3,13 +3,13 @@ import {
   Modal,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Clipboard from "@react-native-clipboard/clipboard";
 import SFSymbolIcon from "./SFSymbolIcon";
 
@@ -157,9 +157,12 @@ const LeaderboardScreen = ({
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-      <Pressable style={styles.backHotzone} onPress={onBack} />
       <View style={styles.header}>
-        <TouchableOpacity onPress={onBack}>
+        <TouchableOpacity
+          style={styles.backTouchTarget}
+          onPress={onBack}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
           <Text style={[styles.backButton, { color: theme.backButton }]}>Back</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onRefresh}>
@@ -754,26 +757,6 @@ const LeaderboardScreen = ({
                 </Text>
               </View>
             )}
-            {!isMultiplayerDetails &&
-              ((detailsEntry.entry.perfection_bonus ?? 0) > 0 ||
-                (detailsEntry.entry.perfectionBonus ?? 0) > 0) && (
-              <View style={styles.detailsRow}>
-                <Text
-                  style={[
-                    styles.detailsLabel,
-                    styles.detailsLabelPositive,
-                    styles.detailsLabelEmphasis,
-                    { color: theme.detailsLabelPositive },
-                  ]}
-                >
-                  Perfection bonus
-                </Text>
-                <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
-                  {detailsEntry.entry.perfection_bonus ??
-                    detailsEntry.entry.perfectionBonus}
-                </Text>
-              </View>
-            )}
             <View style={styles.detailsSeedRow}>
               <Text style={[styles.detailsSeedTop, { color: theme.detailsSeedTop }]}>
                 {detailsEntry.entry.seed}
@@ -920,13 +903,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     zIndex: 2,
   },
-  backHotzone: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: 30,
-    height: 30,
-    zIndex: 1,
+  backTouchTarget: {
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: "center",
+    alignItems: "flex-start",
   },
   backButton: {
     fontSize: 16,

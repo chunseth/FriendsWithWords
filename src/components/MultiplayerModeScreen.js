@@ -1,14 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  InteractionManager,
   Modal,
   Platform,
-  SafeAreaView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  unstable_batchedUpdates,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import SFSymbolIcon from "./SFSymbolIcon";
 import GameBoard from "./GameBoard";
 import TileRack from "./TileRack";
@@ -50,13 +52,14 @@ const RACK_INSERT_STEP_DELAY = 70;
 const REMOTE_UPDATE_BANNER_IN_DURATION = 180;
 const REMOTE_UPDATE_BANNER_VISIBLE_DURATION = 1700;
 const REMOTE_UPDATE_BANNER_OUT_DURATION = 220;
-const SCORE_STEP_DURATION = 42;
+const SCORE_STEP_DURATION = 20;
 const INITIAL_LOAD_SCORE_DELAY = 1120;
 const REMOTE_BOARD_REVEAL_STEP_DURATION = 260;
 const REMOTE_SCORE_DELAY =
   REMOTE_UPDATE_BANNER_IN_DURATION +
   REMOTE_UPDATE_BANNER_VISIBLE_DURATION +
   REMOTE_UPDATE_BANNER_OUT_DURATION;
+const PREVIEW_COMPUTE_DELAY_MS = 120;
 const TURN_NOTIFICATION_TYPES = new Set(["turn_ready", "reminder"]);
 
 const getNotificationSessionId = (notification) => {
@@ -212,25 +215,23 @@ const AnimatedScoreDisplay = React.memo(function AnimatedScoreDisplay({
 
   return (
     <View style={styles.scoreSection}>
-      <View style={styles.scoreValueRow}>
-        <Text
-          style={[styles.scoreValue, isDarkMode ? styles.scoreValueDark : null]}
-        >
-          {displayScore}
-        </Text>
+      <Text
+        style={[styles.scoreValue, isDarkMode ? styles.scoreValueDark : null]}
+      >
+        {displayScore}
         {visibleScoreDelta !== 0 ? (
           <Text
             style={[
-              styles.scoreDelta,
+              styles.scoreDeltaInline,
               visibleScoreDelta > 0
                 ? styles.scoreDeltaPositive
                 : styles.scoreDeltaNegative,
             ]}
           >
-            {`${visibleScoreDelta > 0 ? "+" : "-"}${Math.abs(visibleScoreDelta)}`}
+            {` ${visibleScoreDelta > 0 ? "+" : "-"}${Math.abs(visibleScoreDelta)}`}
           </Text>
         ) : null}
-      </View>
+      </Text>
       <Text style={[styles.scoreLabel, isDarkMode ? styles.scoreLabelDark : null]}>
         Score
       </Text>
@@ -318,6 +319,7 @@ const MultiplayerModeScreen = ({
   const [preSubmitScoreDelta, setPreSubmitScoreDelta] = useState(0);
   const [isSwapMode, setIsSwapMode] = useState(false);
   const [remoteUpdateBannerText, setRemoteUpdateBannerText] = useState("");
+  const [submitScorePreview, setSubmitScorePreview] = useState(null);
   const [conflictModalVisible, setConflictModalVisible] = useState(false);
   const [conflictDraft, setConflictDraft] = useState(null);
   const [finishRequestModalVisible, setFinishRequestModalVisible] = useState(false);
@@ -637,7 +639,6 @@ const MultiplayerModeScreen = ({
         rackPenalty,
         scrabbleBonus,
         timeBonus: 0,
-        perfectionBonus: 0,
         consistencyBonusTotal,
         skillBonusTotal: scrabbleBonus + consistencyBonusTotal,
         finalScore: calculatedFinalScore,
@@ -1017,41 +1018,62 @@ const MultiplayerModeScreen = ({
     [waitingRack]
   );
 
-  const submitScorePreview = useMemo(() => {
+  useEffect(() => {
     if (isSwapMode || selectedCells.length === 0) {
-      return null;
+      setSubmitScorePreview(null);
+      return;
     }
 
-    const placementValidation = validateSubmitPlacement({
-      board: draftBoard,
-      isFirstTurn: session.sharedBoard.every((row) => row.every((cell) => cell == null)),
-      boardAtTurnStart: boardAtTurnStartRef.current,
-      boardSize: BOARD_SIZE,
+    setSubmitScorePreview(null);
+
+    let cancelled = false;
+    let timeoutId = null;
+    const interactionTask = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) return;
+
+      timeoutId = setTimeout(() => {
+        if (cancelled) return;
+
+        const placementValidation = validateSubmitPlacement({
+          board: draftBoard,
+          isFirstTurn: session.sharedBoard.every((row) => row.every((cell) => cell == null)),
+          boardAtTurnStart: boardAtTurnStartRef.current,
+          boardSize: BOARD_SIZE,
+        });
+
+        if (!placementValidation.ok) {
+          setSubmitScorePreview(null);
+          return;
+        }
+
+        const previewScoring = scoreSubmittedWords({
+          board: draftBoard,
+          newWords: placementValidation.newWords,
+          premiumSquares: session.sharedPremiumSquares,
+          turnCount: session.turn.number - 1,
+          placedCells: placementValidation.placedCells,
+        });
+
+        const allWordsValid = placementValidation.words.every((wordData) =>
+          dictionary.isValid(wordData.word)
+        );
+
+        setSubmitScorePreview({
+          score: previewScoring.turnScore ?? 0,
+          isValid: allWordsValid,
+        });
+      }, PREVIEW_COMPUTE_DELAY_MS);
     });
 
-    if (!placementValidation.ok) {
-      return null;
-    }
-
-    const previewScoring = scoreSubmittedWords({
-      board: draftBoard,
-      newWords: placementValidation.newWords,
-      premiumSquares: session.sharedPremiumSquares,
-      turnCount: session.turn.number - 1,
-      placedCells: placementValidation.placedCells,
-    });
-
-    const allWordsValid = placementValidation.words.every((wordData) =>
-      dictionary.isValid(wordData.word)
-    );
-
-    return {
-      score: previewScoring.turnScore ?? 0,
-      isValid: allWordsValid,
+    return () => {
+      cancelled = true;
+      if (timeoutId != null) {
+        clearTimeout(timeoutId);
+      }
+      interactionTask?.cancel?.();
     };
   }, [
     draftBoard,
-    dictionary,
     isSwapMode,
     selectedCells.length,
     session.sharedBoard,
@@ -1394,62 +1416,68 @@ const MultiplayerModeScreen = ({
       const tile = draftRack[tileIndex];
       if (!tile) return;
 
-      setDraftBoard((prev) => {
-        const next = prev.map((draftRow) => [...draftRow]);
-        const isBlank = isBlankRackTile(tile);
-        next[row][col] = {
-          ...tile,
-          letter: isBlank ? chosenLetter?.toUpperCase?.() ?? tile.letter : tile.letter,
-          value: isBlank ? 0 : tile.value,
-          isBlank,
-          rackIndex: tileIndex,
-          isFromRack: true,
-          ownerId: localPlayerId,
-        };
-        return next;
+      unstable_batchedUpdates(() => {
+        setDraftBoard((prev) => {
+          const next = prev.map((draftRow) => [...draftRow]);
+          const isBlank = isBlankRackTile(tile);
+          next[row][col] = {
+            ...tile,
+            letter: isBlank ? chosenLetter?.toUpperCase?.() ?? tile.letter : tile.letter,
+            value: isBlank ? 0 : tile.value,
+            isBlank,
+            rackIndex: tileIndex,
+            isFromRack: true,
+            ownerId: localPlayerId,
+          };
+          return next;
+        });
+        setSelectedCells((prev) => [...prev, { row, col }]);
       });
-      setSelectedCells((prev) => [...prev, { row, col }]);
     },
     [canLocalPlayerAct, draftBoard, draftRack, isBlankRackTile, localPlayerId]
   );
 
   const removeTileFromBoard = useCallback((row, col) => {
-    setDraftBoard((prev) => {
-      const next = prev.map((draftRow) => [...draftRow]);
-      const tile = next[row][col];
-      if (!tile || tile.scored || tile.ownerId !== localPlayerId) {
-        return prev;
-      }
-      next[row][col] = null;
-      return next;
+    unstable_batchedUpdates(() => {
+      setDraftBoard((prev) => {
+        const next = prev.map((draftRow) => [...draftRow]);
+        const tile = next[row][col];
+        if (!tile || tile.scored || tile.ownerId !== localPlayerId) {
+          return prev;
+        }
+        next[row][col] = null;
+        return next;
+      });
+      setSelectedCells((prev) =>
+        prev.filter((cell) => !(cell.row === row && cell.col === col))
+      );
     });
-    setSelectedCells((prev) =>
-      prev.filter((cell) => !(cell.row === row && cell.col === col))
-    );
   }, [localPlayerId]);
 
   const moveTileOnBoard = useCallback((fromRow, fromCol, toRow, toCol) => {
     if (fromRow === toRow && fromCol === toCol) return;
-    setDraftBoard((prev) => {
-      const next = prev.map((draftRow) => [...draftRow]);
-      const tile = next[fromRow][fromCol];
-      if (
-        !tile ||
-        tile.scored ||
-        tile.ownerId !== localPlayerId ||
-        next[toRow][toCol] !== null
-      ) {
-        return prev;
-      }
-      next[fromRow][fromCol] = null;
-      next[toRow][toCol] = { ...tile };
-      return next;
-    });
-    setSelectedCells((prev) => {
-      const withoutSource = prev.filter(
-        (cell) => !(cell.row === fromRow && cell.col === fromCol)
-      );
-      return [...withoutSource, { row: toRow, col: toCol }];
+    unstable_batchedUpdates(() => {
+      setDraftBoard((prev) => {
+        const next = prev.map((draftRow) => [...draftRow]);
+        const tile = next[fromRow][fromCol];
+        if (
+          !tile ||
+          tile.scored ||
+          tile.ownerId !== localPlayerId ||
+          next[toRow][toCol] !== null
+        ) {
+          return prev;
+        }
+        next[fromRow][fromCol] = null;
+        next[toRow][toCol] = { ...tile };
+        return next;
+      });
+      setSelectedCells((prev) => {
+        const withoutSource = prev.filter(
+          (cell) => !(cell.row === fromRow && cell.col === fromCol)
+        );
+        return [...withoutSource, { row: toRow, col: toCol }];
+      });
     });
   }, [localPlayerId]);
 
@@ -2279,18 +2307,14 @@ const MultiplayerModeScreen = ({
                 onPress={handleSwapButtonPress}
                 accessibilityLabel="Swap tiles"
               >
-                {Platform.OS === "ios" ? (
-                  <SFSymbolIcon
-                    name="arrow.down.left.arrow.up.right.square"
-                    size={CONTROL_ICON_SIZE}
-                    color="#fff"
-                    weight="medium"
-                    scale="medium"
-                    style={styles.controlIcon}
-                  />
-                ) : (
-                  <Text style={styles.controlButtonTextLarge}>Swap</Text>
-                )}
+                <SFSymbolIcon
+                  name="arrow.down.left.arrow.up.right.square"
+                  size={CONTROL_ICON_SIZE}
+                  color="#fff"
+                  weight="medium"
+                  scale="medium"
+                  style={styles.controlIcon}
+                />
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
@@ -2346,19 +2370,15 @@ const MultiplayerModeScreen = ({
                 }
               >
                 {selectedCells.length > 0 ? (
-                  Platform.OS === "ios" ? (
-                    <SFSymbolIcon
-                      name="arrow.uturn.down.square"
-                      size={CONTROL_ICON_SIZE}
-                      color="#fff"
-                      weight="medium"
-                      scale="medium"
-                      style={styles.controlIcon}
-                    />
-                  ) : (
-                    <Text style={styles.controlButtonTextLarge}>Clear</Text>
-                  )
-                ) : Platform.OS === "ios" ? (
+                  <SFSymbolIcon
+                    name="arrow.uturn.down.square"
+                    size={CONTROL_ICON_SIZE}
+                    color="#fff"
+                    weight="medium"
+                    scale="medium"
+                    style={styles.controlIcon}
+                  />
+                ) : (
                   <SFSymbolIcon
                     name="shuffle"
                     size={CONTROL_ICON_SIZE}
@@ -2367,8 +2387,6 @@ const MultiplayerModeScreen = ({
                     scale="medium"
                     style={styles.controlIcon}
                   />
-                ) : (
-                  <Text style={styles.controlButtonText}>Shuffle</Text>
                 )}
               </TouchableOpacity>
               </View>
@@ -2421,6 +2439,8 @@ const MultiplayerModeScreen = ({
       <InGameMenu
         visible={menuVisible}
         isDarkMode={isDarkMode}
+        seed={session.seed}
+        showSeedInfo
         onClose={() => setMenuVisible(false)}
         onReturnToMultiplayerMenu={() => {
           void (async () => {
@@ -2680,12 +2700,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 8,
   },
-  scoreValueRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-  },
   remoteUpdateBanner: {
     minWidth: "70.4%",
     backgroundColor: "#d97706",
@@ -2714,10 +2728,9 @@ const styles = StyleSheet.create({
   scoreValueDark: {
     color: "#f8fafc",
   },
-  scoreDelta: {
-    fontSize: 18,
-    fontWeight: "800",
-    letterSpacing: 0.3,
+  scoreDeltaInline: {
+    fontSize: 28,
+    fontWeight: "700",
   },
   scoreDeltaPositive: {
     color: "#15803d",

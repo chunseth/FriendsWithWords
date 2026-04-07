@@ -14,7 +14,7 @@ const RACK_REORDER_SETTLE_ANIM_DURATION = 220;
 const TAP_SLOP = 14;
 const RACK_TILE_PICKUP_SLOP = 10;
 const USE_ANDROID_RESPONDER_INPUT =
-  Platform.OS === "android" && global.__ANDROID_GESTURE_PIPELINE_V2__ !== false;
+  Platform.OS === "android" && global.__ANDROID_GESTURE_PIPELINE_V2__ === true;
 
 /**
  * Uses direct touch events so drag updates arrive immediately without gesture activation delay.

@@ -4,18 +4,20 @@ import { SLOT_WIDTH as RACK_SLOT_WIDTH } from "../components/TileRack";
 
 const DRAG_TILE_HALF_SIZE = 21;
 const DRAG_RACK_SETTLE_DURATION = 30;
-const DRAG_BOARD_SETTLE_DURATION = 30;
+const DRAG_BOARD_SETTLE_DURATION = 140;
 const DRAG_BOARD_INVALID_RETURN_DURATION = 170;
 const DRAG_RACK_RETURN_DURATION = 170;
 const DRAG_RACK_RELEASE_CATCHUP_DURATION = 40;
 const DRAG_RACK_RELEASE_CATCHUP_MIN_DISTANCE_PX = 10;
-const DRAG_BOARD_PICKUP_DURATION = 2;
-const DRAG_RACK_PICKUP_DURATION = 2;
+const DRAG_BOARD_PICKUP_DURATION = 70;
+const DRAG_RACK_PICKUP_DURATION = 70;
 const BOARD_TILE_PICKUP_SLOP = 35;
 const RACK_HOVER_STEP_DURATION = 18;
 const RACK_HOVER_MAX_DURATION = 90;
 const BOARD_SETTLE_CLEANUP_FALLBACK_MS = 48;
 const RACK_REORDER_INTENT_THRESHOLD_PX = 12;
+const MAX_RACK_POINTER_CORRECTION_PX = 220;
+const DRAG_TILE_SIZE = DRAG_TILE_HALF_SIZE * 2;
 const ENABLE_RACK_DRAG_LOGS =
   (typeof __DEV__ !== "undefined" ? __DEV__ : false) &&
   global.__RACK_DRAG_LOGS__ === true;
@@ -47,6 +49,7 @@ export const useTileDragDropController = ({
     x: DRAG_TILE_HALF_SIZE,
     y: DRAG_TILE_HALF_SIZE,
   });
+  const rackPointerCorrectionRef = useRef({ x: 0, y: 0 });
   const dragTargetRef = useRef({ x: 0, y: 0 });
   const rackDragMetricsRef = useRef(null);
   const rackSettleActiveRef = useRef(null);
@@ -217,6 +220,7 @@ export const useTileDragDropController = ({
     dragAnimatingPickupRef.current = false;
     dragPendingFinalizeRef.current = null;
     dragReleasedDuringPickupRef.current = false;
+    rackPointerCorrectionRef.current = { x: 0, y: 0 };
     dragPosition.stopAnimation();
     dragScale.stopAnimation();
     dragPosition.setValue({ x: 0, y: 0 });
@@ -296,6 +300,8 @@ export const useTileDragDropController = ({
       typeof rackScreenY !== "number" ||
       typeof rackWidth !== "number" ||
       typeof rackHeight !== "number" ||
+      rackWidth <= 0 ||
+      rackHeight <= 0 ||
       typeof containerScreenX !== "number" ||
       typeof containerScreenY !== "number" ||
       slotCount <= 0 ||
@@ -1250,12 +1256,57 @@ export const useTileDragDropController = ({
       }
       settleScale.stopAnimation();
       updateSettlingTile(null);
-      // Keep rack drags centered under the finger for a consistent pickup feel.
+      const resolvedTouchOffsetX = DRAG_TILE_HALF_SIZE;
+      const resolvedTouchOffsetY = DRAG_TILE_HALF_SIZE;
+      const calibrationTouchOffsetX =
+        typeof touchOffsetX === "number"
+          ? Math.max(0, Math.min(DRAG_TILE_SIZE, touchOffsetX))
+          : DRAG_TILE_HALF_SIZE;
+      const calibrationTouchOffsetY =
+        typeof touchOffsetY === "number"
+          ? Math.max(0, Math.min(DRAG_TILE_SIZE, touchOffsetY))
+          : DRAG_TILE_HALF_SIZE;
       dragTouchOffsetRef.current = {
-        x: DRAG_TILE_HALF_SIZE,
-        y: DRAG_TILE_HALF_SIZE,
+        x: resolvedTouchOffsetX,
+        y: resolvedTouchOffsetY,
       };
-      setDragPositionFromScreen(x ?? 0, y ?? 0);
+      const sourceTarget = getRackTileSourceTarget(
+        tile?.visibleIndex,
+        visibleRackTiles.length
+      );
+      const hasTouchOffsets =
+        Number.isFinite(calibrationTouchOffsetX) &&
+        Number.isFinite(calibrationTouchOffsetY);
+      const hasSourceTarget =
+        sourceTarget &&
+        typeof sourceTarget.x === "number" &&
+        typeof sourceTarget.y === "number";
+      if (hasTouchOffsets && hasSourceTarget) {
+        const { x: containerScreenX, y: containerScreenY } =
+          containerWindowRef.current;
+        const expectedX =
+          containerScreenX + sourceTarget.x + calibrationTouchOffsetX;
+        const expectedY =
+          containerScreenY + sourceTarget.y + calibrationTouchOffsetY;
+        const correctionX = expectedX - (x ?? 0);
+        const correctionY = expectedY - (y ?? 0);
+        const isSaneCorrection =
+          Number.isFinite(correctionX) &&
+          Number.isFinite(correctionY) &&
+          Math.abs(correctionX) <= MAX_RACK_POINTER_CORRECTION_PX &&
+          Math.abs(correctionY) <= MAX_RACK_POINTER_CORRECTION_PX;
+        rackPointerCorrectionRef.current = {
+          x: isSaneCorrection ? correctionX : 0,
+          y: isSaneCorrection ? correctionY : 0,
+        };
+      } else {
+        rackPointerCorrectionRef.current = { x: 0, y: 0 };
+      }
+      const correctedStart = {
+        x: (x ?? 0) + rackPointerCorrectionRef.current.x,
+        y: (y ?? 0) + rackPointerCorrectionRef.current.y,
+      };
+      setDragPositionFromScreen(correctedStart.x, correctedStart.y);
       hoverIndexRef.current = tile.visibleIndex;
       updateDraggingTile({
         from: "rack",
@@ -1282,6 +1333,7 @@ export const useTileDragDropController = ({
       animateDragPickup,
       animateRackPickupToDragTarget,
       canInteract,
+      getRackTileSourceTarget,
       getNow,
       logRackDrag,
       rackDraggingVisibleIndexValue,
@@ -1308,8 +1360,14 @@ export const useTileDragDropController = ({
           metrics.maxUpdateGapMs = gap;
         }
       }
-      setDragPositionFromScreen(x, y);
-      const nextIndex = computeRackIndex(x, y, visibleRackTiles.length);
+      const correctedX = x + rackPointerCorrectionRef.current.x;
+      const correctedY = y + rackPointerCorrectionRef.current.y;
+      setDragPositionFromScreen(correctedX, correctedY);
+      const nextIndex = computeRackIndex(
+        correctedX,
+        correctedY,
+        visibleRackTiles.length
+      );
       if (nextIndex !== hoverIndexRef.current) {
         const previousIndex = hoverIndexRef.current;
         hoverIndexRef.current = nextIndex;
@@ -1317,8 +1375,8 @@ export const useTileDragDropController = ({
         if (nextIndex == null) {
           logRackDrag("hover-change", {
             to: null,
-            x,
-            y,
+            x: correctedX,
+            y: correctedY,
             elapsedMs: Math.round(now - (metrics?.startedAt ?? now)),
           });
           rackHoverIndexValue.stopAnimation();
@@ -1326,12 +1384,12 @@ export const useTileDragDropController = ({
           return;
         }
         logRackDrag("hover-change", {
-          from: previousIndex,
-          to: nextIndex,
-          x,
-          y,
-          elapsedMs: Math.round(now - (metrics?.startedAt ?? now)),
-        });
+              from: previousIndex,
+              to: nextIndex,
+              x: correctedX,
+              y: correctedY,
+              elapsedMs: Math.round(now - (metrics?.startedAt ?? now)),
+            });
         if (previousIndex == null || previousIndex < 0) {
           rackHoverIndexValue.stopAnimation();
           rackHoverIndexValue.setValue(targetValue);
@@ -1375,9 +1433,20 @@ export const useTileDragDropController = ({
         const metrics = rackDragMetricsRef.current;
         const pickupWasAnimatingOnDrop = dragAnimatingPickupRef.current;
         hoverIndexRef.current = null;
-        const releasePosition = getDragPositionFromScreen(screenX, screenY);
-        const placeAt = getDropTargetCell(screenX, screenY);
         const draggedFromRack = draggingTileRef.current?.from === "rack";
+        const correctedScreenX =
+          draggedFromRack
+            ? screenX + rackPointerCorrectionRef.current.x
+            : screenX;
+        const correctedScreenY =
+          draggedFromRack
+            ? screenY + rackPointerCorrectionRef.current.y
+            : screenY;
+        const releasePosition = getDragPositionFromScreen(
+          correctedScreenX,
+          correctedScreenY
+        );
+        const placeAt = getDropTargetCell(correctedScreenX, correctedScreenY);
         const originalVisibleIndex = draggedFromRack
           ? draggingTileRef.current?.visibleIndex
           : null;
@@ -1388,7 +1457,11 @@ export const useTileDragDropController = ({
         const rackTargetIndex =
           draggedFromRack && !hasHorizontalIntent
             ? originalVisibleIndex
-            : computeRackIndex(screenX, screenY, visibleRackTiles.length);
+            : computeRackIndex(
+                correctedScreenX,
+                correctedScreenY,
+                visibleRackTiles.length
+              );
         const returnRackIndex =
           rackTargetIndex ??
           (draggedFromRack ? originalVisibleIndex : null);
@@ -1413,8 +1486,8 @@ export const useTileDragDropController = ({
             updateCount,
             avgUpdateGapMs,
             maxUpdateGapMs: Math.round(metrics?.maxUpdateGapMs ?? 0),
-            releaseX: Math.round(screenX),
-            releaseY: Math.round(screenY),
+            releaseX: Math.round(correctedScreenX),
+            releaseY: Math.round(correctedScreenY),
             deltaX: Math.round(gesture?.deltaX ?? 0),
             deltaY: Math.round(gesture?.deltaY ?? 0),
             msSinceLastUpdate: Math.round(msSinceLastUpdate),
@@ -1422,9 +1495,10 @@ export const useTileDragDropController = ({
           });
         }
         rackDragMetricsRef.current = null;
+        rackPointerCorrectionRef.current = { x: 0, y: 0 };
 
         if (placeAt) {
-          setDragPositionFromScreen(screenX, screenY);
+          setDragPositionFromScreen(correctedScreenX, correctedScreenY);
           const tile = getRackTileByIndex(tileIndex);
           if (!tile) return;
           if (isBlankRackTile(tile)) {
@@ -1482,7 +1556,7 @@ export const useTileDragDropController = ({
           return;
         }
 
-        setDragPositionFromScreen(screenX, screenY);
+        setDragPositionFromScreen(correctedScreenX, correctedScreenY);
         finalizeDrag(
           () => {
             if (rackTargetIndex != null && visibleRackTiles.length > 0) {
@@ -1554,6 +1628,7 @@ export const useTileDragDropController = ({
       }
       updateDropTargetRackIndex(null);
       setBoardHoverRackIndex(null);
+      rackPointerCorrectionRef.current = { x: 0, y: 0 };
       dragTouchOffsetRef.current = {
         x: DRAG_TILE_HALF_SIZE,
         y: DRAG_TILE_HALF_SIZE,

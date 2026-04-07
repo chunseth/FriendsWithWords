@@ -1215,7 +1215,14 @@ const VALID_THREE_LETTER_WORDS = new Set([
 ]);
 
 const VALID_CUSTOM_WORDS = new Set([
+  "angler",
+  "bomber",
+  "bowler",
+  "bumper",
+  "buster",
   "fave",
+  "gooey",
+  "joker",
   "vape",
   "vibe",
   "aqua",
@@ -2562,7 +2569,6 @@ const VALID_IRREGULAR_ADJECTIVE_FORMS = new Set([
   "more",
   "eldest",    // old → elder, eldest (family)
   "elder",
-  "joker",
 ]);
 
 class Dictionary {
@@ -2685,7 +2691,12 @@ class Dictionary {
     }
 
     if (word.endsWith("s") && !word.endsWith("ss")) {
-      return this.hasKnownBaseForm([word.slice(0, -1)], word);
+      // Allow noun plurals like bomber -> bombers by permitting -s
+      // on valid base words ending in -er.
+      const allowSecondSuffixOnEnEr = word.endsWith("ers");
+      return this.hasKnownBaseForm([word.slice(0, -1)], word, {
+        allowSecondSuffixOnEnEr,
+      });
     }
 
     if (word.endsWith("ing") && word.length > 5) {

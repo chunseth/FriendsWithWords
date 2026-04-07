@@ -79,7 +79,6 @@ describe("buildFinalScoreBreakdown", () => {
       turnCount: 4,
       rackTiles: [{ value: 5 }],
       durationMs: 30 * 60 * 1000,
-      invalidWordAttempts: 0,
       wordHistory: [
         { turn: 1, score: 20 },
         { turn: 2, score: 20 },
@@ -89,34 +88,16 @@ describe("buildFinalScoreBreakdown", () => {
     });
 
     expect(breakdown.timeBonus).toBe(15);
-    expect(breakdown.perfectionBonus).toBe(50);
     expect(breakdown.consistencyBonusTotal).toBe(6);
-    expect(breakdown.skillBonusTotal).toBe(121);
-    expect(breakdown.finalScore).toBe(220);
-  });
-
-  it("drops perfection bonus after invalid word attempt", () => {
-    const breakdown = buildFinalScoreBreakdown({
-      wordPointsTotal: 20,
-      swapPenaltyTotal: 0,
-      scrabbleBonusTotal: 0,
-      turnCount: 1,
-      rackTiles: [],
-      durationMs: 2 * 60 * 60 * 1000,
-      invalidWordAttempts: 1,
-      wordHistory: [{ turn: 1, score: 20 }],
-    });
-
-    expect(breakdown.perfectionBonus).toBe(0);
-    expect(breakdown.timeBonus).toBe(0);
-    expect(breakdown.consistencyBonusTotal).toBe(0);
+    expect(breakdown.skillBonusTotal).toBe(71);
+    expect(breakdown.finalScore).toBe(170);
   });
 });
 
 describe("scoreSubmittedWords", () => {
-  it("awards mini scrabble lite bonus (+20) when all 7 tiles are used after turn 1", () => {
+  it("awards mini bonus (+20) when 6 tiles are used after turn 1", () => {
     const board = Array.from({ length: 11 }, () => Array(11).fill(null));
-    const placedCells = Array.from({ length: 7 }, (_, index) => ({
+    const placedCells = Array.from({ length: 6 }, (_, index) => ({
       row: 5,
       col: index,
     }));
@@ -136,7 +117,7 @@ describe("scoreSubmittedWords", () => {
     expect(scoring.turnScore).toBe(20);
   });
 
-  it("does not award mini scrabble lite on the first turn", () => {
+  it("awards normal scrabble bonus (+50) when 7 tiles are used in mini after turn 1", () => {
     const board = Array.from({ length: 11 }, () => Array(11).fill(null));
     const placedCells = Array.from({ length: 7 }, (_, index) => ({
       row: 5,
@@ -147,13 +128,50 @@ describe("scoreSubmittedWords", () => {
       board,
       newWords: [],
       premiumSquares: {},
-      turnCount: 0,
+      turnCount: 1,
       placedCells,
       bonusMode: "mini",
     });
 
-    expect(scoring.earnedScrabbleBonus).toBe(false);
-    expect(scoring.scrabbleBonus).toBe(0);
-    expect(scoring.turnScore).toBe(0);
+    expect(scoring.earnedScrabbleBonus).toBe(true);
+    expect(scoring.scrabbleBonus).toBe(50);
+    expect(scoring.scrabbleBonusType).toBe("classic");
+    expect(scoring.turnScore).toBe(50);
+  });
+
+  it("awards mini bonuses on the first turn", () => {
+    const board = Array.from({ length: 11 }, () => Array(11).fill(null));
+    const sixTiles = Array.from({ length: 6 }, (_, index) => ({
+      row: 5,
+      col: index,
+    }));
+    const sevenTiles = Array.from({ length: 7 }, (_, index) => ({
+      row: 6,
+      col: index,
+    }));
+
+    const sixTileScoring = scoreSubmittedWords({
+      board,
+      newWords: [],
+      premiumSquares: {},
+      turnCount: 0,
+      placedCells: sixTiles,
+      bonusMode: "mini",
+    });
+    const sevenTileScoring = scoreSubmittedWords({
+      board,
+      newWords: [],
+      premiumSquares: {},
+      turnCount: 0,
+      placedCells: sevenTiles,
+      bonusMode: "mini",
+    });
+
+    expect(sixTileScoring.earnedScrabbleBonus).toBe(true);
+    expect(sixTileScoring.scrabbleBonus).toBe(20);
+    expect(sixTileScoring.turnScore).toBe(20);
+    expect(sevenTileScoring.earnedScrabbleBonus).toBe(true);
+    expect(sevenTileScoring.scrabbleBonus).toBe(50);
+    expect(sevenTileScoring.turnScore).toBe(50);
   });
 });

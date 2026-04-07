@@ -63,7 +63,7 @@ export const buildBoardPlayerScript = ({
   seed,
   mode = "classic",
   layoutId = null,
-  topWordCount = 8,
+  topWordCount = 30,
 } = {}) => {
   if (!seed) {
     throw new Error("seed is required");
@@ -103,7 +103,7 @@ export const getCandidateMovesForPosition = ({
     }),
     state: entry.positionState,
   })
-    .slice(0, script?.topWordCount || 8)
+    .slice(0, script?.topWordCount || 30)
     .map((candidate, index) => serializeCandidateMove(candidate, index));
 };
 

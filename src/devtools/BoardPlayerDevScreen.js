@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import GameBoard from "../components/GameBoard";
 import GameBoardMini from "../components/GameBoardMini";
 import {
@@ -31,7 +31,7 @@ const BoardPlayerDevScreen = ({ config }) => {
     buildBoardPlayerScript({
       seed: config?.seed || "",
       mode: config?.mode === "mini" ? "mini" : "classic",
-      topWordCount: 10,
+      topWordCount: 30,
     })
   );
 
@@ -40,7 +40,7 @@ const BoardPlayerDevScreen = ({ config }) => {
       const nextScript = buildBoardPlayerScript({
         seed: config?.seed || "",
         mode: config?.mode === "mini" ? "mini" : "classic",
-        topWordCount: 10,
+        topWordCount: 30,
       });
       setScript(nextScript);
       setTurnIndex(0);

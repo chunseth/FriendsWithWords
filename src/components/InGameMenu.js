@@ -1,9 +1,12 @@
 import React from "react";
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import Clipboard from "@react-native-clipboard/clipboard";
 
 const InGameMenu = ({
   visible,
   isDarkMode = false,
+  seed = null,
+  showSeedInfo = false,
   onClose,
   onOpenPlayMenu,
   onReturnToMultiplayerMenu,
@@ -65,6 +68,34 @@ const InGameMenu = ({
             </Text>
           </TouchableOpacity>
 
+          {showSeedInfo && seed ? (
+            <View
+              style={[
+                styles.seedCard,
+                {
+                  backgroundColor: theme.surface,
+                  borderColor: theme.surfaceBorder,
+                },
+              ]}
+            >
+              <View style={styles.seedTextGroup}>
+                <Text style={[styles.seedLabel, { color: theme.seedText }]}>
+                  Current seed
+                </Text>
+                <Text style={[styles.seedValue, { color: theme.seedText }]}>
+                  {String(seed)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.seedCopyButton, { backgroundColor: theme.seedText }]}
+                onPress={() => Clipboard.setString(String(seed))}
+                accessibilityLabel="Copy seed"
+              >
+                <Text style={styles.seedCopyButtonText}>Copy</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           {onArchiveGame ? (
             <TouchableOpacity
               style={[
@@ -122,6 +153,43 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 18,
   },
+  seedCard: {
+    marginTop: 12,
+    marginBottom: 12,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  seedTextGroup: {
+    flex: 1,
+  },
+  seedLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  seedValue: {
+    marginTop: 2,
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  seedCopyButton: {
+    backgroundColor: "#d97706",
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  seedCopyButtonText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "800",
+  },
   primaryButton: {
     backgroundColor: "#d97706",
     borderRadius: 14,
@@ -168,6 +236,7 @@ const LIGHT_THEME = {
   surfaceBorder: "#e2d3bb",
   title: "#2c3e50",
   closeText: "#9a6b2f",
+  seedText: "rgba(120, 120, 120, 0.72)",
 };
 
 const DARK_THEME = {
@@ -177,6 +246,7 @@ const DARK_THEME = {
   surfaceBorder: "#334155",
   title: "#f8fafc",
   closeText: "#fdba74",
+  seedText: "rgba(160, 160, 160, 0.72)",
 };
 
 export default InGameMenu;

@@ -1,8 +1,42 @@
 import React from "react";
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-const DeleteAccountModal = ({ visible, deleting = false, onConfirm, onCancel }) => {
+const LIGHT_THEME = {
+  cardBackground: "#fffaf2",
+  cardBorder: "#eadfcd",
+  title: "#2c3e50",
+  body: "#475569",
+  detail: "#6b7280",
+  deleteButtonBackground: "#b42318",
+  deleteButtonText: "#fff",
+  cancelButtonBackground: "#fff",
+  cancelButtonBorder: "#e2d3bb",
+  cancelButtonText: "#2c3e50",
+};
+
+const DARK_THEME = {
+  cardBackground: "#1a2431",
+  cardBorder: "#334155",
+  title: "#f8fafc",
+  body: "#cbd5e1",
+  detail: "#94a3b8",
+  deleteButtonBackground: "#ef4444",
+  deleteButtonText: "#fff",
+  cancelButtonBackground: "#0f172a",
+  cancelButtonBorder: "#334155",
+  cancelButtonText: "#f8fafc",
+};
+
+const DeleteAccountModal = ({
+  visible,
+  deleting = false,
+  darkModeEnabled = false,
+  onConfirm,
+  onCancel,
+}) => {
   if (!visible) return null;
+
+  const theme = darkModeEnabled ? DARK_THEME : LIGHT_THEME;
 
   return (
     <Modal
@@ -16,32 +50,54 @@ const DeleteAccountModal = ({ visible, deleting = false, onConfirm, onCancel }) 
         activeOpacity={1}
         onPress={deleting ? undefined : onCancel}
       >
-        <View style={styles.card} onStartShouldSetResponder={() => true}>
-          <Text style={styles.title}>Delete Account?</Text>
-          <Text style={styles.body}>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.cardBackground,
+              borderColor: theme.cardBorder,
+            },
+          ]}
+          onStartShouldSetResponder={() => true}
+        >
+          <Text style={[styles.title, { color: theme.title }]}>Delete Account?</Text>
+          <Text style={[styles.body, { color: theme.body }]}>
             This removes your username, friend connections, friend requests, and
             active multiplayer games from Supabase.
           </Text>
-          <Text style={styles.detail}>
+          <Text style={[styles.detail, { color: theme.detail }]}>
             Leaderboard scores already submitted will stay in Supabase.
           </Text>
 
           <TouchableOpacity
-            style={[styles.deleteButton, deleting && styles.buttonDisabled]}
+            style={[
+              styles.deleteButton,
+              { backgroundColor: theme.deleteButtonBackground },
+              deleting && styles.buttonDisabled,
+            ]}
             onPress={onConfirm}
             disabled={deleting}
           >
-            <Text style={styles.deleteButtonText}>
+            <Text style={[styles.deleteButtonText, { color: theme.deleteButtonText }]}>
               {deleting ? "Deleting..." : "Delete Account"}
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.cancelButton, deleting && styles.buttonDisabled]}
+            style={[
+              styles.cancelButton,
+              {
+                backgroundColor: theme.cancelButtonBackground,
+                borderColor: theme.cancelButtonBorder,
+              },
+              deleting && styles.buttonDisabled,
+            ]}
             onPress={onCancel}
             disabled={deleting}
           >
-            <Text style={styles.cancelButtonText}>Cancel</Text>
+            <Text style={[styles.cancelButtonText, { color: theme.cancelButtonText }]}>
+              Cancel
+            </Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -60,11 +116,9 @@ const styles = StyleSheet.create({
   card: {
     width: "100%",
     maxWidth: 360,
-    backgroundColor: "#fffaf2",
     borderRadius: 20,
     padding: 22,
     borderWidth: 1,
-    borderColor: "#eadfcd",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.18,
@@ -74,47 +128,39 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: "800",
-    color: "#2c3e50",
     textAlign: "center",
   },
   body: {
     marginTop: 14,
     fontSize: 15,
     lineHeight: 22,
-    color: "#475569",
     textAlign: "center",
   },
   detail: {
     marginTop: 10,
     fontSize: 14,
     lineHeight: 21,
-    color: "#6b7280",
     textAlign: "center",
   },
   deleteButton: {
     marginTop: 22,
-    backgroundColor: "#b42318",
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 16,
   },
   deleteButtonText: {
-    color: "#fff",
     fontSize: 17,
     fontWeight: "800",
     textAlign: "center",
   },
   cancelButton: {
     marginTop: 12,
-    backgroundColor: "#fff",
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: "#e2d3bb",
   },
   cancelButtonText: {
-    color: "#2c3e50",
     fontSize: 17,
     fontWeight: "800",
     textAlign: "center",

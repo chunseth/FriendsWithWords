@@ -26,7 +26,7 @@ describe("submitCompletedScore multiplayer normalization", () => {
     jest.clearAllMocks();
   });
 
-  it("forces multiplayer time and perfection bonuses to zero", async () => {
+  it("forces multiplayer time bonus to zero", async () => {
     const lookupBuilder = {
       select: jest.fn(),
       eq: jest.fn(),
@@ -82,7 +82,6 @@ describe("submitCompletedScore multiplayer normalization", () => {
         rackPenalty: 10,
         scrabbleBonus: 50,
         timeBonus: 15,
-        perfectionBonus: 50,
         consistencyBonusTotal: 6,
         skillBonusTotal: 121,
       },
@@ -93,7 +92,6 @@ describe("submitCompletedScore multiplayer normalization", () => {
       score_mode: LEADERBOARD_SCORE_MODE_MULTIPLAYER,
       scrabble_bonus: 50,
       time_bonus: 0,
-      perfection_bonus: 0,
       consistency_bonus: 6,
       skill_bonus_total: 56,
     });

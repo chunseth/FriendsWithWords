@@ -39,7 +39,7 @@ describe("useGame skill-state snapshot fields", () => {
     jest.useRealTimers();
   });
 
-  it("persists and restores started time and invalid-word attempts", () => {
+  it("persists and restores started time and consistency fields", () => {
     let game;
     renderer.create(<HookHarness onValue={(next) => (game = next)} />);
 
@@ -72,7 +72,6 @@ describe("useGame skill-state snapshot fields", () => {
 
     const snapshot = game.getStableSnapshot();
     expect(snapshot).not.toBeNull();
-    expect(snapshot.invalidWordAttempts).toBe(1);
     expect(typeof snapshot.gameStartedAtMs).toBe("number");
     expect(snapshot.currentConsistencyStreak).toBe(0);
     expect(snapshot.consistencyBonusTotal).toBe(0);
@@ -84,7 +83,6 @@ describe("useGame skill-state snapshot fields", () => {
     });
 
     const resumedSnapshot = resumedGame.getStableSnapshot();
-    expect(resumedSnapshot.invalidWordAttempts).toBe(1);
     expect(resumedSnapshot.gameStartedAtMs).toBe(snapshot.gameStartedAtMs);
     expect(resumedSnapshot.currentConsistencyStreak).toBe(0);
     expect(resumedSnapshot.consistencyBonusTotal).toBe(0);

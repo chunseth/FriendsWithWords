@@ -9,10 +9,24 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   setItem: jest.fn(),
   removeItem: jest.fn(),
 }));
+jest.mock("@react-native-clipboard/clipboard", () => ({
+  getString: jest.fn(async () => ""),
+  setString: jest.fn(),
+}));
 jest.mock("react-native-linear-gradient", () => "LinearGradient");
 jest.mock("react-native-reanimated", () => ({
   runOnJS: (fn) => fn,
 }));
+jest.mock("react-native-safe-area-context", () => {
+  const React = require("react");
+  const { View } = require("react-native");
+  return {
+    SafeAreaProvider: ({ children }) => children,
+    SafeAreaView: ({ children, ...props }) =>
+      React.createElement(View, props, children),
+    useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+  };
+});
 jest.mock("react-native-gesture-handler", () => {
   const React = require("react");
   return {

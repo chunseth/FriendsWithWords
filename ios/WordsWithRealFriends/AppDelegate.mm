@@ -2,6 +2,9 @@
 
 #import <Firebase.h>
 #import <React/RCTBundleURLProvider.h>
+#if DEBUG
+#import <React/RCTDevLoadingViewSetEnabled.h>
+#endif
 
 @implementation AppDelegate
 
@@ -10,10 +13,33 @@
   // Configure Firebase first so it's available before any native module or JS runs
   [FIRApp configure];
 
+#if DEBUG
+  // Disable the native dev loading banner so startup doesn't flash a mismatched light progress strip.
+  RCTDevLoadingViewSetEnabled(NO);
+#endif
+
   self.moduleName = @"FriendsWithWords";
   self.initialProps = @{};
 
-  return [super application:application didFinishLaunchingWithOptions:launchOptions];
+  BOOL didFinishLaunching = [super application:application didFinishLaunchingWithOptions:launchOptions];
+  if (@available(iOS 13.0, *)) {
+    self.window.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.window.rootViewController.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+  }
+
+  return didFinishLaunching;
+}
+
+- (UIView *)createRootViewWithBridge:(RCTBridge *)bridge
+                          moduleName:(NSString *)moduleName
+                           initProps:(NSDictionary *)initProps
+{
+  UIView *rootView = [super createRootViewWithBridge:bridge moduleName:moduleName initProps:initProps];
+  rootView.backgroundColor = [UIColor colorWithRed:11.0 / 255.0
+                                             green:18.0 / 255.0
+                                              blue:32.0 / 255.0
+                                             alpha:1.0];
+  return rootView;
 }
 
 - (NSURL *)sourceURLForBridge:(RCTBridge *)bridge

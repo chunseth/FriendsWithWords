@@ -151,7 +151,6 @@ export const finalizeReplayState = (state) => {
     turnCount: state.turnCount,
     rackTiles: state.tileRack,
     wordHistory: state.wordHistory,
-    invalidWordAttempts: state.invalidWordAttempts || 0,
   });
 
   return {

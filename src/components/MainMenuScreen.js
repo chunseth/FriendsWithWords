@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Keyboard,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import SFSymbolIcon from "./SFSymbolIcon";
 import { validatePlayerDisplayName } from "../utils/playerProfile";
 
@@ -145,32 +145,35 @@ const MainMenuScreen = ({
     <SafeAreaView
       style={[styles.container, { backgroundColor: theme.background }]}
     >
-      <TouchableOpacity
-        style={[
-          styles.settingsButton,
-          {
-            backgroundColor: theme.surface,
-            borderColor: theme.border,
-          },
-        ]}
-        onPress={onOpenSettings}
-        accessibilityLabel="Open settings"
-      >
-        <SFSymbolIcon
-          name="gearshape.fill"
-          size={20}
-          color={theme.icon}
-          weight="medium"
-          scale="medium"
-          fallback="⚙"
-        />
-      </TouchableOpacity>
-
       <View style={styles.hero}>
         <Text style={[styles.eyebrow, { color: theme.eyebrow }]}>
           Daily boards. Seed battles.
         </Text>
-        <Text style={[styles.title, { color: theme.title }]}>Friends With Words</Text>
+        <View style={styles.heroHeader}>
+          <Text style={[styles.title, { color: theme.title }]}>
+            Friends With Words
+          </Text>
+          <TouchableOpacity
+            style={[
+              styles.settingsButton,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.border,
+              },
+            ]}
+            onPress={onOpenSettings}
+            accessibilityLabel="Open settings"
+          >
+            <SFSymbolIcon
+              name="gearshape.fill"
+              size={20}
+              color={theme.icon}
+              weight="medium"
+              scale="medium"
+              fallback="⚙"
+            />
+          </TouchableOpacity>
+        </View>
 
         <TextInput
           ref={nameInputRef}
@@ -344,22 +347,24 @@ const styles = StyleSheet.create({
     paddingTop: 48,
     paddingBottom: 42,
   },
+  heroHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   settingsButton: {
-    position: "absolute",
-    top: 20,
-    right: 28,
     width: 44,
     height: 44,
     borderRadius: 14,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 10,
-    elevation: 10,
+    flexShrink: 0,
   },
   hero: {
     gap: 10,
-    paddingTop: 40,
+    paddingTop: 16,
   },
   eyebrow: {
     fontSize: 12,
@@ -368,10 +373,11 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   title: {
+    flex: 1,
     fontSize: 42,
     lineHeight: 46,
     fontWeight: "900",
-    maxWidth: 260,
+    marginRight: 8,
   },
   nameInput: {
     marginTop: 8,

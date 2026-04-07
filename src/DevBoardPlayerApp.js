@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import SFSymbolIcon from "./components/SFSymbolIcon";
 import BoardPlayerDevScreen from "./devtools/BoardPlayerDevScreen";
 import LayoutLabDevScreen from "./devtools/LayoutLabDevScreen";
@@ -74,9 +75,10 @@ const DevBoardPlayerApp = () => {
   };
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <StatusBar barStyle="light-content" />
-      <View style={styles.container}>
+    <SafeAreaProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <StatusBar barStyle="light-content" />
+        <View style={styles.container}>
         <View style={styles.menuRow}>
           <TouchableOpacity
             style={styles.menuButton}
@@ -178,8 +180,9 @@ const DevBoardPlayerApp = () => {
             )}
           </View>
         </Modal>
-      </View>
-    </GestureHandlerRootView>
+        </View>
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 };
 

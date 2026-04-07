@@ -3,7 +3,6 @@ import {
   AppState,
   Modal,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import SFSymbolIcon from "./SFSymbolIcon";
 import MultiplayerPlayGamePanel from "./MultiplayerPlayGamePanel";
 import MessageOverlay from "./MessageOverlay";
@@ -702,6 +702,7 @@ const MultiplayerMenuScreen = ({
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={styles.header}>
         <TouchableOpacity
+          style={styles.backTouchTarget}
           onPress={onBack}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
@@ -1646,6 +1647,12 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     justifyContent: "flex-start",
+  },
+  backTouchTarget: {
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: "center",
+    alignItems: "flex-start",
   },
   backButton: {
     color: "#2f6f4f",

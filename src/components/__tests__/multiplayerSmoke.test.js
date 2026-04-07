@@ -481,7 +481,6 @@ describe("multiplayer smoke", () => {
         rackPenalty: 10,
         scrabbleBonus: 40,
         timeBonus: 0,
-        perfectionBonus: 0,
         consistencyBonusTotal: 8,
         skillBonusTotal: 48,
         finalScore: 130,

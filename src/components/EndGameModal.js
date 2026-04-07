@@ -85,17 +85,6 @@ const EndGameModal = ({ visible, summary, onClose }) => {
       });
     }
 
-    if ((summary.perfectionBonus ?? 0) > 0) {
-      nextRows.push({
-        operator: "+",
-        label: "Perfection bonus",
-        value: {
-          type: "static",
-          text: `+ ${summary.perfectionBonus}`,
-        },
-      });
-    }
-
     if ((summary.consistencyBonusTotal ?? 0) > 0) {
       nextRows.push({
         operator: "+",

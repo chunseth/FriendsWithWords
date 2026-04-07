@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,6 +7,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   fetchMultiplayerNotificationSettings,
   saveMultiplayerNotificationSettings,
@@ -63,7 +63,11 @@ const MultiplayerNotificationSettingsScreen = ({ onBack }) => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={onBack}>
+        <TouchableOpacity
+          style={styles.backTouchTarget}
+          onPress={onBack}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
           <Text style={styles.backButton}>Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Notification Settings</Text>
@@ -143,6 +147,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
+  backTouchTarget: {
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: "center",
+    alignItems: "flex-start",
+  },
   backButton: {
     color: "#2f6f4f",
     fontWeight: "700",
@@ -153,7 +163,7 @@ const styles = StyleSheet.create({
     color: "#1f2933",
   },
   headerSpacer: {
-    width: 30,
+    width: 44,
   },
   content: {
     paddingHorizontal: 16,

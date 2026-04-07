@@ -28,7 +28,7 @@ const TILE_GRADIENT_HEIGHT_PX = Math.max(1, Math.floor(TILE_SIZE * 0.5));
 // Spacing between tiles; board size is then computed from content so it exactly encapsulates
 const CELL_MARGIN = 1.5;
 const ANDROID_GESTURE_PIPELINE_V2 =
-    Platform.OS === 'android' && global.__ANDROID_GESTURE_PIPELINE_V2__ !== false;
+    Platform.OS === 'android' && global.__ANDROID_GESTURE_PIPELINE_V2__ === true;
 const OVERLAY_PAN_MIN_DISTANCE = 0;
 
 const CELL_SIZE_EFFECTIVE = TILE_SIZE + 2 * CELL_MARGIN;
@@ -156,6 +156,31 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
             setZoom((prev) => (Math.abs(prev - nextZoom) < 0.0005 ? prev : nextZoom));
         }
     }, [zoomAnim]);
+
+    const resolveGestureScreenPoint = useCallback((event) => {
+        const layout = boardLayoutRef?.current;
+        const hasLayout =
+            layout &&
+            Number.isFinite(layout.x) &&
+            Number.isFinite(layout.y);
+        const hasLocalCoords = Number.isFinite(event?.x) && Number.isFinite(event?.y);
+        if (Platform.OS === 'android' && hasLayout && hasLocalCoords) {
+            return {
+                x: layout.x + event.x,
+                y: layout.y + event.y,
+            };
+        }
+        if (Number.isFinite(event?.absoluteX) && Number.isFinite(event?.absoluteY)) {
+            return { x: event.absoluteX, y: event.absoluteY };
+        }
+        if (hasLayout && hasLocalCoords) {
+            return {
+                x: layout.x + event.x,
+                y: layout.y + event.y,
+            };
+        }
+        return null;
+    }, [boardLayoutRef]);
 
     const handleOverlayBoardPickup = useCallback((absoluteX, absoluteY) => {
         const cell = getDraggableTileCellRef.current?.(absoluteX, absoluteY);
@@ -455,44 +480,62 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
             return base
                 .runOnJS(true)
                 .onBegin((e) => {
-                    handleOverlayBoardPickup(e.absoluteX, e.absoluteY);
+                    const point = resolveGestureScreenPoint(e);
+                    if (point) {
+                        handleOverlayBoardPickup(point.x, point.y);
+                    }
                 })
                 .onUpdate((e) => {
+                    const point = resolveGestureScreenPoint(e);
+                    if (!point) return;
                     handleOverlayBoardMove(
-                        e.absoluteX,
-                        e.absoluteY,
+                        point.x,
+                        point.y,
                         e.translationX,
                         e.translationY
                     );
                 })
                 .onEnd((e) => {
-                    handleOverlayBoardEnd(e.absoluteX, e.absoluteY);
+                    const point = resolveGestureScreenPoint(e);
+                    if (point) {
+                        handleOverlayBoardEnd(point.x, point.y);
+                    }
                 })
                 .onFinalize((e) => {
-                    handleOverlayPanFinalize(e?.absoluteX, e?.absoluteY);
+                    const point = resolveGestureScreenPoint(e);
+                    handleOverlayPanFinalize(point?.x, point?.y);
                 });
         }
 
         return base
             .runOnJS(true)
             .onBegin((e) => {
-                handleOverlayBoardPickup(e.absoluteX, e.absoluteY);
+                const point = resolveGestureScreenPoint(e);
+                if (point) {
+                    handleOverlayBoardPickup(point.x, point.y);
+                }
             })
             .onUpdate((e) => {
+                const point = resolveGestureScreenPoint(e);
+                if (!point) return;
                 handleOverlayBoardMove(
-                    e.absoluteX,
-                    e.absoluteY,
+                    point.x,
+                    point.y,
                     e.translationX,
                     e.translationY
                 );
             })
             .onEnd((e) => {
-                handleOverlayBoardEnd(e.absoluteX, e.absoluteY);
+                const point = resolveGestureScreenPoint(e);
+                if (point) {
+                    handleOverlayBoardEnd(point.x, point.y);
+                }
             })
             .onFinalize((e) => {
-                handleOverlayPanFinalize(e?.absoluteX, e?.absoluteY);
+                const point = resolveGestureScreenPoint(e);
+                handleOverlayPanFinalize(point?.x, point?.y);
             });
-    }, [handleOverlayBoardEnd, handleOverlayBoardMove, handleOverlayBoardPickup, handleOverlayPanFinalize]);
+    }, [handleOverlayBoardEnd, handleOverlayBoardMove, handleOverlayBoardPickup, handleOverlayPanFinalize, resolveGestureScreenPoint]);
 
     const overlayPinchGesture = useMemo(() => {
         if (!ANDROID_GESTURE_PIPELINE_V2) return null;
@@ -1181,7 +1224,8 @@ const BoardCell = React.memo(function BoardCell({
         </View>
     );
 
-    if (canPickup) {
+    const useCellPickupHandlers = canPickup && Platform.OS !== 'android';
+    if (useCellPickupHandlers) {
         return (
             <View
                 style={cellStyle}

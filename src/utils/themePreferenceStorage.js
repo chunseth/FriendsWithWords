@@ -5,10 +5,14 @@ const DARK_MODE_ENABLED_KEY = "wwrf.darkModeEnabled.v1";
 export const loadDarkModeEnabledPreference = async () => {
   try {
     const storedValue = await AsyncStorage.getItem(DARK_MODE_ENABLED_KEY);
+    if (storedValue == null) {
+      return true;
+    }
+
     return storedValue === "true";
   } catch (error) {
     console.warn("Failed to load dark mode preference", error);
-    return false;
+    return true;
   }
 };
 

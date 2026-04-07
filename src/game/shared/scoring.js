@@ -7,7 +7,6 @@ const TIME_BONUS_UNDER_90_MIN = 5;
 const TIME_BONUS_UNDER_10_MIN = 15;
 const TIME_BONUS_UNDER_20_MIN = 10;
 const TIME_BONUS_UNDER_30_MIN = 5;
-const PERFECTION_BONUS = 50;
 const CONSISTENCY_THRESHOLD = 20;
 const CONSISTENCY_BONUS_STEP = 2;
 
@@ -64,18 +63,28 @@ export const scoreSubmittedWords = ({
   });
 
   const isMiniBonusMode = bonusMode === "mini";
-  const isFirstTurn = turnCount === 0;
-  const earnedScrabbleBonus =
-    placedCells.length === 7 && (!isMiniBonusMode || !isFirstTurn);
-  const scrabbleBonus = earnedScrabbleBonus
-    ? isMiniBonusMode
-      ? SCRABBLE_LITE_BONUS
-      : SCRABBLE_BONUS
-    : 0;
-  const scrabbleBonusLabel = isMiniBonusMode
-    ? "SCRABBLE LITE BONUS"
-    : "SCRABBLE BONUS";
-  const scrabbleBonusType = isMiniBonusMode ? "lite" : "classic";
+  const placedTileCount = placedCells.length;
+  let scrabbleBonus = 0;
+  let scrabbleBonusLabel = "SCRABBLE BONUS";
+  let scrabbleBonusType = "classic";
+
+  if (isMiniBonusMode) {
+    if (placedTileCount >= 7) {
+      scrabbleBonus = SCRABBLE_BONUS;
+      scrabbleBonusLabel = "SCRABBLE BONUS";
+      scrabbleBonusType = "classic";
+    } else if (placedTileCount === 6) {
+      scrabbleBonus = SCRABBLE_LITE_BONUS;
+      scrabbleBonusLabel = "SCRABBLE MINI BONUS";
+      scrabbleBonusType = "lite";
+    }
+  } else if (placedTileCount >= 7) {
+    scrabbleBonus = SCRABBLE_BONUS;
+    scrabbleBonusLabel = "SCRABBLE BONUS";
+    scrabbleBonusType = "classic";
+  }
+
+  const earnedScrabbleBonus = scrabbleBonus > 0;
 
   if (earnedScrabbleBonus) {
     newHistory.push({
@@ -160,7 +169,6 @@ export const buildFinalScoreBreakdown = ({
   turnCount,
   rackTiles,
   durationMs = null,
-  invalidWordAttempts = 0,
   wordHistory = [],
   comboBonusTotal = null,
   timeBonusProfile = TIME_BONUS_PROFILE_CLASSIC,
@@ -168,14 +176,12 @@ export const buildFinalScoreBreakdown = ({
   const turnPenalties = turnCount * 2;
   const rackPenalty = rackTiles.reduce((sum, tile) => sum + (tile?.value ?? 0), 0);
   const timeBonus = calculateTimeBonus(durationMs, timeBonusProfile);
-  const perfectionBonus =
-    invalidWordAttempts === 0 ? PERFECTION_BONUS : 0;
   const consistencyBonusTotal =
     typeof comboBonusTotal === "number"
       ? comboBonusTotal
       : calculateConsistencyBonusTotal({ wordHistory, turnCount });
   const skillBonusTotal =
-    scrabbleBonusTotal + timeBonus + perfectionBonus + consistencyBonusTotal;
+    scrabbleBonusTotal + timeBonus + consistencyBonusTotal;
   const finalScore =
     wordPointsTotal -
     swapPenaltyTotal -
@@ -183,7 +189,6 @@ export const buildFinalScoreBreakdown = ({
     rackPenalty +
     scrabbleBonusTotal +
     timeBonus +
-    perfectionBonus +
     consistencyBonusTotal;
 
   return {
@@ -193,13 +198,11 @@ export const buildFinalScoreBreakdown = ({
     rackPenalty,
     scrabbleBonus: scrabbleBonusTotal,
     timeBonus,
-    perfectionBonus,
     consistencyBonusTotal,
     durationSeconds:
       typeof durationMs === "number" && durationMs >= 0
         ? Math.floor(durationMs / 1000)
         : null,
-    invalidWordAttempts,
     skillBonusTotal,
     finalScore,
   };

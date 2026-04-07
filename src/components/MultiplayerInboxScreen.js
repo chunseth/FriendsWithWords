@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   fetchMultiplayerNotifications,
   markMultiplayerNotificationsRead,
@@ -205,7 +205,11 @@ const MultiplayerInboxScreen = ({
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={onBack}>
+        <TouchableOpacity
+          style={styles.backTouchTarget}
+          onPress={onBack}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
           <Text style={styles.backButton}>Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Inbox</Text>
@@ -234,6 +238,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  backTouchTarget: {
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: "center",
+    alignItems: "flex-start",
   },
   backButton: {
     color: "#2f6f4f",

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { unstable_batchedUpdates } from "react-native";
+import { InteractionManager, unstable_batchedUpdates } from "react-native";
 import { dictionary } from "../utils/dictionary";
 import {
   BLANK_LETTER,
@@ -25,7 +25,7 @@ import { validateSubmitTurn } from "../game/shared/validation";
 
 const CONSISTENCY_THRESHOLD = 20;
 const CONSISTENCY_BONUS_STEP = 2;
-const PREVIEW_COMPUTE_DELAY_MS = 90;
+const PREVIEW_COMPUTE_DELAY_MS = 120;
 const PREVIEW_DICTIONARY = {
   isValid: () => true,
 };
@@ -102,6 +102,8 @@ export const useGame = () => {
   const [isSwapMode, setIsSwapMode] = useState(false);
   const [swapCount, setSwapCount] = useState(0);
   const [submitScorePreview, setSubmitScorePreview] = useState(null);
+  const [submitScorePreviewIsValid, setSubmitScorePreviewIsValid] =
+    useState(false);
 
   const randomRef = useRef(null);
   const tileBagRef = useRef([]);
@@ -123,7 +125,6 @@ export const useGame = () => {
   );
   const timeBonusProfileRef = useRef(TIME_BONUS_PROFILE_CLASSIC);
   const gameStartedAtMsRef = useRef(null);
-  const invalidWordAttemptsRef = useRef(0);
   const currentConsistencyStreakRef = useRef(0);
   const consistencyBonusTotalRef = useRef(0);
 
@@ -205,7 +206,6 @@ export const useGame = () => {
       tilesUsedThisTurnRef.current = new Set();
       boardAtTurnStartRef.current = null;
       gameStartedAtMsRef.current = null;
-      invalidWordAttemptsRef.current = 0;
       currentConsistencyStreakRef.current = 0;
       consistencyBonusTotalRef.current = 0;
 
@@ -268,7 +268,6 @@ export const useGame = () => {
     tilesUsedThisTurnRef.current = new Set();
     boardAtTurnStartRef.current = null;
     gameStartedAtMsRef.current = null;
-    invalidWordAttemptsRef.current = 0;
     currentConsistencyStreakRef.current = 0;
     consistencyBonusTotalRef.current = 0;
 
@@ -308,10 +307,23 @@ export const useGame = () => {
     [isSwapMode, tilesRemaining]
   );
 
+  const isInBounds = useCallback((row, col) => {
+    const size = boardSizeRef.current;
+    return (
+      Number.isInteger(row) &&
+      Number.isInteger(col) &&
+      row >= 0 &&
+      col >= 0 &&
+      row < size &&
+      col < size
+    );
+  }, []);
+
   const placeTileOnBoard = useCallback(
     (tileIndex, row, col, chosenLetter = null) => {
       if (tileIndex === null || tileIndex < 0 || tileIndex >= tileRack.length)
         return;
+      if (!isInBounds(row, col)) return;
       if (board[row][col] !== null) return;
       if (tilesUsedThisTurnRef.current.has(tileIndex)) {
         setMessage({
@@ -364,7 +376,7 @@ export const useGame = () => {
 
       setSelectedCells((prev) => [...prev, { row, col }]);
     },
-    [board, tileRack]
+    [board, isInBounds, tileRack]
   );
 
   const isBlankRackTile = useCallback((tile) => {
@@ -377,6 +389,7 @@ export const useGame = () => {
 
   const handleCellClick = useCallback(
     (row, col) => {
+      if (!isInBounds(row, col)) return;
       if (board[row][col] !== null) {
         // Don't allow selecting already-scored tiles (they can't be moved/cleared)
         if (board[row][col].scored) return;
@@ -392,11 +405,14 @@ export const useGame = () => {
       }
       // Placement is done via drag-and-drop from the rack only
     },
-    [board]
+    [board, isInBounds]
   );
 
   const removeTileFromBoard = useCallback((row, col) => {
+    if (!isInBounds(row, col)) return;
     setBoard((prev) => {
+      const targetRow = prev[row];
+      if (!targetRow) return prev;
       const newBoard = prev.map((r) => [...r]);
       const tile = newBoard[row][col];
       if (tile?.scored) return prev; // can't remove already-scored tiles
@@ -410,9 +426,10 @@ export const useGame = () => {
     setSelectedCells((prev) =>
       prev.filter((c) => !(c.row === row && c.col === col))
     );
-  }, []);
+  }, [isInBounds]);
 
   const moveTileOnBoard = useCallback((fromRow, fromCol, toRow, toCol) => {
+    if (!isInBounds(fromRow, fromCol) || !isInBounds(toRow, toCol)) return;
     if (fromRow === toRow && fromCol === toCol) return;
     unstable_batchedUpdates(() => {
       setBoard((prev) => {
@@ -452,7 +469,7 @@ export const useGame = () => {
         return [...without, { row: toRow, col: toCol }];
       });
     });
-  }, []);
+  }, [isInBounds]);
 
   const clearSelection = useCallback(() => {
     selectedCells.forEach(({ row, col }) => {
@@ -623,9 +640,6 @@ export const useGame = () => {
       boardSize: boardSizeRef.current,
     });
     if (!validation.ok) {
-      if (validation?.error?.title === "Invalid Word") {
-        invalidWordAttemptsRef.current += 1;
-      }
       setMessage(validation.error);
       return null;
     }
@@ -701,7 +715,7 @@ export const useGame = () => {
       const scrabbleBonusMessage =
         payload.earnedScrabbleBonus && payload.scrabbleBonus > 0
           ? payload.scrabbleBonusType === "lite"
-            ? `Scrabble Lite bonus +${payload.scrabbleBonus}`
+            ? `Scrabble Mini bonus +${payload.scrabbleBonus}`
             : `Scrabble bonus +${payload.scrabbleBonus}`
           : null;
       setMessage({
@@ -709,6 +723,7 @@ export const useGame = () => {
         text: `Words: ${payload.newWords
           .map((w) => w.word.toUpperCase())
           .join(", ")}`,
+        playedWords: payload.newWords.map((w) => w.word.toUpperCase()),
         turnPoints: payload.turnScore,
         consistencyBonus: perTurnConsistencyBonus,
         scrabbleBonusMessage,
@@ -749,7 +764,6 @@ export const useGame = () => {
       turnCount,
       rackTiles: tileRack,
       durationMs,
-      invalidWordAttempts: invalidWordAttemptsRef.current,
       wordHistory,
       comboBonusTotal: consistencyBonusTotalRef.current,
       timeBonusProfile: timeBonusProfileRef.current,
@@ -790,48 +804,65 @@ export const useGame = () => {
   useEffect(() => {
     if (gameOver || isSwapMode) {
       setSubmitScorePreview(null);
+      setSubmitScorePreviewIsValid(false);
       return;
     }
 
     if (selectedCells.length === 0) {
       setSubmitScorePreview(null);
+      setSubmitScorePreviewIsValid(false);
       return;
     }
 
     // Hide stale preview immediately while recalculating for the latest board state.
     setSubmitScorePreview(null);
+    setSubmitScorePreviewIsValid(false);
 
     let cancelled = false;
-    const timeoutId = setTimeout(() => {
+    let timeoutId = null;
+    const interactionTask = InteractionManager.runAfterInteractions(() => {
       if (cancelled) return;
 
-      const validation = validateSubmitTurn({
-        board,
-        isFirstTurn,
-        boardAtTurnStart: boardAtTurnStartRef.current,
-        dictionary: PREVIEW_DICTIONARY,
-        boardSize: boardSizeRef.current,
-      });
+      timeoutId = setTimeout(() => {
+        if (cancelled) return;
 
-      if (!validation.ok) {
-        setSubmitScorePreview(null);
-        return;
-      }
+        const validation = validateSubmitTurn({
+          board,
+          isFirstTurn,
+          boardAtTurnStart: boardAtTurnStartRef.current,
+          dictionary: PREVIEW_DICTIONARY,
+          boardSize: boardSizeRef.current,
+        });
 
-      const previewScoring = scoreSubmittedWords({
-        board,
-        newWords: validation.newWords,
-        premiumSquares: premiumSquaresRef.current,
-        turnCount,
-        placedCells: validation.placedCells,
-      });
+        if (!validation.ok) {
+          setSubmitScorePreview(null);
+          setSubmitScorePreviewIsValid(false);
+          return;
+        }
 
-      setSubmitScorePreview(previewScoring.turnScore);
-    }, PREVIEW_COMPUTE_DELAY_MS);
+        const previewScoring = scoreSubmittedWords({
+          board,
+          newWords: validation.newWords,
+          premiumSquares: premiumSquaresRef.current,
+          turnCount,
+          placedCells: validation.placedCells,
+          bonusMode: gameModeRef.current === GAME_MODE_MINI ? "mini" : "classic",
+        });
+
+        setSubmitScorePreview(previewScoring.turnScore);
+        const allWordsValid = validation.words.every((wordData) =>
+          dictionary.isValid(wordData.word)
+        );
+        setSubmitScorePreviewIsValid(allWordsValid);
+      }, PREVIEW_COMPUTE_DELAY_MS);
+    });
 
     return () => {
       cancelled = true;
-      clearTimeout(timeoutId);
+      if (timeoutId != null) {
+        clearTimeout(timeoutId);
+      }
+      interactionTask?.cancel?.();
     };
   }, [board, gameOver, isFirstTurn, isSwapMode, selectedCells.length, turnCount]);
 
@@ -881,7 +912,6 @@ export const useGame = () => {
       boardAtTurnStart: boardAtTurnStartRef.current,
       randomState: randomRef.current?.getState?.() ?? null,
       gameStartedAtMs: gameStartedAtMsRef.current,
-      invalidWordAttempts: invalidWordAttemptsRef.current,
       currentConsistencyStreak: currentConsistencyStreakRef.current,
       consistencyBonusTotal: consistencyBonusTotalRef.current,
     };
@@ -955,10 +985,6 @@ export const useGame = () => {
       typeof snapshot.gameStartedAtMs === "number"
         ? snapshot.gameStartedAtMs
         : null;
-    invalidWordAttemptsRef.current =
-      typeof snapshot.invalidWordAttempts === "number"
-        ? snapshot.invalidWordAttempts
-        : 0;
     currentConsistencyStreakRef.current =
       typeof snapshot.currentConsistencyStreak === "number"
         ? snapshot.currentConsistencyStreak
@@ -1011,6 +1037,7 @@ export const useGame = () => {
     finalScore,
     finalScoreBreakdown,
     submitScorePreview,
+    submitScorePreviewIsValid,
     isSwapMode,
     swapCount,
     premiumSquares: premiumSquaresRef.current,

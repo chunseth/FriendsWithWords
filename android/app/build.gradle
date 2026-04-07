@@ -123,6 +123,14 @@ if (releaseTaskRequested && !hasReleaseSigning) {
     )
 }
 
+def generatedLibcxxDir = file("$buildDir/generated/libcxx/jniLibs")
+def abiToTriple = [
+    "armeabi-v7a": "arm-linux-androideabi",
+    "arm64-v8a"  : "aarch64-linux-android",
+    "x86"        : "i686-linux-android",
+    "x86_64"     : "x86_64-linux-android",
+]
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -167,7 +175,54 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
+    sourceSets {
+        main {
+            // Ensure we package libc++ from the selected NDK toolchain, so
+            // worklets/reanimated and app native libraries share the same C++ runtime ABI.
+            jniLibs.srcDir(generatedLibcxxDir)
+        }
+    }
+    packagingOptions {
+        jniLibs {
+            // Multiple AARs ship libc++_shared.so; prefer the generated NDK copy above.
+            pickFirsts += ["**/libc++_shared.so"]
+        }
+    }
 }
+
+tasks.register("prepareNdkLibcxx") {
+    outputs.dir(generatedLibcxxDir)
+    doLast {
+        generatedLibcxxDir.deleteDir()
+        generatedLibcxxDir.mkdirs()
+
+        def prebuiltRoot = new File(android.ndkDirectory, "toolchains/llvm/prebuilt")
+        def hostPrebuilt = prebuiltRoot.listFiles()?.find { it.isDirectory() }
+        if (hostPrebuilt == null) {
+            throw new GradleException(
+                "Could not locate NDK prebuilt toolchain under ${prebuiltRoot}. " +
+                "Install NDK ${android.ndkVersion} in Android SDK Manager."
+            )
+        }
+
+        abiToTriple.each { abi, triple ->
+            def sourceLib = new File(hostPrebuilt, "sysroot/usr/lib/${triple}/libc++_shared.so")
+            if (!sourceLib.exists()) {
+                throw new GradleException(
+                    "Missing ${sourceLib}. Verify NDK ${android.ndkVersion} is fully installed."
+                )
+            }
+            def abiDir = new File(generatedLibcxxDir, abi)
+            abiDir.mkdirs()
+            copy {
+                from(sourceLib)
+                into(abiDir)
+            }
+        }
+    }
+}
+
+preBuild.dependsOn("prepareNdkLibcxx")
 
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin

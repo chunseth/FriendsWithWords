@@ -11,7 +11,6 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   StatusBar,
   Animated,
   Easing,
@@ -21,6 +20,10 @@ import {
   InteractionManager,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from "react-native-safe-area-context";
 import SFSymbolIcon from "./components/SFSymbolIcon";
 import { useGame } from "./hooks/useGame";
 import { dictionary } from "./utils/dictionary";
@@ -134,6 +137,7 @@ const SWAP_STEP_DELAY = 70;
 const SWAP_MULTIPLIER_POP_DURATION = 300;
 const SWAP_SCORE_REPLACE_DURATION = 300;
 const SWAP_MULTIPLIER_HOLD_DURATION = 500;
+const MINI_SCORE_STEP_DURATION = 12;
 const FRESH_NOTIFICATION_WINDOW_MS = 20 * 1000;
 const SCRABBLE_BANNER_FADE_IN_DURATION = 140;
 const SCRABBLE_BANNER_VISIBLE_DURATION = 1100;
@@ -144,6 +148,7 @@ const ENABLE_MULTIPLAYER_BANNER_DEBUG_LOGS = false;
 const GAME_MODE_CLASSIC = "classic";
 const GAME_MODE_DAILY_MINI = "daily-mini";
 const GAME_TYPE_STANDARD = "standard";
+const GAME_TYPE_SEEDED_INPUT = "seeded_input";
 const GAME_TYPE_CUSTOM_BOARD = "custom_board";
 const CUSTOM_BOARD_DAILY_SEED_PREFIX = "variant-daily";
 const EXCLUDED_BOARD_VARIANT_IDS = new Set([
@@ -461,7 +466,7 @@ function App() {
   const [leaderboardConsentModalSource, setLeaderboardConsentModalSource] =
     useState("gameOver");
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
-  const [darkModeEnabled, setDarkModeEnabled] = useState(false);
+  const [darkModeEnabled, setDarkModeEnabled] = useState(true);
   const [deleteAccountModalVisible, setDeleteAccountModalVisible] =
     useState(false);
   const [deleteAccountLoading, setDeleteAccountLoading] = useState(false);
@@ -509,8 +514,10 @@ function App() {
   const [showScrabbleBanner, setShowScrabbleBanner] = useState(false);
   const [scrabbleBannerText, setScrabbleBannerText] = useState("Scrabble!");
   const [scrabbleBannerPoints, setScrabbleBannerPoints] = useState("+50");
+  const [pendingScrabbleBanner, setPendingScrabbleBanner] = useState(null);
   const [gameInfoFlavor, setGameInfoFlavor] = useState(null);
   const [pendingGameInfoFlavor, setPendingGameInfoFlavor] = useState(null);
+  const [miniDeferredScoreDisplay, setMiniDeferredScoreDisplay] = useState(null);
   const game = useGame();
   const spinValue = useRef(new Animated.Value(0)).current;
   const scrabbleBannerOpacity = useRef(new Animated.Value(0)).current;
@@ -531,10 +538,75 @@ function App() {
   const recentBannerEventKeysRef = useRef(new Map());
   const homeScreenRef = useRef(homeScreen);
   const activeMultiplayerSessionIdRef = useRef(activeMultiplayerSessionId);
+  const miniScoreAnimationTimeoutRef = useRef(null);
+  const miniDeferredTargetScoreRef = useRef(null);
+  const miniDeferredStepMsRef = useRef(MINI_SCORE_STEP_DURATION);
+  const miniScoreLastTickMsRef = useRef(null);
+  const pendingDeferredScoreAnimationStartRef = useRef(false);
   const rackSourceTiles = swapDisplayRack ?? game.tileRack;
+  const clearMiniScoreAnimation = useCallback(() => {
+    if (miniScoreAnimationTimeoutRef.current) {
+      clearTimeout(miniScoreAnimationTimeoutRef.current);
+      miniScoreAnimationTimeoutRef.current = null;
+    }
+    miniScoreLastTickMsRef.current = null;
+  }, []);
   const displayedScore = game.gameOver
     ? game.finalScore
-    : game.totalScore - swapAnimatedPenalty;
+    : typeof miniDeferredScoreDisplay === "number"
+      ? miniDeferredScoreDisplay
+      : game.totalScore - swapAnimatedPenalty;
+  const miniScorePointsRemaining =
+    !game.gameOver &&
+    typeof miniDeferredTargetScoreRef.current === "number" &&
+    typeof displayedScore === "number"
+      ? Math.max(0, miniDeferredTargetScoreRef.current - displayedScore)
+      : 0;
+  const startMiniDeferredScoreAnimation = useCallback(() => {
+    const targetScore = miniDeferredTargetScoreRef.current;
+    if (typeof targetScore !== "number") {
+      return;
+    }
+
+    clearMiniScoreAnimation();
+    miniScoreLastTickMsRef.current = Date.now();
+
+    const runNextStep = () => {
+      setMiniDeferredScoreDisplay((previousDisplay) => {
+        const currentDisplay =
+          typeof previousDisplay === "number" ? previousDisplay : targetScore;
+        if (currentDisplay >= targetScore) {
+          miniDeferredTargetScoreRef.current = null;
+          return currentDisplay;
+        }
+
+        const now = Date.now();
+        const previousTickMs = miniScoreLastTickMsRef.current ?? now;
+        const elapsedMs = Math.max(0, now - previousTickMs);
+        miniScoreLastTickMsRef.current = now;
+        const elapsedSteps = Math.floor(
+          elapsedMs / Math.max(1, miniDeferredStepMsRef.current)
+        );
+        const stepSize = Math.max(1, elapsedSteps);
+        const nextDisplay = Math.min(targetScore, currentDisplay + stepSize);
+        if (nextDisplay >= targetScore) {
+          miniDeferredTargetScoreRef.current = null;
+          return nextDisplay;
+        }
+
+        miniScoreAnimationTimeoutRef.current = setTimeout(
+          runNextStep,
+          miniDeferredStepMsRef.current
+        );
+        return nextDisplay;
+      });
+    };
+
+    miniScoreAnimationTimeoutRef.current = setTimeout(
+      runNextStep,
+      miniDeferredStepMsRef.current
+    );
+  }, [clearMiniScoreAnimation]);
   const currentDailyHighScore = scoreRecords.dailySeedScores[dailySeed] ?? null;
   const currentMiniDailyHighScore =
     scoreRecords.miniDailySeedScores[dailySeed] ?? null;
@@ -583,6 +655,21 @@ function App() {
   useEffect(() => {
     homeScreenRef.current = homeScreen;
   }, [homeScreen]);
+
+  useEffect(() => {
+    return () => {
+      clearMiniScoreAnimation();
+    };
+  }, [clearMiniScoreAnimation]);
+
+  useEffect(() => {
+    if (gameStarted) {
+      return;
+    }
+    clearMiniScoreAnimation();
+    miniDeferredTargetScoreRef.current = null;
+    setMiniDeferredScoreDisplay(null);
+  }, [clearMiniScoreAnimation, gameStarted]);
 
   useEffect(() => {
     activeMultiplayerSessionIdRef.current = activeMultiplayerSessionId;
@@ -1353,7 +1440,7 @@ function App() {
         : isLite
           ? 20
           : 50;
-    setScrabbleBannerText(isLite ? "Scrabble Lite!" : "Scrabble!");
+    setScrabbleBannerText(isLite ? "Scrabble Mini!" : "Scrabble!");
     setScrabbleBannerPoints(`+${bonusValue}`);
 
     if (scrabbleBannerTimeoutRef.current != null) {
@@ -1446,8 +1533,16 @@ function App() {
         animationState.multiplierText = null;
         syncRackTileAnimationStates();
 
-        animateRackLayout();
-        setSwapDisplayRack((prev) => [...(prev ?? []), tile]);
+        setSwapDisplayRack((prev) => {
+          const nextRack = prev ?? [];
+          return [
+            ...nextRack,
+            {
+              ...tile,
+              rackIndex: nextRack.length,
+            },
+          ];
+        });
         await waitForNextFrame();
         await runParallel([
           Animated.timing(animationState.translateY, {
@@ -1466,7 +1561,6 @@ function App() {
       }
     },
     [
-      animateRackLayout,
       clearRackTileAnimationState,
       ensureRackTileAnimationState,
       runParallel,
@@ -1630,6 +1724,11 @@ function App() {
 
     const preparedSubmit = game.prepareSubmitWord();
     if (!preparedSubmit) return;
+    const shouldDeferAcceptedScore =
+      preparedSubmit.turnScore > 0 &&
+      preparedSubmit.nextTilesRemaining > 0 &&
+      preparedSubmit.resultingRack.length > 0;
+    const preSubmitScore = game.totalScore;
     const completesGame =
       preparedSubmit.nextTilesRemaining === 0 &&
       preparedSubmit.resultingRack.length === 0;
@@ -1645,23 +1744,36 @@ function App() {
         tilesDelta: preparedSubmit.drawnTiles.length,
       };
 
-      if (preparedSubmit.earnedScrabbleBonus) {
-        setGameInfoFlavor(nextFlavor);
-        setPendingGameInfoFlavor(null);
-      } else {
-        setPendingGameInfoFlavor(nextFlavor);
-      }
+      // Clear stale flavor so pending values render while the acceptance modal is open.
+      setGameInfoFlavor(null);
+      setPendingGameInfoFlavor(nextFlavor);
     } else {
       setGameInfoFlavor(null);
       setPendingGameInfoFlavor(null);
     }
 
+    if (shouldDeferAcceptedScore) {
+      clearMiniScoreAnimation();
+      setMiniDeferredScoreDisplay(preSubmitScore);
+      miniDeferredTargetScoreRef.current = preSubmitScore + preparedSubmit.turnScore;
+      miniDeferredStepMsRef.current = MINI_SCORE_STEP_DURATION;
+    } else {
+      miniDeferredTargetScoreRef.current = null;
+      setMiniDeferredScoreDisplay(null);
+      pendingDeferredScoreAnimationStartRef.current = false;
+    }
+
     game.commitPreparedSubmitWord(preparedSubmit);
     if (preparedSubmit.earnedScrabbleBonus) {
-      triggerScrabbleBanner({
+      const bannerPayload = {
         type: preparedSubmit.scrabbleBonusType,
         bonus: preparedSubmit.scrabbleBonus,
-      });
+      };
+      if (completesGame) {
+        triggerScrabbleBanner(bannerPayload);
+      } else {
+        setPendingScrabbleBanner(bannerPayload);
+      }
     }
     if (preparedSubmit.drawnTiles.length === 0) {
       game.finalizePreparedSubmitRack(preparedSubmit);
@@ -1681,6 +1793,7 @@ function App() {
     }
   }, [
     animateRackInsertSequence,
+    clearMiniScoreAnimation,
     game,
     hasPendingTilesOnBoard,
     resetSwapAnimationState,
@@ -1692,8 +1805,15 @@ function App() {
   useEffect(() => {
     if (!swapAnimating) {
       setSwapDisplayRack(null);
+      if (
+        pendingDeferredScoreAnimationStartRef.current &&
+        typeof miniDeferredTargetScoreRef.current === "number"
+      ) {
+        pendingDeferredScoreAnimationStartRef.current = false;
+        startMiniDeferredScoreAnimation();
+      }
     }
-  }, [swapAnimating, game.tileRack]);
+  }, [game.tileRack, startMiniDeferredScoreAnimation, swapAnimating]);
 
   useEffect(() => {
     if (
@@ -2296,6 +2416,11 @@ function App() {
         : LEADERBOARD_SCORE_MODE_SOLO,
     };
 
+    // Runs started from the Seeded run input should not submit to global leaderboards.
+    if (activeGameType === GAME_TYPE_SEEDED_INPUT) {
+      return;
+    }
+
     if (leaderboardConsentStatus === LEADERBOARD_CONSENT_GRANTED) {
       submitLatestCompletedScore(submission);
       return;
@@ -2633,6 +2758,7 @@ function App() {
           : GAME_MODE_CLASSIC;
       const boardVariant = options.boardVariant ?? null;
       const isCustomBoardGame = options.gameType === GAME_TYPE_CUSTOM_BOARD;
+      const isSeededInputGame = options.gameType === GAME_TYPE_SEEDED_INPUT;
       setSavedGamePayload(null);
       clearGameSnapshotPayload();
       game.startNewGame(seed, {
@@ -2650,13 +2776,21 @@ function App() {
       });
       setActiveGameMode(nextMode);
       setActiveGameType(
-        isCustomBoardGame ? GAME_TYPE_CUSTOM_BOARD : GAME_TYPE_STANDARD
+        isCustomBoardGame
+          ? GAME_TYPE_CUSTOM_BOARD
+          : isSeededInputGame
+            ? GAME_TYPE_SEEDED_INPUT
+            : GAME_TYPE_STANDARD
       );
       setActiveBoardVariant(boardVariant);
       setActiveDailySeed(options.isDaily ? seed : null);
       setEndGameSummary(null);
       setGameInfoFlavor(null);
       setPendingGameInfoFlavor(null);
+      clearMiniScoreAnimation();
+      miniDeferredTargetScoreRef.current = null;
+      pendingDeferredScoreAnimationStartRef.current = false;
+      setMiniDeferredScoreDisplay(null);
       setPendingLeaderboardSubmission(null);
       setLeaderboardConsentModalVisible(false);
       setSettingsModalVisible(false);
@@ -2669,7 +2803,7 @@ function App() {
       setPlayMenuVisible(false);
       setInGameMenuVisible(false);
     },
-    [game]
+    [clearMiniScoreAnimation, game]
   );
 
   const handleDailyGameStart = useCallback(() => {
@@ -2796,6 +2930,11 @@ function App() {
     const closedMessage = game.message;
     game.setMessage(null);
 
+    if (pendingScrabbleBanner != null) {
+      triggerScrabbleBanner(pendingScrabbleBanner);
+      setPendingScrabbleBanner(null);
+    }
+
     if (
       closedMessage?.title === "Word Accepted!" &&
       pendingGameInfoFlavor != null
@@ -2803,7 +2942,25 @@ function App() {
       setGameInfoFlavor(pendingGameInfoFlavor);
       setPendingGameInfoFlavor(null);
     }
-  }, [game, pendingGameInfoFlavor]);
+
+    if (
+      closedMessage?.title === "Word Accepted!" &&
+      typeof miniDeferredTargetScoreRef.current === "number"
+    ) {
+      if (swapAnimating) {
+        pendingDeferredScoreAnimationStartRef.current = true;
+      } else {
+        startMiniDeferredScoreAnimation();
+      }
+    }
+  }, [
+    game,
+    pendingGameInfoFlavor,
+    pendingScrabbleBanner,
+    swapAnimating,
+    startMiniDeferredScoreAnimation,
+    triggerScrabbleBanner,
+  ]);
 
   const requestGameReplacement = useCallback(
     (action) => {
@@ -2840,51 +2997,72 @@ function App() {
   const gamePanelBackgroundColor = darkModeEnabled ? "#1e293b" : "#f5f6f7";
   const gamePrimaryTextColor = darkModeEnabled ? "#f8fafc" : "#2c3e50";
   const gameSecondaryTextColor = darkModeEnabled ? "#94a3b8" : "#7f8c8d";
+  const loadingBackgroundColor = darkModeEnabled ? "#0b1220" : "#fff";
+  const loadingSpinnerTrackColor = darkModeEnabled
+    ? "rgba(148, 163, 184, 0.28)"
+    : "rgba(102, 126, 234, 0.3)";
+  const loadingSpinnerHeadColor = darkModeEnabled ? "#94a3b8" : "#667eea";
+  const loadingTextColor = darkModeEnabled ? "#cbd5e1" : "#667eea";
 
   if (!dictionaryLoaded) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <StatusBar
-          barStyle={darkModeEnabled ? "light-content" : "dark-content"}
-        />
-        <View style={styles.loadingContent}>
-          <Animated.View
-            style={[styles.spinner, { transform: [{ rotate: spin }] }]}
+      <SafeAreaProvider>
+        <SafeAreaView
+          style={[styles.loadingContainer, { backgroundColor: loadingBackgroundColor }]}
+        >
+          <StatusBar
+            barStyle={darkModeEnabled ? "light-content" : "dark-content"}
           />
-          <Text style={styles.loadingText}>Loading dictionary...</Text>
-        </View>
-      </SafeAreaView>
+          <View style={styles.loadingContent}>
+            <Animated.View
+              style={[
+                styles.spinner,
+                {
+                  borderColor: loadingSpinnerTrackColor,
+                  borderTopColor: loadingSpinnerHeadColor,
+                  transform: [{ rotate: spin }],
+                },
+              ]}
+            />
+            <Text style={[styles.loadingText, { color: loadingTextColor }]}>
+              Loading dictionary...
+            </Text>
+          </View>
+        </SafeAreaView>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <GestureHandlerRootView
-      style={[
-        styles.container,
-        darkModeEnabled ? { backgroundColor: "#0b1220" } : null,
-        !gameStarted && homeScreen === "main"
-          ? { backgroundColor: mainMenuBackgroundColor }
-          : null,
-      ]}
-    >
-      <SafeAreaView
-        ref={safeAreaRef}
+    <SafeAreaProvider>
+      <GestureHandlerRootView
         style={[
           styles.container,
-          !gameStarted &&
-            homeScreen !== "multiplayer" &&
-            styles.fullScreenMenuContainer,
+          darkModeEnabled ? { backgroundColor: "#0b1220" } : null,
           !gameStarted && homeScreen === "main"
             ? { backgroundColor: mainMenuBackgroundColor }
             : null,
-          darkModeEnabled ? { backgroundColor: "#0b1220" } : null,
         ]}
-        onLayout={refreshContainerWindowPosition}
       >
-        <StatusBar
-          barStyle={darkModeEnabled ? "light-content" : "dark-content"}
-        />
-        {gameStarted ? (
+        <SafeAreaView
+          ref={safeAreaRef}
+          edges={gameStarted ? undefined : ["left", "right", "bottom"]}
+          style={[
+            styles.container,
+            !gameStarted &&
+              homeScreen !== "multiplayer" &&
+              styles.fullScreenMenuContainer,
+            !gameStarted && homeScreen === "main"
+              ? { backgroundColor: mainMenuBackgroundColor }
+              : null,
+            darkModeEnabled ? { backgroundColor: "#0b1220" } : null,
+          ]}
+          onLayout={refreshContainerWindowPosition}
+        >
+          <StatusBar
+            barStyle={darkModeEnabled ? "light-content" : "dark-content"}
+          />
+          {gameStarted ? (
           <View style={[styles.gameContainer, { backgroundColor: gameBackgroundColor }]}>
             {/* Top: full-width panel with menu button + game info */}
             <View style={[styles.topPanel, { backgroundColor: gamePanelBackgroundColor }]}>
@@ -2927,6 +3105,12 @@ function App() {
             <View style={styles.scoreSection}>
               <Text style={[styles.scoreValue, { color: gamePrimaryTextColor }]}>
                 {displayedScore}
+                {miniScorePointsRemaining > 0 && (
+                  <Text style={styles.scoreAdditiveValue}>
+                    {" "}
+                    +{miniScorePointsRemaining}
+                  </Text>
+                )}
               </Text>
               <Text style={[styles.scoreLabel, { color: gameSecondaryTextColor }]}>
                 {game.gameOver ? "Final Score" : "Score"}
@@ -2959,6 +3143,7 @@ function App() {
                     draggingTile?.from === "rack" || swapAnimating
                   }
                   submitScorePreview={game.submitScorePreview}
+                  submitScorePreviewIsValid={game.submitScorePreviewIsValid}
                   submitScorePreviewCell={
                     game.selectedCells.length > 0
                       ? game.selectedCells[game.selectedCells.length - 1]
@@ -2992,6 +3177,7 @@ function App() {
                     draggingTile?.from === "rack" || swapAnimating
                   }
                   submitScorePreview={game.submitScorePreview}
+                  submitScorePreviewIsValid={game.submitScorePreviewIsValid}
                   submitScorePreviewCell={
                     game.selectedCells.length > 0
                       ? game.selectedCells[game.selectedCells.length - 1]
@@ -3129,20 +3315,14 @@ function App() {
                     delayPressIn={0}
                     activeOpacity={0.6}
                   >
-                    {Platform.OS === "ios" ? (
-                      <SFSymbolIcon
-                        name="arrow.down.left.arrow.up.right.square"
-                        size={CONTROL_ICON_SIZE}
-                        color="#fff"
-                        weight="medium"
-                        scale="medium"
-                        style={styles.controlIcon}
-                      />
-                    ) : (
-                      <Text style={styles.controlButtonTextLarge}>
-                        {game.isSwapMode ? "Confirm" : "Swap"}
-                      </Text>
-                    )}
+                    <SFSymbolIcon
+                      name="arrow.down.left.arrow.up.right.square"
+                      size={CONTROL_ICON_SIZE}
+                      color="#fff"
+                      weight="medium"
+                      scale="medium"
+                      style={styles.controlIcon}
+                    />
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[
@@ -3200,19 +3380,15 @@ function App() {
                     activeOpacity={0.6}
                   >
                     {game.selectedCells.length > 0 ? (
-                      Platform.OS === "ios" ? (
-                        <SFSymbolIcon
-                          name="arrow.uturn.down.square"
-                          size={CONTROL_ICON_SIZE}
-                          color="#fff"
-                          weight="medium"
-                          scale="medium"
-                          style={styles.controlIcon}
-                        />
-                      ) : (
-                        <Text style={styles.controlButtonTextLarge}>Clear</Text>
-                      )
-                    ) : Platform.OS === "ios" ? (
+                      <SFSymbolIcon
+                        name="arrow.uturn.down.square"
+                        size={CONTROL_ICON_SIZE}
+                        color="#fff"
+                        weight="medium"
+                        scale="medium"
+                        style={styles.controlIcon}
+                      />
+                    ) : (
                       <SFSymbolIcon
                         name="shuffle"
                         size={CONTROL_ICON_SIZE}
@@ -3221,8 +3397,6 @@ function App() {
                         scale="medium"
                         style={styles.controlIcon}
                       />
-                    ) : (
-                      <Text style={styles.controlButtonText}>Shuffle</Text>
                     )}
                   </TouchableOpacity>
                 </View>
@@ -3358,6 +3532,8 @@ function App() {
         <InGameMenu
           visible={inGameMenuVisible}
           isDarkMode={darkModeEnabled}
+          seed={game.currentSeed}
+          showSeedInfo={activeGameMode === GAME_MODE_CLASSIC}
           onClose={() => setInGameMenuVisible(false)}
           onOpenPlayMenu={() => {
             setInGameMenuVisible(false);
@@ -3396,7 +3572,7 @@ function App() {
               startGameWithSeed(seed, {
                 isDaily: false,
                 mode: GAME_MODE_CLASSIC,
-                gameType: GAME_TYPE_STANDARD,
+                gameType: GAME_TYPE_SEEDED_INPUT,
               })
             )
           }
@@ -3475,6 +3651,7 @@ function App() {
         <DeleteAccountModal
           visible={deleteAccountModalVisible}
           deleting={deleteAccountLoading}
+          darkModeEnabled={darkModeEnabled}
           onConfirm={handleDeleteAccount}
           onCancel={() => setDeleteAccountModalVisible(false)}
         />
@@ -3556,9 +3733,10 @@ function App() {
               )}
             </View>
           </Animated.View>
-        </View>
-      </SafeAreaView>
-    </GestureHandlerRootView>
+          </View>
+        </SafeAreaView>
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }
 
@@ -3572,7 +3750,6 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     flex: 1,
-    backgroundColor: "#fff",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -3583,13 +3760,10 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderWidth: 4,
-    borderColor: "rgba(102, 126, 234, 0.3)",
-    borderTopColor: "#667eea",
     borderRadius: 25,
     marginBottom: 20,
   },
   loadingText: {
-    color: "#667eea",
     fontSize: 16,
   },
   gameContainer: {
@@ -3633,6 +3807,9 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#2c3e50",
   },
+  scoreAdditiveValue: {
+    color: "#2f6f4f",
+  },
   scoreLabel: {
     fontSize: 12,
     fontWeight: "600",
@@ -3650,26 +3827,41 @@ const styles = StyleSheet.create({
   },
   scrabbleBanner: {
     position: "absolute",
-    top: "18%",
-    width: "80%",
+    top: "10%",
+    left: 0,
+    right: 0,
+    width: "100%",
+    backgroundColor: "rgba(255, 248, 230, 0.97)",
+    borderTopWidth: 2,
+    borderBottomWidth: 2,
+    borderColor: "#2b2b2b",
+    paddingVertical: 12,
+    paddingHorizontal: 10,
     alignItems: "center",
     justifyContent: "center",
+    zIndex: 2000,
   },
   scrabbleBannerTitle: {
     width: "100%",
     textAlign: "center",
-    fontSize: 44,
-    lineHeight: 48,
+    fontSize: 40,
+    lineHeight: 44,
     fontWeight: "900",
     color: "#d62828",
+    textShadowColor: "rgba(0, 0, 0, 0.18)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   scrabbleBannerScore: {
-    marginTop: 6,
+    marginTop: 4,
     textAlign: "center",
-    fontSize: 30,
-    lineHeight: 34,
+    fontSize: 28,
+    lineHeight: 32,
     fontWeight: "800",
     color: "#d62828",
+    textShadowColor: "rgba(0, 0, 0, 0.18)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   /** Bottom strip: tiles + controls */
   bottomSection: {

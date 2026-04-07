@@ -63,14 +63,12 @@ export const submitBoardVariantCompletedScore = async ({
     rack_penalty: finalScoreBreakdown.rackPenalty ?? 0,
     scrabble_bonus: finalScoreBreakdown.scrabbleBonus ?? 0,
     time_bonus: finalScoreBreakdown.timeBonus ?? 0,
-    perfection_bonus: finalScoreBreakdown.perfectionBonus ?? 0,
     consistency_bonus: finalScoreBreakdown.consistencyBonusTotal ?? 0,
     skill_bonus_total: finalScoreBreakdown.skillBonusTotal ?? 0,
     duration_seconds:
       typeof finalScoreBreakdown.durationSeconds === "number"
         ? finalScoreBreakdown.durationSeconds
         : null,
-    invalid_word_attempts: finalScoreBreakdown.invalidWordAttempts ?? 0,
     completed_at: new Date().toISOString(),
   };
 
