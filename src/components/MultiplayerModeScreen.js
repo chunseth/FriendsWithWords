@@ -275,6 +275,8 @@ const MultiplayerModeScreen = ({
   sessionId = "local-multiplayer-prototype",
   onSessionCompleted = null,
   isDarkMode = false,
+  musicEnabled = true,
+  onToggleMusic = null,
 }) => {
   const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const screenInstanceIdRef = useRef(
@@ -2439,8 +2441,10 @@ const MultiplayerModeScreen = ({
       <InGameMenu
         visible={menuVisible}
         isDarkMode={isDarkMode}
+        musicEnabled={musicEnabled}
         seed={session.seed}
         showSeedInfo
+        onToggleMusic={onToggleMusic}
         onClose={() => setMenuVisible(false)}
         onReturnToMultiplayerMenu={() => {
           void (async () => {

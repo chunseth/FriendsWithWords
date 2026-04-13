@@ -23,6 +23,7 @@ const LeaderboardScreen = ({
   globalLeaderboardEntries,
   globalLeaderboardLoading,
   globalLeaderboardError,
+  globalMode = "classic",
   multiplayerLeaderboardEntries,
   multiplayerLeaderboardLoading,
   multiplayerLeaderboardError,
@@ -36,6 +37,7 @@ const LeaderboardScreen = ({
   canGoNextDailySeed,
   onPreviousDailySeed,
   onNextDailySeed,
+  onGlobalModeChange,
   onDailyModeChange,
   isDarkMode = false,
   onBack,
@@ -282,6 +284,56 @@ const LeaderboardScreen = ({
             <Text style={[styles.sectionSubtitle, { color: theme.sectionSubtitle }]}>
               {highScoresSubtitle}
             </Text>
+            <View style={styles.dailyModeTabs}>
+              <TouchableOpacity
+                style={[
+                  styles.dailyModeTab,
+                  {
+                    backgroundColor: theme.tabBackground,
+                    borderColor: theme.tabBorder,
+                  },
+                  globalMode === "classic" && {
+                    backgroundColor: theme.tabActiveBackground,
+                    borderColor: theme.tabActiveBorder,
+                  },
+                ]}
+                onPress={() => onGlobalModeChange?.("classic")}
+              >
+                <Text
+                  style={[
+                    styles.dailyModeTabText,
+                    { color: theme.tabText },
+                    globalMode === "classic" && { color: theme.tabTextActive },
+                  ]}
+                >
+                  Classic
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.dailyModeTab,
+                  {
+                    backgroundColor: theme.tabBackground,
+                    borderColor: theme.tabBorder,
+                  },
+                  globalMode === "mini" && {
+                    backgroundColor: theme.tabActiveBackground,
+                    borderColor: theme.tabActiveBorder,
+                  },
+                ]}
+                onPress={() => onGlobalModeChange?.("mini")}
+              >
+                <Text
+                  style={[
+                    styles.dailyModeTabText,
+                    { color: theme.tabText },
+                    globalMode === "mini" && { color: theme.tabTextActive },
+                  ]}
+                >
+                  Mini
+                </Text>
+              </TouchableOpacity>
+            </View>
 
             {!backendConfigured ? (
               <Text style={[styles.stateText, { color: theme.stateText }]}>
@@ -428,7 +480,7 @@ const LeaderboardScreen = ({
                     dailyMode === "full" && { color: theme.tabTextActive },
                   ]}
                 >
-                  Full
+                  Classic
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity

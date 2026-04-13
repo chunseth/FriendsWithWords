@@ -8,11 +8,9 @@ require Pod::Executable.execute_command('node', ['-p',
 platform :ios, 15.0
 prepare_react_native_project!
 
-linkage = ENV['USE_FRAMEWORKS']
-if linkage != nil
-  Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
-  use_frameworks! :linkage => linkage.to_sym
-end
+# Hermes + React Native 0.73 is sensitive to `use_frameworks!` linkage mode and can
+# fail with unresolved inspector symbols (CDPHandler*) during iOS linking.
+# Keep CocoaPods in the default static-library mode for this app.
 
 target 'WordsWithRealFriends' do
   config = use_native_modules!

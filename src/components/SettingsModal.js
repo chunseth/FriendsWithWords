@@ -40,8 +40,10 @@ const SettingsModal = ({
   leaderboardSharingEnabled = false,
   multiplayerNotificationsEnabled = true,
   darkModeEnabled = false,
+  musicEnabled = true,
   onToggleMultiplayerNotifications,
   onToggleDarkMode,
+  onToggleMusic,
   onManageLeaderboardSharing,
   onDeleteAccount,
   onClose,
@@ -87,6 +89,24 @@ const SettingsModal = ({
             </Text>
             <Text style={[styles.optionValue, { color: theme.optionDetail }]}>
               {multiplayerNotificationsEnabled ? "On" : "Off"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.optionButton,
+              {
+                backgroundColor: theme.optionBackground,
+                borderColor: theme.optionBorder,
+              },
+            ]}
+            onPress={() => onToggleMusic?.(!musicEnabled)}
+          >
+            <Text style={[styles.optionLabel, { color: theme.optionLabel }]}>
+              Music
+            </Text>
+            <Text style={[styles.optionValue, { color: theme.optionDetail }]}>
+              {musicEnabled ? "On" : "Off"}
             </Text>
           </TouchableOpacity>
 

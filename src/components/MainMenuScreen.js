@@ -5,6 +5,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -46,6 +47,15 @@ const MainMenuScreen = ({
   const editStartMsRef = useRef(null);
   const firstChangeLoggedRef = useRef(false);
   const focusRequestInFlightRef = useRef(false);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
+  const landscapeButtonWidth = Math.min(
+    Math.max(Math.round(windowWidth * 0.56), 320),
+    520
+  );
+  const landscapeButtonStyle = isLandscape
+    ? { width: landscapeButtonWidth, alignSelf: "center" }
+    : null;
   const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
 
   useEffect(() => {
@@ -248,9 +258,13 @@ const MainMenuScreen = ({
         ) : null}
       </View>
 
-      <View style={styles.actions}>
+      <View style={[styles.actions, isLandscape ? styles.actionsLandscape : null]}>
         <TouchableOpacity
-          style={[styles.primaryButton, { backgroundColor: theme.primaryButton }]}
+          style={[
+            styles.primaryButton,
+            landscapeButtonStyle,
+            { backgroundColor: theme.primaryButton },
+          ]}
           onPress={() => ensureUsernameThen(onOpenPlay)}
         >
           <Text style={styles.primaryButtonText}>Play</Text>
@@ -259,6 +273,7 @@ const MainMenuScreen = ({
         <TouchableOpacity
           style={[
             styles.secondaryButton,
+            landscapeButtonStyle,
             {
               backgroundColor: theme.surface,
               borderColor: theme.border,
@@ -274,6 +289,7 @@ const MainMenuScreen = ({
         <TouchableOpacity
           style={[
             styles.secondaryButton,
+            landscapeButtonStyle,
             {
               backgroundColor: theme.surface,
               borderColor: theme.border,
@@ -289,6 +305,7 @@ const MainMenuScreen = ({
         <TouchableOpacity
           style={[
             styles.secondaryButton,
+            landscapeButtonStyle,
             {
               backgroundColor: theme.surface,
               borderColor: theme.border,
@@ -403,6 +420,9 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: 14,
+  },
+  actionsLandscape: {
+    alignItems: "center",
   },
   primaryButton: {
     borderRadius: 18,

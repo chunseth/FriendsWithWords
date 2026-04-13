@@ -15,6 +15,7 @@ const PlaySubMenu = ({
   onClose,
   onBack,
   onNewGameRandom,
+  onNewMiniRandom,
   onNewGameWithSeed,
   onOpenCustomBoards,
 }) => {
@@ -62,6 +63,27 @@ const PlaySubMenu = ({
             </View>
           </TouchableOpacity>
 
+          <TouchableOpacity
+            style={[
+              styles.secondaryButton,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.surfaceBorder,
+              },
+              styles.dailyMiniHighlight,
+            ]}
+            onPress={onNewMiniRandom}
+          >
+            <View style={styles.buttonRow}>
+              <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                New Mini
+              </Text>
+              <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
+                Random seed
+              </Text>
+            </View>
+          </TouchableOpacity>
+
           <View
             style={[
               styles.seedCard,
@@ -71,7 +93,9 @@ const PlaySubMenu = ({
               },
             ]}
           >
-            <Text style={[styles.secondaryButtonText, { color: theme.title }]}>Seeded run</Text>
+            <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+              Seeded Classic
+            </Text>
             <View style={styles.seedRow}>
               <TextInput
                 style={[
@@ -117,7 +141,7 @@ const PlaySubMenu = ({
           >
             <View style={styles.buttonRow}>
               <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-                Custom board
+                Custom Boards
               </Text>
               <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
                 Browse boards
@@ -224,6 +248,10 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     paddingHorizontal: 16,
     marginBottom: 6,
+  },
+  dailyMiniHighlight: {
+    borderColor: "#c77a2a",
+    borderWidth: 1.5,
   },
   secondaryButtonText: {
     fontSize: 19,

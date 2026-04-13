@@ -13,15 +13,21 @@ const PINCH_ZOOM_OUT_DEADZONE = 0.01;
 const BOARD_BORDER = 2;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 const BOARD_SIZE = 15;
 // Board background border: 4px on each side
 const BOARD_PADDING = 6;
 // Base cell size; tiles are 2px smaller (TILE_SIZE), spacing increased to keep board size same
 const BASE_CELL_MARGIN = 0.5;
+const IPAD_SHORT_EDGE = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
+const IS_IPAD_MINI_FAMILY = Platform.isPad && IPAD_SHORT_EDGE <= 744;
+const BOARD_LANDSCAPE_IPAD_SCALE = Platform.isPad
+    ? (IS_IPAD_MINI_FAMILY ? 0.75 : 0.91)
+    : 1;
 const CELL_SIZE = Math.min(
     (SCREEN_WIDTH - 40 - (BOARD_SIZE - 1) * 2 * BASE_CELL_MARGIN - 2 * BOARD_PADDING) / BOARD_SIZE,
     35
-);
+) * BOARD_LANDSCAPE_IPAD_SCALE;
 const TILE_SIZE = CELL_SIZE - 2;
 
 const TILE_GRADIENT_HEIGHT_PX = Math.max(1, Math.floor(TILE_SIZE * 0.5));

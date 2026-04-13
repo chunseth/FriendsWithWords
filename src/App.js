@@ -18,7 +18,9 @@ import {
   UIManager,
   LayoutAnimation,
   InteractionManager,
+  useWindowDimensions,
 } from "react-native";
+import Sound from "react-native-sound";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
   SafeAreaProvider,
@@ -95,7 +97,9 @@ import {
 } from "./utils/leaderboardConsentStorage";
 import {
   loadDarkModeEnabledPreference,
+  loadMusicEnabledPreference,
   saveDarkModeEnabledPreference,
+  saveMusicEnabledPreference,
 } from "./utils/themePreferenceStorage";
 import { clearMultiplayerSession } from "./utils/multiplayerSessionStorage";
 import {
@@ -144,6 +148,7 @@ const SCRABBLE_BANNER_VISIBLE_DURATION = 1100;
 const SCRABBLE_BANNER_FADE_OUT_DURATION = 220;
 const MULTIPLAYER_BANNER_DEDUPE_WINDOW_MS = 60000;
 const ENABLE_MULTIPLAYER_BANNER_DEBUG_LOGS = false;
+const BACKGROUND_MUSIC_ASSET = require("../public/friendswwords.mp3");
 
 const GAME_MODE_CLASSIC = "classic";
 const GAME_MODE_DAILY_MINI = "daily-mini";
@@ -171,6 +176,8 @@ const MINI_BOARD_VARIANT_DISPLAY_ORDER = [
 ];
 const DAILY_LEADERBOARD_MODE_FULL = "full";
 const DAILY_LEADERBOARD_MODE_MINI = "mini";
+const GLOBAL_LEADERBOARD_MODE_CLASSIC = "classic";
+const GLOBAL_LEADERBOARD_MODE_MINI = "mini";
 
 const buildNumericSeedFromText = (text) => {
   let hash = 0;
@@ -421,6 +428,9 @@ const buildMultiplayerNotificationEventKey = ({
 };
 
 function App() {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isPadLandscape = Platform.isPad && windowWidth > windowHeight;
+
   const [dictionaryLoaded, setDictionaryLoaded] = useState(false);
   const [playMenuVisible, setPlayMenuVisible] = useState(false);
   const [playSubMenuVisible, setPlaySubMenuVisible] = useState(false);
@@ -467,6 +477,7 @@ function App() {
     useState("gameOver");
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [darkModeEnabled, setDarkModeEnabled] = useState(true);
+  const [musicEnabled, setMusicEnabled] = useState(true);
   const [deleteAccountModalVisible, setDeleteAccountModalVisible] =
     useState(false);
   const [deleteAccountLoading, setDeleteAccountLoading] = useState(false);
@@ -480,6 +491,9 @@ function App() {
   const [leaderboardEntries, setLeaderboardEntries] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardError, setLeaderboardError] = useState(null);
+  const [globalLeaderboardMode, setGlobalLeaderboardMode] = useState(
+    GLOBAL_LEADERBOARD_MODE_CLASSIC
+  );
   const [multiplayerLeaderboardEntries, setMultiplayerLeaderboardEntries] =
     useState([]);
   const [multiplayerLeaderboardLoading, setMultiplayerLeaderboardLoading] =
@@ -543,7 +557,41 @@ function App() {
   const miniDeferredStepMsRef = useRef(MINI_SCORE_STEP_DURATION);
   const miniScoreLastTickMsRef = useRef(null);
   const pendingDeferredScoreAnimationStartRef = useRef(false);
+  const backgroundMusicRef = useRef(null);
+  const isBackgroundMusicReadyRef = useRef(false);
+  const isBackgroundMusicPlayingRef = useRef(false);
+  const musicEnabledRef = useRef(true);
   const rackSourceTiles = swapDisplayRack ?? game.tileRack;
+  const pauseBackgroundMusic = useCallback(() => {
+    const backgroundMusic = backgroundMusicRef.current;
+    if (!backgroundMusic || !isBackgroundMusicPlayingRef.current) {
+      return;
+    }
+
+    backgroundMusic.pause(() => {
+      isBackgroundMusicPlayingRef.current = false;
+    });
+  }, []);
+
+  const playBackgroundMusic = useCallback(() => {
+    const backgroundMusic = backgroundMusicRef.current;
+    if (
+      !musicEnabledRef.current ||
+      !backgroundMusic ||
+      !isBackgroundMusicReadyRef.current ||
+      isBackgroundMusicPlayingRef.current
+    ) {
+      return;
+    }
+
+    isBackgroundMusicPlayingRef.current = true;
+    backgroundMusic.play((success) => {
+      isBackgroundMusicPlayingRef.current = false;
+      if (!success) {
+        console.warn("Background music playback failed.");
+      }
+    });
+  }, []);
   const clearMiniScoreAnimation = useCallback(() => {
     if (miniScoreAnimationTimeoutRef.current) {
       clearTimeout(miniScoreAnimationTimeoutRef.current);
@@ -617,7 +665,10 @@ function App() {
   });
   const selectedDailyLeaderboardSeed =
     leaderboardSelectedDailySeed ?? dailySeed;
-  const rackDropExpansionTop = useMemo(() => resolveRackDropExpansionTop(), []);
+  const rackDropExpansionTop = useMemo(
+    () => resolveRackDropExpansionTop(windowWidth, windowHeight),
+    [windowWidth, windowHeight]
+  );
   const hasPendingTilesOnBoard = useMemo(
     () =>
       (game.board ?? []).some((row) =>
@@ -655,6 +706,60 @@ function App() {
   useEffect(() => {
     homeScreenRef.current = homeScreen;
   }, [homeScreen]);
+
+  useEffect(() => {
+    musicEnabledRef.current = musicEnabled;
+  }, [musicEnabled]);
+
+  useEffect(() => {
+    Sound.setCategory("Playback", true);
+    const backgroundMusic = new Sound(BACKGROUND_MUSIC_ASSET, (error) => {
+      if (error) {
+        console.warn("Failed to load background music.", error);
+        return;
+      }
+
+      backgroundMusicRef.current = backgroundMusic;
+      isBackgroundMusicReadyRef.current = true;
+      backgroundMusic.setNumberOfLoops(-1);
+      backgroundMusic.setVolume(1);
+      if (AppState.currentState === "active") {
+        playBackgroundMusic();
+      }
+    });
+
+    return () => {
+      pauseBackgroundMusic();
+      isBackgroundMusicReadyRef.current = false;
+      isBackgroundMusicPlayingRef.current = false;
+      backgroundMusicRef.current?.release();
+      backgroundMusicRef.current = null;
+    };
+  }, [pauseBackgroundMusic, playBackgroundMusic]);
+
+  useEffect(() => {
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        playBackgroundMusic();
+      } else {
+        pauseBackgroundMusic();
+      }
+    });
+
+    return () => {
+      appStateSubscription.remove();
+    };
+  }, [pauseBackgroundMusic, playBackgroundMusic]);
+
+  useEffect(() => {
+    if (musicEnabled) {
+      if (AppState.currentState === "active") {
+        playBackgroundMusic();
+      }
+      return;
+    }
+    pauseBackgroundMusic();
+  }, [musicEnabled, pauseBackgroundMusic, playBackgroundMusic]);
 
   useEffect(() => {
     return () => {
@@ -752,11 +857,15 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const storedDarkModeEnabled = await loadDarkModeEnabledPreference();
+      const [storedDarkModeEnabled, storedMusicEnabled] = await Promise.all([
+        loadDarkModeEnabledPreference(),
+        loadMusicEnabledPreference(),
+      ]);
       if (cancelled) {
         return;
       }
       setDarkModeEnabled(storedDarkModeEnabled);
+      setMusicEnabled(storedMusicEnabled);
     })();
 
     return () => {
@@ -2162,10 +2271,12 @@ function App() {
       if (result.ok) {
         if (scoreMode === LEADERBOARD_SCORE_MODE_MULTIPLAYER) {
           loadMultiplayerLeaderboard();
-        } else if (scoreMode === LEADERBOARD_SCORE_MODE_MINI) {
-          // Mini runs only participate in daily mini leaderboards.
         } else {
-          loadGlobalLeaderboard();
+          loadGlobalLeaderboard(
+            scoreMode === LEADERBOARD_SCORE_MODE_MINI
+              ? LEADERBOARD_SCORE_MODE_MINI
+              : LEADERBOARD_SCORE_MODE_SOLO
+          );
         }
         if (scoreMode === LEADERBOARD_SCORE_MODE_SOLO) {
           loadLeaderboardPosition();
@@ -2204,11 +2315,16 @@ function App() {
       return;
     }
 
-    loadGlobalLeaderboard();
+    loadGlobalLeaderboard(
+      globalLeaderboardMode === GLOBAL_LEADERBOARD_MODE_MINI
+        ? LEADERBOARD_SCORE_MODE_MINI
+        : LEADERBOARD_SCORE_MODE_SOLO
+    );
     loadMultiplayerLeaderboard();
     loadDailyLeaderboard();
   }, [
     gameStarted,
+    globalLeaderboardMode,
     homeScreen,
     loadDailyLeaderboard,
     loadGlobalLeaderboard,
@@ -2618,6 +2734,12 @@ function App() {
     await saveDarkModeEnabledPreference(nextEnabled);
   }, []);
 
+  const handleToggleMusic = useCallback(async (enabled) => {
+    const nextEnabled = enabled === true;
+    setMusicEnabled(nextEnabled);
+    await saveMusicEnabledPreference(nextEnabled);
+  }, []);
+
   const handleMultiplayerSessionCompleted = useCallback(
     ({
       sessionId = null,
@@ -2830,6 +2952,14 @@ function App() {
     });
   }, [startGameWithSeed]);
 
+  const handleRandomMiniGameStart = useCallback(() => {
+    startGameWithSeed(null, {
+      isDaily: false,
+      mode: GAME_MODE_DAILY_MINI,
+      gameType: GAME_TYPE_STANDARD,
+    });
+  }, [startGameWithSeed]);
+
   const handlePlayCustomBoardVariant = useCallback(
     (variant) => {
       if (!variant || !variant.id) {
@@ -3013,10 +3143,16 @@ function App() {
           <StatusBar
             barStyle={darkModeEnabled ? "light-content" : "dark-content"}
           />
-          <View style={styles.loadingContent}>
+          <View
+            style={[
+              styles.loadingContent,
+              isPadLandscape ? styles.loadingContentLandscape : null,
+            ]}
+          >
             <Animated.View
               style={[
                 styles.spinner,
+                isPadLandscape ? styles.spinnerLandscape : null,
                 {
                   borderColor: loadingSpinnerTrackColor,
                   borderTopColor: loadingSpinnerHeadColor,
@@ -3024,7 +3160,13 @@ function App() {
                 },
               ]}
             />
-            <Text style={[styles.loadingText, { color: loadingTextColor }]}>
+            <Text
+              style={[
+                styles.loadingText,
+                isPadLandscape ? styles.loadingTextLandscape : null,
+                { color: loadingTextColor },
+              ]}
+            >
               Loading dictionary...
             </Text>
           </View>
@@ -3412,6 +3554,7 @@ function App() {
                 globalLeaderboardEntries={leaderboardEntries}
                 globalLeaderboardLoading={leaderboardLoading}
                 globalLeaderboardError={leaderboardError}
+                globalMode={globalLeaderboardMode}
                 multiplayerLeaderboardEntries={multiplayerLeaderboardEntries}
                 multiplayerLeaderboardLoading={multiplayerLeaderboardLoading}
                 multiplayerLeaderboardError={multiplayerLeaderboardError}
@@ -3439,9 +3582,25 @@ function App() {
                     resolvedMode
                   );
                 }}
+                onGlobalModeChange={(nextMode) => {
+                  const resolvedMode =
+                    nextMode === GLOBAL_LEADERBOARD_MODE_MINI
+                      ? GLOBAL_LEADERBOARD_MODE_MINI
+                      : GLOBAL_LEADERBOARD_MODE_CLASSIC;
+                  setGlobalLeaderboardMode(resolvedMode);
+                  loadGlobalLeaderboard(
+                    resolvedMode === GLOBAL_LEADERBOARD_MODE_MINI
+                      ? LEADERBOARD_SCORE_MODE_MINI
+                      : LEADERBOARD_SCORE_MODE_SOLO
+                  );
+                }}
                 onBack={handleBackToMainMenu}
                 onRefresh={() => {
-                  loadGlobalLeaderboard();
+                  loadGlobalLeaderboard(
+                    globalLeaderboardMode === GLOBAL_LEADERBOARD_MODE_MINI
+                      ? LEADERBOARD_SCORE_MODE_MINI
+                      : LEADERBOARD_SCORE_MODE_SOLO
+                  );
                   loadMultiplayerLeaderboard();
                   loadDailyLeaderboard(
                     selectedDailyLeaderboardSeed ?? dailySeed,
@@ -3502,6 +3661,8 @@ function App() {
                 sessionId={activeMultiplayerSessionId}
                 onSessionCompleted={handleMultiplayerSessionCompleted}
                 isDarkMode={darkModeEnabled}
+                musicEnabled={musicEnabled}
+                onToggleMusic={handleToggleMusic}
               />
             ) : (
               <MainMenuScreen
@@ -3532,8 +3693,10 @@ function App() {
         <InGameMenu
           visible={inGameMenuVisible}
           isDarkMode={darkModeEnabled}
+          musicEnabled={musicEnabled}
           seed={game.currentSeed}
           showSeedInfo={activeGameMode === GAME_MODE_CLASSIC}
+          onToggleMusic={handleToggleMusic}
           onClose={() => setInGameMenuVisible(false)}
           onOpenPlayMenu={() => {
             setInGameMenuVisible(false);
@@ -3567,6 +3730,7 @@ function App() {
             setPlayMenuVisible(true);
           }}
           onNewGameRandom={() => requestGameReplacement(handleRandomGameStart)}
+          onNewMiniRandom={() => requestGameReplacement(handleRandomMiniGameStart)}
           onNewGameWithSeed={(seed) =>
             requestGameReplacement(() =>
               startGameWithSeed(seed, {
@@ -3642,8 +3806,10 @@ function App() {
           }
           multiplayerNotificationsEnabled={multiplayerNotificationsEnabled}
           darkModeEnabled={darkModeEnabled}
+          musicEnabled={musicEnabled}
           onToggleMultiplayerNotifications={handleToggleMultiplayerNotifications}
           onToggleDarkMode={handleToggleDarkMode}
+          onToggleMusic={handleToggleMusic}
           onManageLeaderboardSharing={handleOpenLeaderboardSharingSettings}
           onDeleteAccount={handleOpenDeleteAccountModal}
           onClose={() => setSettingsModalVisible(false)}
@@ -3756,6 +3922,9 @@ const styles = StyleSheet.create({
   loadingContent: {
     alignItems: "center",
   },
+  loadingContentLandscape: {
+    flexDirection: "row",
+  },
   spinner: {
     width: 50,
     height: 50,
@@ -3763,8 +3932,15 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     marginBottom: 20,
   },
+  spinnerLandscape: {
+    marginBottom: 0,
+    marginRight: 16,
+  },
   loadingText: {
     fontSize: 16,
+  },
+  loadingTextLandscape: {
+    fontSize: 20,
   },
   gameContainer: {
     flex: 1,

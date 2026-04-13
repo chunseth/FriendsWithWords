@@ -5,8 +5,10 @@ import Clipboard from "@react-native-clipboard/clipboard";
 const InGameMenu = ({
   visible,
   isDarkMode = false,
+  musicEnabled = true,
   seed = null,
   showSeedInfo = false,
+  onToggleMusic,
   onClose,
   onOpenPlayMenu,
   onReturnToMultiplayerMenu,
@@ -52,6 +54,21 @@ const InGameMenu = ({
               </Text>
             </TouchableOpacity>
           ) : null}
+
+          <TouchableOpacity
+            style={[
+              styles.secondaryButton,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.surfaceBorder,
+              },
+            ]}
+            onPress={() => onToggleMusic?.(!musicEnabled)}
+          >
+            <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+              Music: {musicEnabled ? "On" : "Off"}
+            </Text>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={[
