@@ -96,6 +96,67 @@ describe("submitCompletedScore multiplayer normalization", () => {
       skill_bonus_total: 56,
     });
   });
+
+  it("includes completed board tiles when provided", async () => {
+    const lookupBuilder = {
+      select: jest.fn(),
+      eq: jest.fn(),
+      maybeSingle: jest.fn(),
+    };
+    lookupBuilder.select.mockReturnValue(lookupBuilder);
+    lookupBuilder.eq.mockReturnValue(lookupBuilder);
+    lookupBuilder.maybeSingle.mockResolvedValue({
+      data: null,
+      error: null,
+    });
+
+    let insertedPayload = null;
+    const insertBuilder = {
+      insert: jest.fn(),
+      select: jest.fn(),
+      single: jest.fn(),
+    };
+    insertBuilder.insert.mockImplementation((payload) => {
+      insertedPayload = payload;
+      return insertBuilder;
+    });
+    insertBuilder.select.mockReturnValue(insertBuilder);
+    insertBuilder.single.mockResolvedValue({
+      data: { id: "score-1" },
+      error: null,
+    });
+
+    getSupabaseClient.mockReturnValue({
+      from: jest
+        .fn()
+        .mockReturnValueOnce(lookupBuilder)
+        .mockReturnValueOnce(insertBuilder),
+    });
+    ensureSupabaseSession.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "player-1" } },
+    });
+    loadOrCreatePlayerProfile.mockResolvedValue({
+      displayName: "Player 1",
+    });
+
+    const boardTiles = {
+      boardSize: 15,
+      mode: "classic",
+      tiles: [{ row: 7, col: 7, letter: "A" }],
+    };
+    const result = await submitCompletedScore({
+      seed: "20260307",
+      finalScore: 210,
+      finalScoreBreakdown: {
+        pointsEarned: 180,
+      },
+      boardTiles,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(insertedPayload.board_tiles).toEqual(boardTiles);
+  });
 });
 
 describe("global leaderboard deduping", () => {

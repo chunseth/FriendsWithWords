@@ -44,6 +44,7 @@ const SettingsModal = ({
   onToggleMultiplayerNotifications,
   onToggleDarkMode,
   onToggleMusic,
+  onOpenTutorial,
   onManageLeaderboardSharing,
   onDeleteAccount,
   onClose,
@@ -89,6 +90,24 @@ const SettingsModal = ({
             </Text>
             <Text style={[styles.optionValue, { color: theme.optionDetail }]}>
               {multiplayerNotificationsEnabled ? "On" : "Off"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.optionButton,
+              {
+                backgroundColor: theme.optionBackground,
+                borderColor: theme.optionBorder,
+              },
+            ]}
+            onPress={onOpenTutorial}
+          >
+            <Text style={[styles.optionLabel, { color: theme.optionLabel }]}>
+              Tutorial
+            </Text>
+            <Text style={[styles.optionValue, { color: theme.optionDetail }]}>
+              View
             </Text>
           </TouchableOpacity>
 

@@ -17,6 +17,7 @@ create table if not exists public.scores (
   consistency_bonus integer not null default 0,
   skill_bonus_total integer not null default 0,
   duration_seconds integer,
+  board_tiles jsonb,
   completed_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

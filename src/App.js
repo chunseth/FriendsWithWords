@@ -40,6 +40,7 @@ import CustomBoardMenuModal from "./components/CustomBoardMenuModal";
 import InGameMenu from "./components/InGameMenu";
 import MainMenuScreen from "./components/MainMenuScreen";
 import LeaderboardScreen from "./components/LeaderboardScreen";
+import CompletedBoardScreen from "./components/CompletedBoardScreen";
 import StatsScreen from "./components/StatsScreen";
 import MultiplayerMenuScreen from "./components/MultiplayerMenuScreen";
 import MultiplayerModeScreen from "./components/MultiplayerModeScreen";
@@ -51,6 +52,7 @@ import EndGameModal from "./components/EndGameModal";
 import LeaderboardConsentModal from "./components/LeaderboardConsentModal";
 import DeleteAccountModal from "./components/DeleteAccountModal";
 import SettingsModal from "./components/SettingsModal";
+import TutorialModal from "./components/TutorialModal";
 import { useTileDragDropController } from "./hooks/useTileDragDropController";
 import {
   buildUpdatedScoreRecords,
@@ -70,6 +72,15 @@ import {
   saveGameSnapshotPayload,
 } from "./utils/gameSnapshotStorage";
 import {
+  PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT,
+  PENDING_SCORE_SUBMISSION_KIND_LEADERBOARD,
+  buildPendingScoreSubmission,
+  enqueuePendingScoreSubmission,
+  loadPendingScoreSubmissions,
+  markPendingScoreSubmissionAttempted,
+  removePendingScoreSubmission,
+} from "./utils/pendingScoreSubmissionStorage";
+import {
   fetchGlobalLeaderboard,
   fetchPlayerHighScorePosition,
   fetchPlayerScoreHistory,
@@ -85,6 +96,7 @@ import { isBackendConfigured } from "./config/backend";
 import { ensureSupabaseSession, getSupabaseClient } from "./lib/supabase";
 import {
   clearPlayerProfile,
+  hasStoredPlayerProfile,
   loadOrCreatePlayerProfile,
   savePlayerDisplayName,
 } from "./utils/playerProfile";
@@ -101,6 +113,18 @@ import {
   saveDarkModeEnabledPreference,
   saveMusicEnabledPreference,
 } from "./utils/themePreferenceStorage";
+import {
+  clearTutorialSeen,
+  loadTutorialSeen,
+  saveTutorialSeen,
+} from "./utils/tutorialStorage";
+import { resolveTutorialStartupEligibility } from "./utils/tutorialEligibility";
+import {
+  TUTORIAL_GAME_SEED,
+  TUTORIAL_GAME_TYPE,
+  TUTORIAL_STEPS,
+  validateTutorialMove,
+} from "./tutorial/scriptedTutorial";
 import { clearMultiplayerSession } from "./utils/multiplayerSessionStorage";
 import {
   fetchUnreadMultiplayerNotifications,
@@ -122,6 +146,7 @@ import {
   submitBoardVariantCompletedScore,
 } from "./services/boardVariantScoreService";
 import { resolveRackDropExpansionTop } from "./utils/rackDropExpansion";
+import { buildCompletedBoardTilesPayload } from "./utils/completedBoardPayload";
 
 const CONTROL_ICON_SIZE = 22;
 const DRAG_TILE_HALF_SIZE = 21;
@@ -155,6 +180,7 @@ const GAME_MODE_DAILY_MINI = "daily-mini";
 const GAME_TYPE_STANDARD = "standard";
 const GAME_TYPE_SEEDED_INPUT = "seeded_input";
 const GAME_TYPE_CUSTOM_BOARD = "custom_board";
+const GAME_TYPE_TUTORIAL = TUTORIAL_GAME_TYPE;
 const CUSTOM_BOARD_DAILY_SEED_PREFIX = "variant-daily";
 const EXCLUDED_BOARD_VARIANT_IDS = new Set([
   "874345bf-ada5-497c-8591-d4ff5ad45ea2",
@@ -439,12 +465,14 @@ function App() {
   const [confirmLeaveGameVisible, setConfirmLeaveGameVisible] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
   const [savedGamePayload, setSavedGamePayload] = useState(null);
+  const [savedGameLoaded, setSavedGameLoaded] = useState(false);
   const [homeScreen, setHomeScreen] = useState("main");
   const [multiplayerMenuInitialTab, setMultiplayerMenuInitialTab] =
     useState("games");
   const [leaderboardInitialPage, setLeaderboardInitialPage] = useState(
     "highScores"
   );
+  const [completedBoardEntry, setCompletedBoardEntry] = useState(null);
   const [activeMultiplayerSessionId, setActiveMultiplayerSessionId] =
     useState("local-multiplayer-prototype");
   const [dailySeed, setDailySeed] = useState(() => getDailySeed());
@@ -463,7 +491,9 @@ function App() {
   const [boardVariantLoading, setBoardVariantLoading] = useState(false);
   const [boardVariantError, setBoardVariantError] = useState(null);
   const [scoreRecords, setScoreRecords] = useState(getDefaultScoreRecords);
+  const [scoreRecordsLoaded, setScoreRecordsLoaded] = useState(false);
   const [playerStats, setPlayerStats] = useState(getDefaultStats);
+  const [playerStatsLoaded, setPlayerStatsLoaded] = useState(false);
   const [activeDailySeed, setActiveDailySeed] = useState(null);
   const [endGameSummary, setEndGameSummary] = useState(null);
   const [playerProfile, setPlayerProfile] = useState(null);
@@ -476,6 +506,18 @@ function App() {
   const [leaderboardConsentModalSource, setLeaderboardConsentModalSource] =
     useState("gameOver");
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+  const [tutorialModeActive, setTutorialModeActive] = useState(false);
+  const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  const [tutorialFeedback, setTutorialFeedback] = useState(null);
+  const [tutorialCompleted, setTutorialCompleted] = useState(false);
+  const [tutorialOverlayCollapsed, setTutorialOverlayCollapsed] = useState(false);
+  const [pendingTutorialStart, setPendingTutorialStart] = useState(false);
+  const [tutorialSeen, setTutorialSeen] = useState(false);
+  const [tutorialSeenLoaded, setTutorialSeenLoaded] = useState(false);
+  const [hadStoredPlayerProfile, setHadStoredPlayerProfile] = useState(false);
+  const [storedPlayerProfileChecked, setStoredPlayerProfileChecked] =
+    useState(false);
+  const [tutorialStartupResolved, setTutorialStartupResolved] = useState(false);
   const [darkModeEnabled, setDarkModeEnabled] = useState(true);
   const [musicEnabled, setMusicEnabled] = useState(true);
   const [deleteAccountModalVisible, setDeleteAccountModalVisible] =
@@ -554,6 +596,7 @@ function App() {
   const activeMultiplayerSessionIdRef = useRef(activeMultiplayerSessionId);
   const miniScoreAnimationTimeoutRef = useRef(null);
   const miniDeferredTargetScoreRef = useRef(null);
+  const miniDeferredStartScoreRef = useRef(null);
   const miniDeferredStepMsRef = useRef(MINI_SCORE_STEP_DURATION);
   const miniScoreLastTickMsRef = useRef(null);
   const pendingDeferredScoreAnimationStartRef = useRef(false);
@@ -561,6 +604,7 @@ function App() {
   const isBackgroundMusicReadyRef = useRef(false);
   const isBackgroundMusicPlayingRef = useRef(false);
   const musicEnabledRef = useRef(true);
+  const pendingScoreSubmissionFlushRef = useRef(false);
   const rackSourceTiles = swapDisplayRack ?? game.tileRack;
   const pauseBackgroundMusic = useCallback(() => {
     const backgroundMusic = backgroundMusicRef.current;
@@ -603,7 +647,10 @@ function App() {
     ? game.finalScore
     : typeof miniDeferredScoreDisplay === "number"
       ? miniDeferredScoreDisplay
-      : game.totalScore - swapAnimatedPenalty;
+      : typeof miniDeferredTargetScoreRef.current === "number" &&
+          typeof miniDeferredStartScoreRef.current === "number"
+        ? miniDeferredStartScoreRef.current
+        : game.totalScore - swapAnimatedPenalty;
   const miniScorePointsRemaining =
     !game.gameOver &&
     typeof miniDeferredTargetScoreRef.current === "number" &&
@@ -621,10 +668,17 @@ function App() {
 
     const runNextStep = () => {
       setMiniDeferredScoreDisplay((previousDisplay) => {
+        const fallbackStartScore =
+          typeof miniDeferredStartScoreRef.current === "number"
+            ? miniDeferredStartScoreRef.current
+            : targetScore;
         const currentDisplay =
-          typeof previousDisplay === "number" ? previousDisplay : targetScore;
+          typeof previousDisplay === "number"
+            ? previousDisplay
+            : fallbackStartScore;
         if (currentDisplay >= targetScore) {
           miniDeferredTargetScoreRef.current = null;
+          miniDeferredStartScoreRef.current = null;
           return currentDisplay;
         }
 
@@ -639,6 +693,7 @@ function App() {
         const nextDisplay = Math.min(targetScore, currentDisplay + stepSize);
         if (nextDisplay >= targetScore) {
           miniDeferredTargetScoreRef.current = null;
+          miniDeferredStartScoreRef.current = null;
           return nextDisplay;
         }
 
@@ -722,7 +777,7 @@ function App() {
       backgroundMusicRef.current = backgroundMusic;
       isBackgroundMusicReadyRef.current = true;
       backgroundMusic.setNumberOfLoops(-1);
-      backgroundMusic.setVolume(1);
+      backgroundMusic.setVolume(0.1);
       if (AppState.currentState === "active") {
         playBackgroundMusic();
       }
@@ -773,6 +828,7 @@ function App() {
     }
     clearMiniScoreAnimation();
     miniDeferredTargetScoreRef.current = null;
+    miniDeferredStartScoreRef.current = null;
     setMiniDeferredScoreDisplay(null);
   }, [clearMiniScoreAnimation, gameStarted]);
 
@@ -1833,9 +1889,22 @@ function App() {
 
     const preparedSubmit = game.prepareSubmitWord();
     if (!preparedSubmit) return;
+
+    if (tutorialModeActive && !tutorialCompleted) {
+      const tutorialStep = TUTORIAL_STEPS[tutorialStepIndex];
+      const tutorialValidation = validateTutorialMove(tutorialStep, preparedSubmit);
+      if (!tutorialValidation.ok) {
+        setTutorialFeedback({
+          type: "error",
+          text: tutorialValidation.message,
+        });
+        return;
+      }
+    }
+
+    pendingDeferredScoreAnimationStartRef.current = false;
     const shouldDeferAcceptedScore =
       preparedSubmit.turnScore > 0 &&
-      preparedSubmit.nextTilesRemaining > 0 &&
       preparedSubmit.resultingRack.length > 0;
     const preSubmitScore = game.totalScore;
     const completesGame =
@@ -1863,16 +1932,32 @@ function App() {
 
     if (shouldDeferAcceptedScore) {
       clearMiniScoreAnimation();
+      miniDeferredStartScoreRef.current = preSubmitScore;
       setMiniDeferredScoreDisplay(preSubmitScore);
       miniDeferredTargetScoreRef.current = preSubmitScore + preparedSubmit.turnScore;
       miniDeferredStepMsRef.current = MINI_SCORE_STEP_DURATION;
     } else {
       miniDeferredTargetScoreRef.current = null;
+      miniDeferredStartScoreRef.current = null;
       setMiniDeferredScoreDisplay(null);
       pendingDeferredScoreAnimationStartRef.current = false;
     }
 
     game.commitPreparedSubmitWord(preparedSubmit);
+    if (tutorialModeActive && !tutorialCompleted) {
+      const tutorialStep = TUTORIAL_STEPS[tutorialStepIndex];
+      setTutorialFeedback({
+        type: "success",
+        text: tutorialStep?.success ?? "Nice play.",
+      });
+      setTutorialOverlayCollapsed(false);
+      if (tutorialStepIndex >= TUTORIAL_STEPS.length - 1) {
+        setTutorialCompleted(true);
+        saveTutorialSeen(true).then(setTutorialSeen);
+      } else {
+        setTutorialStepIndex((prev) => prev + 1);
+      }
+    }
     if (preparedSubmit.earnedScrabbleBonus) {
       const bannerPayload = {
         type: preparedSubmit.scrabbleBonusType,
@@ -1909,6 +1994,9 @@ function App() {
     swapAnimating,
     triggerScrabbleBanner,
     waitForNextFrame,
+    tutorialCompleted,
+    tutorialModeActive,
+    tutorialStepIndex,
   ]);
 
   useEffect(() => {
@@ -1952,6 +2040,7 @@ function App() {
     const loadPersistedScores = async () => {
       const storedRecords = await loadScoreRecords();
       setScoreRecords(storedRecords);
+      setScoreRecordsLoaded(true);
     };
 
     loadPersistedScores();
@@ -1961,6 +2050,7 @@ function App() {
     const loadSavedGame = async () => {
       const storedPayload = await loadGameSnapshotPayload();
       setSavedGamePayload(storedPayload);
+      setSavedGameLoaded(true);
     };
 
     loadSavedGame();
@@ -1970,6 +2060,7 @@ function App() {
     const loadPersistedStats = async () => {
       const storedStats = await loadStats();
       setPlayerStats(storedStats);
+      setPlayerStatsLoaded(true);
     };
 
     loadPersistedStats();
@@ -1981,11 +2072,25 @@ function App() {
 
   useEffect(() => {
     const loadPlayerProfile = async () => {
+      const hasProfile = await hasStoredPlayerProfile();
+      setHadStoredPlayerProfile(hasProfile);
+      setStoredPlayerProfileChecked(true);
+
       const storedProfile = await loadOrCreatePlayerProfile();
       setPlayerProfile(storedProfile);
     };
 
     loadPlayerProfile();
+  }, []);
+
+  useEffect(() => {
+    const loadStoredTutorialSeen = async () => {
+      const storedTutorialSeen = await loadTutorialSeen();
+      setTutorialSeen(storedTutorialSeen);
+      setTutorialSeenLoaded(true);
+    };
+
+    loadStoredTutorialSeen();
   }, []);
 
   useEffect(() => {
@@ -1999,13 +2104,71 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!leaderboardConsentLoaded || leaderboardConsentStatus != null) {
+    if (
+      !leaderboardConsentLoaded ||
+      !tutorialStartupResolved ||
+      tutorialModeActive ||
+      leaderboardConsentStatus != null
+    ) {
       return;
     }
 
     setLeaderboardConsentModalSource("startup");
     setLeaderboardConsentModalVisible(true);
-  }, [leaderboardConsentLoaded, leaderboardConsentStatus]);
+  }, [
+    leaderboardConsentLoaded,
+    leaderboardConsentStatus,
+    tutorialModeActive,
+    tutorialStartupResolved,
+  ]);
+
+  useEffect(() => {
+    if (
+      tutorialStartupResolved ||
+      !tutorialSeenLoaded ||
+      !storedPlayerProfileChecked ||
+      !scoreRecordsLoaded ||
+      !playerStatsLoaded ||
+      !savedGameLoaded ||
+      !leaderboardConsentLoaded
+    ) {
+      return;
+    }
+
+    const eligibility = resolveTutorialStartupEligibility({
+      tutorialSeen,
+      hadStoredPlayerProfile,
+      scoreRecords,
+      playerStats,
+      savedGamePayload,
+      leaderboardConsentStatus,
+    });
+
+    if (eligibility.shouldMarkSeen) {
+      setTutorialSeen(true);
+      saveTutorialSeen(true);
+    }
+
+    if (eligibility.shouldShow) {
+      setPendingTutorialStart(true);
+    }
+
+    setTutorialStartupResolved(true);
+  }, [
+    hadStoredPlayerProfile,
+    leaderboardConsentLoaded,
+    leaderboardConsentStatus,
+    playerStats,
+    playerStatsLoaded,
+    savedGameLoaded,
+    savedGamePayload,
+    scoreRecords,
+    scoreRecordsLoaded,
+    storedPlayerProfileChecked,
+    tutorialSeen,
+    tutorialSeenLoaded,
+    tutorialStartupResolved,
+  ]);
 
   useEffect(() => {
     if (!customBoardMenuVisible) {
@@ -2244,6 +2407,106 @@ function App() {
     setBoardVariantLoading(false);
   }, []);
 
+  const refreshLeaderboardsAfterScoreSubmission = useCallback(
+    (scoreMode, seed) => {
+      if (scoreMode === LEADERBOARD_SCORE_MODE_MULTIPLAYER) {
+        loadMultiplayerLeaderboard();
+      } else {
+        loadGlobalLeaderboard(
+          scoreMode === LEADERBOARD_SCORE_MODE_MINI
+            ? LEADERBOARD_SCORE_MODE_MINI
+            : LEADERBOARD_SCORE_MODE_SOLO
+        );
+      }
+      if (scoreMode === LEADERBOARD_SCORE_MODE_SOLO) {
+        loadLeaderboardPosition();
+      }
+      loadSubmittedScoreHistory();
+      if (
+        (scoreMode === LEADERBOARD_SCORE_MODE_SOLO ||
+          scoreMode === LEADERBOARD_SCORE_MODE_MINI) &&
+        (activeDailySeed ?? seed) === selectedDailyLeaderboardSeed
+      ) {
+        loadDailyLeaderboard(
+          activeDailySeed ?? seed,
+          scoreMode === LEADERBOARD_SCORE_MODE_MINI
+            ? DAILY_LEADERBOARD_MODE_MINI
+            : DAILY_LEADERBOARD_MODE_FULL
+        );
+      }
+    },
+    [
+      activeDailySeed,
+      loadDailyLeaderboard,
+      loadGlobalLeaderboard,
+      loadSubmittedScoreHistory,
+      loadMultiplayerLeaderboard,
+      loadLeaderboardPosition,
+      selectedDailyLeaderboardSeed,
+    ]
+  );
+
+  const submitPendingScoreSubmission = useCallback(
+    async (pendingSubmission, { showError = false } = {}) => {
+      if (!pendingSubmission?.id || !pendingSubmission.payload) {
+        return { ok: false, reason: "invalid_payload" };
+      }
+
+      await markPendingScoreSubmissionAttempted(pendingSubmission.id);
+
+      const { kind, payload } = pendingSubmission;
+      const result =
+        kind === PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT
+          ? await submitBoardVariantCompletedScore(payload)
+          : await submitCompletedScore(payload);
+
+      if (result.ok) {
+        await removePendingScoreSubmission(pendingSubmission.id);
+        if (kind === PENDING_SCORE_SUBMISSION_KIND_LEADERBOARD) {
+          refreshLeaderboardsAfterScoreSubmission(
+            payload.scoreMode ?? LEADERBOARD_SCORE_MODE_SOLO,
+            payload.seed
+          );
+        }
+        return result;
+      }
+
+      if (
+        result.reason === "backend_not_configured" ||
+        result.reason === "invalid_payload"
+      ) {
+        await removePendingScoreSubmission(pendingSubmission.id);
+      }
+
+      if (showError && result.reason !== "backend_not_configured") {
+        console.warn("Failed to submit score", result);
+        setLeaderboardError(getLeaderboardSubmitErrorMessage(result));
+      }
+
+      return result;
+    },
+    [refreshLeaderboardsAfterScoreSubmission]
+  );
+
+  const retryPendingScoreSubmissions = useCallback(async () => {
+    if (pendingScoreSubmissionFlushRef.current || !isBackendConfigured()) {
+      return;
+    }
+
+    pendingScoreSubmissionFlushRef.current = true;
+    try {
+      const pendingSubmissions = await loadPendingScoreSubmissions();
+      for (const pendingSubmission of pendingSubmissions) {
+        const result = await submitPendingScoreSubmission(pendingSubmission);
+        if (!result.ok) {
+          break;
+        }
+      }
+    } finally {
+      pendingScoreSubmissionFlushRef.current = false;
+    }
+  }, [submitPendingScoreSubmission]);
+
   const submitLatestCompletedScore = useCallback(
     async ({
       seed,
@@ -2252,61 +2515,46 @@ function App() {
       isDailySeed: isDailySeedSubmission,
       scoreMode = LEADERBOARD_SCORE_MODE_SOLO,
       displayNameOverride = null,
+      completedAt = null,
+      boardTiles = null,
     }) => {
-      const result = await submitCompletedScore({
+      const queuedPayload = {
         seed,
         finalScore,
         finalScoreBreakdown,
         isDailySeed: isDailySeedSubmission,
         scoreMode,
         displayNameOverride,
-      });
+        completedAt: completedAt ?? new Date().toISOString(),
+        boardTiles,
+      };
 
-      if (!result.ok && result.reason !== "backend_not_configured") {
-        console.warn("Failed to submit score", result);
-        setLeaderboardError(getLeaderboardSubmitErrorMessage(result));
-        return result;
+      if (!isBackendConfigured()) {
+        return submitCompletedScore(queuedPayload);
       }
 
+      await enqueuePendingScoreSubmission(
+        PENDING_SCORE_SUBMISSION_KIND_LEADERBOARD,
+        queuedPayload
+      );
+      const pendingSubmission = buildPendingScoreSubmission(
+        PENDING_SCORE_SUBMISSION_KIND_LEADERBOARD,
+        queuedPayload,
+        queuedPayload.completedAt
+      );
+      const result = await submitPendingScoreSubmission(pendingSubmission, {
+        showError: true,
+      });
+
       if (result.ok) {
-        if (scoreMode === LEADERBOARD_SCORE_MODE_MULTIPLAYER) {
-          loadMultiplayerLeaderboard();
-        } else {
-          loadGlobalLeaderboard(
-            scoreMode === LEADERBOARD_SCORE_MODE_MINI
-              ? LEADERBOARD_SCORE_MODE_MINI
-              : LEADERBOARD_SCORE_MODE_SOLO
-          );
-        }
-        if (scoreMode === LEADERBOARD_SCORE_MODE_SOLO) {
-          loadLeaderboardPosition();
-        }
-        loadSubmittedScoreHistory();
-        if (
-          (scoreMode === LEADERBOARD_SCORE_MODE_SOLO ||
-            scoreMode === LEADERBOARD_SCORE_MODE_MINI) &&
-          (activeDailySeed ?? seed) === selectedDailyLeaderboardSeed
-        ) {
-          loadDailyLeaderboard(
-            activeDailySeed ?? seed,
-            scoreMode === LEADERBOARD_SCORE_MODE_MINI
-              ? DAILY_LEADERBOARD_MODE_MINI
-              : DAILY_LEADERBOARD_MODE_FULL
-          );
-        }
+        retryPendingScoreSubmissions();
       }
 
       return result;
     },
     [
-      activeDailySeed,
-      dailyLeaderboardMode,
-      loadDailyLeaderboard,
-      loadGlobalLeaderboard,
-      loadSubmittedScoreHistory,
-      loadMultiplayerLeaderboard,
-      loadLeaderboardPosition,
-      selectedDailyLeaderboardSeed,
+      retryPendingScoreSubmissions,
+      submitPendingScoreSubmission,
     ]
   );
 
@@ -2332,6 +2580,24 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (!startupTasksReady) {
+      return;
+    }
+
+    retryPendingScoreSubmissions();
+
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        retryPendingScoreSubmissions();
+      }
+    });
+
+    return () => {
+      appStateSubscription.remove();
+    };
+  }, [retryPendingScoreSubmissions, startupTasksReady]);
+
+  useEffect(() => {
     if (!leaderboardSelectedDailySeed) {
       setLeaderboardSelectedDailySeed(dailySeed);
     }
@@ -2347,7 +2613,7 @@ function App() {
   }, [gameStarted, homeScreen, loadLeaderboardPosition, loadSubmittedScoreHistory]);
 
   useEffect(() => {
-    if (!gameStarted || game.gameOver) {
+    if (!gameStarted || tutorialModeActive || game.gameOver) {
       return;
     }
 
@@ -2396,6 +2662,7 @@ function App() {
     playMenuVisible,
     settlingTile,
     swapAnimating,
+    tutorialModeActive,
   ]);
 
   useEffect(() => {
@@ -2403,9 +2670,13 @@ function App() {
       return;
     }
 
+    if (activeGameType === GAME_TYPE_TUTORIAL || tutorialModeActive) {
+      return;
+    }
+
     setSavedGamePayload(null);
     clearGameSnapshotPayload();
-  }, [game.gameOver]);
+  }, [activeGameType, game.gameOver, tutorialModeActive]);
 
   useEffect(() => {
     if (
@@ -2413,6 +2684,10 @@ function App() {
       typeof game.finalScore !== "number" ||
       !game.finalScoreBreakdown
     ) {
+      return;
+    }
+
+    if (activeGameType === GAME_TYPE_TUTORIAL || tutorialModeActive) {
       return;
     }
 
@@ -2452,35 +2727,53 @@ function App() {
         return;
       }
 
-      submitBoardVariantCompletedScore({
+      const boardVariantSubmission = {
         boardVariantId: activeBoardVariant.id,
         modeId: boardMode,
         seed: game.currentSeed,
         finalScore: game.finalScore,
         finalScoreBreakdown: game.finalScoreBreakdown,
         isDailySeed: true,
-      }).then((result) => {
-        if (!result.ok && result.reason !== "backend_not_configured") {
-          console.warn("Failed to submit board variant score", result);
-          return;
-        }
+        completedAt: new Date().toISOString(),
+      };
+      enqueuePendingScoreSubmission(
+        PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT,
+        boardVariantSubmission
+      )
+        .then(() =>
+          submitPendingScoreSubmission(
+            buildPendingScoreSubmission(
+              PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT,
+              boardVariantSubmission,
+              boardVariantSubmission.completedAt
+            )
+          )
+        )
+        .then((result) => {
+          if (!result.ok && result.reason !== "backend_not_configured") {
+            console.warn("Failed to submit board variant score", result);
+            return;
+          }
 
-        setBoardVariantHighScoresByMode((prev) => {
-          const previousModeScores = prev[boardMode] ?? {};
-          const previousHigh = previousModeScores[activeBoardVariant.id];
-          const nextHigh =
-            typeof previousHigh === "number"
-              ? Math.max(previousHigh, game.finalScore)
-              : game.finalScore;
-          return {
-            ...prev,
-            [boardMode]: {
-              ...previousModeScores,
-              [activeBoardVariant.id]: nextHigh,
-            },
-          };
+          setBoardVariantHighScoresByMode((prev) => {
+            const previousModeScores = prev[boardMode] ?? {};
+            const previousHigh = previousModeScores[activeBoardVariant.id];
+            const nextHigh =
+              typeof previousHigh === "number"
+                ? Math.max(previousHigh, game.finalScore)
+                : game.finalScore;
+            return {
+              ...prev,
+              [boardMode]: {
+                ...previousModeScores,
+                [activeBoardVariant.id]: nextHigh,
+              },
+            };
+          });
+        })
+        .catch((error) => {
+          console.warn("Failed to queue board variant score", error);
         });
-      });
       return;
     }
 
@@ -2530,6 +2823,12 @@ function App() {
       scoreMode: isMiniMode
         ? LEADERBOARD_SCORE_MODE_MINI
         : LEADERBOARD_SCORE_MODE_SOLO,
+      completedAt: new Date().toISOString(),
+      boardTiles: buildCompletedBoardTilesPayload({
+        board: game.board,
+        boardSize: game.BOARD_SIZE,
+        mode: isMiniMode ? "mini" : "classic",
+      }),
     };
 
     // Runs started from the Seeded run input should not submit to global leaderboards.
@@ -2553,6 +2852,8 @@ function App() {
     activeGameMode,
     activeGameType,
     boardVariantHighScoresByMode,
+    game.BOARD_SIZE,
+    game.board,
     game.finalScore,
     game.finalScoreBreakdown,
     game.gameOver,
@@ -2563,6 +2864,8 @@ function App() {
     playerStats,
     scoreRecords,
     submitLatestCompletedScore,
+    submitPendingScoreSubmission,
+    tutorialModeActive,
   ]);
 
   const handleSavePlayerName = useCallback(async (displayName) => {
@@ -2585,6 +2888,11 @@ function App() {
     setSettingsModalVisible(false);
     setLeaderboardConsentModalVisible(true);
   }, []);
+
+  const handleOpenTutorialFromSettings = useCallback(() => {
+    setSettingsModalVisible(false);
+    startTutorialGame();
+  }, [startTutorialGame]);
 
   const handleOpenDeleteAccountModal = useCallback(() => {
     setSettingsModalVisible(false);
@@ -2643,11 +2951,20 @@ function App() {
       clearLeaderboardConsentStatus(),
       clearMultiplayerSession(),
       clearGameSnapshotPayload(),
+      clearTutorialSeen(),
     ]);
 
     const nextProfile = await loadOrCreatePlayerProfile();
     setPlayerProfile(nextProfile);
     setLeaderboardConsentStatus(null);
+    setTutorialSeen(false);
+    setTutorialStartupResolved(true);
+    setTutorialModeActive(false);
+    setTutorialStepIndex(0);
+    setTutorialFeedback(null);
+    setTutorialCompleted(false);
+    setTutorialOverlayCollapsed(false);
+    setPendingTutorialStart(false);
     setSavedGamePayload(null);
     setLeaderboardPosition(null);
     setLeaderboardPositionError(null);
@@ -2660,6 +2977,7 @@ function App() {
     setActiveGameMode(GAME_MODE_CLASSIC);
     setActiveGameType(GAME_TYPE_STANDARD);
     setActiveBoardVariant(null);
+    setCompletedBoardEntry(null);
     setEndGameSummary(null);
     setHomeScreen("main");
     setGameStarted(false);
@@ -2688,6 +3006,19 @@ function App() {
     setLeaderboardSelectedDailySeed(dailySeed);
     setHomeScreen("leaderboard");
   }, [dailySeed]);
+
+  const handleOpenCompletedBoard = useCallback((entry) => {
+    setCompletedBoardEntry(entry);
+    setLeaderboardInitialPage("highScores");
+    setHomeScreen("completed-board");
+  }, []);
+
+  const handleBackToHighScoresFromCompletedBoard = useCallback(() => {
+    setCompletedBoardEntry(null);
+    setLeaderboardInitialPage("highScores");
+    setGlobalLeaderboardMode(GLOBAL_LEADERBOARD_MODE_CLASSIC);
+    setHomeScreen("leaderboard");
+  }, []);
 
   const handleOpenMultiplayerLeaderboard = useCallback(() => {
     setLeaderboardInitialPage("multiplayer");
@@ -2779,6 +3110,7 @@ function App() {
         isDailySeed,
         scoreMode: LEADERBOARD_SCORE_MODE_MULTIPLAYER,
         displayNameOverride: leaderboardDisplayName,
+        completedAt: new Date().toISOString(),
       };
 
       if (!shouldSubmitLeaderboard) {
@@ -2881,8 +3213,11 @@ function App() {
       const boardVariant = options.boardVariant ?? null;
       const isCustomBoardGame = options.gameType === GAME_TYPE_CUSTOM_BOARD;
       const isSeededInputGame = options.gameType === GAME_TYPE_SEEDED_INPUT;
-      setSavedGamePayload(null);
-      clearGameSnapshotPayload();
+      const isTutorialGame = options.gameType === GAME_TYPE_TUTORIAL;
+      if (!isTutorialGame) {
+        setSavedGamePayload(null);
+        clearGameSnapshotPayload();
+      }
       game.startNewGame(seed, {
         mode: nextMode === GAME_MODE_DAILY_MINI ? "mini" : "classic",
         boardVariant:
@@ -2902,7 +3237,9 @@ function App() {
           ? GAME_TYPE_CUSTOM_BOARD
           : isSeededInputGame
             ? GAME_TYPE_SEEDED_INPUT
-            : GAME_TYPE_STANDARD
+            : isTutorialGame
+              ? GAME_TYPE_TUTORIAL
+              : GAME_TYPE_STANDARD
       );
       setActiveBoardVariant(boardVariant);
       setActiveDailySeed(options.isDaily ? seed : null);
@@ -2911,12 +3248,15 @@ function App() {
       setPendingGameInfoFlavor(null);
       clearMiniScoreAnimation();
       miniDeferredTargetScoreRef.current = null;
+      miniDeferredStartScoreRef.current = null;
       pendingDeferredScoreAnimationStartRef.current = false;
       setMiniDeferredScoreDisplay(null);
       setPendingLeaderboardSubmission(null);
       setLeaderboardConsentModalVisible(false);
       setSettingsModalVisible(false);
       setDeleteAccountModalVisible(false);
+      setTutorialFeedback(null);
+      setTutorialCompleted(false);
       setPlaySubMenuVisible(false);
       setCustomBoardMenuVisible(false);
       backendSubmitRef.current = null;
@@ -2935,6 +3275,39 @@ function App() {
       gameType: GAME_TYPE_STANDARD,
     });
   }, [dailySeed, startGameWithSeed]);
+
+  const markTutorialSeenAndExit = useCallback(async () => {
+    const nextTutorialSeen = await saveTutorialSeen(true);
+    setTutorialSeen(nextTutorialSeen);
+    setTutorialModeActive(false);
+    setTutorialStepIndex(0);
+    setTutorialFeedback(null);
+    setTutorialCompleted(false);
+    setTutorialOverlayCollapsed(false);
+    setGameStarted(false);
+    setHomeScreen("main");
+  }, []);
+
+  const startTutorialGame = useCallback(() => {
+    setTutorialModeActive(true);
+    setTutorialStepIndex(0);
+    setTutorialFeedback(null);
+    setTutorialCompleted(false);
+    setTutorialOverlayCollapsed(false);
+    setPendingTutorialStart(false);
+    startGameWithSeed(TUTORIAL_GAME_SEED, {
+      isDaily: false,
+      mode: GAME_MODE_CLASSIC,
+      gameType: GAME_TYPE_TUTORIAL,
+    });
+  }, [startGameWithSeed]);
+
+  useEffect(() => {
+    if (!pendingTutorialStart) {
+      return;
+    }
+    startTutorialGame();
+  }, [pendingTutorialStart, startTutorialGame]);
 
   const handleDailyMiniGameStart = useCallback(() => {
     startGameWithSeed(dailySeed, {
@@ -2983,6 +3356,11 @@ function App() {
   );
 
   const handleReturnToMainMenu = useCallback(() => {
+    if (tutorialModeActive) {
+      markTutorialSeenAndExit();
+      return;
+    }
+
     const snapshot = game.getStableSnapshot();
     if (snapshot && !game.gameOver) {
       const payload = {
@@ -3017,6 +3395,8 @@ function App() {
     activeGameType,
     game,
     game.gameOver,
+    markTutorialSeenAndExit,
+    tutorialModeActive,
   ]);
 
   const handleResumeSavedGame = useCallback(() => {
@@ -3122,6 +3502,11 @@ function App() {
     setPlaySubMenuVisible(false);
     setCustomBoardMenuVisible(false);
   }, []);
+  const currentTutorialStep = tutorialModeActive
+    ? TUTORIAL_STEPS[tutorialStepIndex] ?? null
+    : null;
+  const tutorialTargetCells =
+    currentTutorialStep?.placements?.map(({ row, col }) => ({ row, col })) ?? [];
   const mainMenuBackgroundColor = darkModeEnabled ? "#0b1220" : "#f8f4ed";
   const gameBackgroundColor = darkModeEnabled ? "#0b1220" : "#fff";
   const gamePanelBackgroundColor = darkModeEnabled ? "#1e293b" : "#f5f6f7";
@@ -3263,7 +3648,11 @@ function App() {
               {activeGameMode === GAME_MODE_DAILY_MINI ? (
                 <GameBoardMini
                   board={game.board}
-                  selectedCells={game.selectedCells}
+                  selectedCells={
+                    tutorialModeActive && tutorialTargetCells.length > 0
+                      ? tutorialTargetCells
+                      : game.selectedCells
+                  }
                   premiumSquares={game.premiumSquares}
                   onCellClick={game.handleCellClick}
                   boardLayoutRef={boardLayoutRef}
@@ -3296,7 +3685,11 @@ function App() {
               ) : (
                 <GameBoard
                   board={game.board}
-                  selectedCells={game.selectedCells}
+                  selectedCells={
+                    tutorialModeActive && tutorialTargetCells.length > 0
+                      ? tutorialTargetCells
+                      : game.selectedCells
+                  }
                   premiumSquares={game.premiumSquares}
                   onCellClick={game.handleCellClick}
                   BOARD_SIZE={game.BOARD_SIZE}
@@ -3547,7 +3940,13 @@ function App() {
           </View>
         ) : (
           <>
-            {homeScreen === "leaderboard" ? (
+            {homeScreen === "completed-board" ? (
+              <CompletedBoardScreen
+                entry={completedBoardEntry}
+                isDarkMode={darkModeEnabled}
+                onBack={handleBackToHighScoresFromCompletedBoard}
+              />
+            ) : homeScreen === "leaderboard" ? (
               <LeaderboardScreen
                 initialPage={leaderboardInitialPage}
                 isDarkMode={darkModeEnabled}
@@ -3607,6 +4006,7 @@ function App() {
                     dailyLeaderboardMode
                   );
                 }}
+                onOpenCompletedBoard={handleOpenCompletedBoard}
               />
             ) : homeScreen === "stats" ? (
               <StatsScreen
@@ -3810,9 +4210,23 @@ function App() {
           onToggleMultiplayerNotifications={handleToggleMultiplayerNotifications}
           onToggleDarkMode={handleToggleDarkMode}
           onToggleMusic={handleToggleMusic}
+          onOpenTutorial={handleOpenTutorialFromSettings}
           onManageLeaderboardSharing={handleOpenLeaderboardSharingSettings}
           onDeleteAccount={handleOpenDeleteAccountModal}
           onClose={() => setSettingsModalVisible(false)}
+        />
+        <TutorialModal
+          visible={tutorialModeActive}
+          isDarkMode={darkModeEnabled}
+          step={currentTutorialStep}
+          stepIndex={tutorialStepIndex}
+          totalSteps={TUTORIAL_STEPS.length}
+          feedback={tutorialFeedback}
+          completed={tutorialCompleted}
+          collapsed={tutorialOverlayCollapsed}
+          onHide={() => setTutorialOverlayCollapsed(true)}
+          onShow={() => setTutorialOverlayCollapsed(false)}
+          onSkip={markTutorialSeenAndExit}
         />
         <DeleteAccountModal
           visible={deleteAccountModalVisible}

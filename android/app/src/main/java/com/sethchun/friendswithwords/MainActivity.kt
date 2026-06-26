@@ -1,4 +1,4 @@
-package com.wordswithrealfriendstemp
+package com.sethchun.friendswithwords
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

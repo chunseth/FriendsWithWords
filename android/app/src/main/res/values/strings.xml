@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Friends With Words</string>
+    <string name="play_games_android_client_id">279208499119-a17s7omak864cm9u8uu0pkvoknb5icm0.apps.googleusercontent.com</string>
+    <string name="play_games_server_client_id">279208499119-fvdub22b6m4v1fiarq8vollobbsa90im.apps.googleusercontent.com</string>
 </resources>

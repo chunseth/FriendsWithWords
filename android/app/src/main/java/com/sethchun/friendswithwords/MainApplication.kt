@@ -1,4 +1,4 @@
-package com.wordswithrealfriendstemp
+package com.sethchun.friendswithwords
 
 import android.app.Application
 import com.facebook.react.PackageList

@@ -1,6 +1,12 @@
 import React from "react";
 import renderer, { act } from "react-test-renderer";
-import { Text, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  Pressable,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import MainMenuScreen from "../MainMenuScreen";
 import MultiplayerModeScreen from "../MultiplayerModeScreen";
 
@@ -628,6 +634,7 @@ describe("multiplayer smoke", () => {
     });
 
     expect(texts).toContain("Choose a username to continue.");
+    expect(texts).toContain("Save");
     expect(tree.root.findAllByType(TextInput)).toHaveLength(1);
   });
 
@@ -672,5 +679,87 @@ describe("multiplayer smoke", () => {
 
     expect(onSavePlayerName).toHaveBeenCalledWith("Taken_Name");
     expect(texts).toContain("That username is already taken.");
+  });
+
+  it("saves the typed username from the visible save button", async () => {
+    const onSavePlayerName = jest.fn().mockResolvedValue({ ok: true });
+    let tree;
+
+    await act(async () => {
+      tree = renderer.create(
+        <MainMenuScreen
+          playerName="Player AB12"
+          hasChosenUsername={false}
+          usernamePromptToken={1}
+          onSavePlayerName={onSavePlayerName}
+          onOpenPlay={jest.fn()}
+          onOpenMultiplayer={jest.fn()}
+          onOpenLeaderboard={jest.fn()}
+          onStatsPress={jest.fn()}
+        />
+      );
+    });
+
+    const input = tree.root.findByType(TextInput);
+
+    await act(async () => {
+      input.props.onChangeText("Fresh_Name");
+    });
+
+    const saveButton = tree.root
+      .findAllByType(Pressable)
+      .find((node) =>
+        node
+          .findAllByType(Text)
+          .some((textNode) => textNode.props.children === "Save")
+      );
+
+    await act(async () => {
+      await saveButton.props.onPress();
+    });
+
+    expect(onSavePlayerName).toHaveBeenCalledWith("Fresh_Name");
+  });
+
+  it("saves the typed username before opening a gated menu action", async () => {
+    const onSavePlayerName = jest.fn().mockResolvedValue({ ok: true });
+    const onOpenMultiplayer = jest.fn();
+    let tree;
+
+    await act(async () => {
+      tree = renderer.create(
+        <MainMenuScreen
+          playerName="Player AB12"
+          hasChosenUsername={false}
+          usernamePromptToken={1}
+          onSavePlayerName={onSavePlayerName}
+          onOpenPlay={jest.fn()}
+          onOpenMultiplayer={onOpenMultiplayer}
+          onOpenLeaderboard={jest.fn()}
+          onStatsPress={jest.fn()}
+        />
+      );
+    });
+
+    const input = tree.root.findByType(TextInput);
+
+    await act(async () => {
+      input.props.onChangeText("Fresh_Name");
+    });
+
+    const multiplayerButton = tree.root
+      .findAllByType(TouchableOpacity)
+      .find((node) =>
+        node
+          .findAllByType(Text)
+          .some((textNode) => textNode.props.children === "Multiplayer")
+      );
+
+    await act(async () => {
+      await multiplayerButton.props.onPress();
+    });
+
+    expect(onSavePlayerName).toHaveBeenCalledWith("Fresh_Name");
+    expect(onOpenMultiplayer).toHaveBeenCalledTimes(1);
   });
 });

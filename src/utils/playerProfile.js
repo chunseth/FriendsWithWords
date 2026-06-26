@@ -95,6 +95,16 @@ const sanitizeProfile = (value) => {
   return null;
 };
 
+export const hasStoredPlayerProfile = async () => {
+  try {
+    const storedValue = await AsyncStorage.getItem(PLAYER_PROFILE_KEY);
+    return sanitizeProfile(JSON.parse(storedValue)) != null;
+  } catch (error) {
+    console.warn("Failed to check player profile", error);
+    return false;
+  }
+};
+
 export const loadOrCreatePlayerProfile = async () => {
   try {
     const storedValue = await AsyncStorage.getItem(PLAYER_PROFILE_KEY);

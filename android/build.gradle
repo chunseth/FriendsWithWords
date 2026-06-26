@@ -25,6 +25,11 @@ apply plugin: "com.facebook.react.rootproject"
 
 // Force Kotlin 1.8.x for all modules so react-native-gesture-handler (and others) match stdlib metadata
 allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
     configurations.all {
         resolutionStrategy {
             force "org.jetbrains.kotlin:kotlin-stdlib:1.8.0"

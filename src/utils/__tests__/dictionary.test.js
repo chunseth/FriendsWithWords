@@ -23,4 +23,24 @@ describe("dictionary validation", () => {
     expect(dictionary.isValid("flyer")).toBe(true);
     expect(dictionary.isValid("pryer")).toBe(true);
   });
+
+  it("accepts Scrabble-valid borrowed words missing from the base list", () => {
+    [
+      "banhmi",
+      "chutzpah",
+      "emoji",
+      "hijab",
+      "jalapeno",
+      "kimchi",
+      "naan",
+      "qapiks",
+      "sashimi",
+      "sheqel",
+      "tandoori",
+      "yarmulke",
+    ].forEach((word) => {
+      expect(dictionary.isValid(word)).toBe(true);
+      expect(dictionary.isValid(word.toUpperCase())).toBe(true);
+    });
+  });
 });

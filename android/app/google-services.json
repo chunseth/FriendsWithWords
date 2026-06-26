@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "279208499119",
+    "project_id": "friendswithwords-af6d0",
+    "storage_bucket": "friendswithwords-af6d0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:279208499119:android:388f3ae2a3611057cf815a",
+        "android_client_info": {
+          "package_name": "com.sethchun.friendswithwords"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCuYKfNsldoVlmvCTwYsp78yxpct1k2TTw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

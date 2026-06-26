@@ -1,4 +1,5 @@
 import dictionaryWords from "../data/dictionaryWords.json";
+import scrabbleLoanwords from "../data/scrabbleLoanwords";
 
 // Dictionary loader and validator
 const VALID_TWO_LETTER_WORDS = new Set([
@@ -2601,6 +2602,10 @@ class Dictionary {
     });
 
     VALID_CUSTOM_WORDS.forEach((word) => {
+      this.words.add(word);
+    });
+
+    scrabbleLoanwords.forEach((word) => {
       this.words.add(word);
     });
 

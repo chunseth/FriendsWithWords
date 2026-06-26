@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Clipboard from "@react-native-clipboard/clipboard";
 import SFSymbolIcon from "./SFSymbolIcon";
+import { isValidCompletedBoardTilesPayload } from "../utils/completedBoardPayload";
 
 const LeaderboardScreen = ({
   title = "Leaderboards",
@@ -42,6 +43,7 @@ const LeaderboardScreen = ({
   isDarkMode = false,
   onBack,
   onRefresh,
+  onOpenCompletedBoard,
 }) => {
   const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const [activePage, setActivePage] = useState(initialPage);
@@ -53,6 +55,12 @@ const LeaderboardScreen = ({
   const [detailsEntry, setDetailsEntry] = useState(null);
   const [detailsSeedCopiedVisible, setDetailsSeedCopiedVisible] = useState(false);
   const isMultiplayerDetails = detailsEntry?.sectionLabel === "Multiplayer";
+  const detailsBoardPayload =
+    detailsEntry?.entry?.board_tiles ?? detailsEntry?.entry?.boardTiles ?? null;
+  const canOpenCompletedBoard =
+    detailsEntry?.sectionLabel === "High Scores" &&
+    globalMode === "classic" &&
+    isValidCompletedBoardTilesPayload(detailsBoardPayload);
 
   const formatDailySeed = (seed) => {
     if (!seed || seed.length !== 8) {
@@ -849,6 +857,29 @@ const LeaderboardScreen = ({
                 </Text>
               )}
             </View>
+            {canOpenCompletedBoard && (
+              <TouchableOpacity
+                style={[
+                  styles.viewBoardButton,
+                  { borderColor: theme.copyButtonBorder },
+                ]}
+                onPress={() => {
+                  const entry = detailsEntry.entry;
+                  setDetailsEntry(null);
+                  onOpenCompletedBoard?.(entry);
+                }}
+                activeOpacity={0.85}
+              >
+                <Text
+                  style={[
+                    styles.viewBoardButtonText,
+                    { color: theme.detailsLabelPositive },
+                  ]}
+                >
+                  View Completed Board
+                </Text>
+              </TouchableOpacity>
+            )}
             </View>
           </View>
         )}
@@ -1281,6 +1312,18 @@ const styles = StyleSheet.create({
     color: "#2f6f4f",
     fontSize: 11,
     fontWeight: "700",
+  },
+  viewBoardButton: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: "center",
+  },
+  viewBoardButtonText: {
+    fontSize: 15,
+    fontWeight: "900",
   },
   detailsDivider: {
     marginTop: 4,

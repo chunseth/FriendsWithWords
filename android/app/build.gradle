@@ -136,9 +136,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.wordswithrealfriendstemp"
+    namespace "com.sethchun.friendswithwords"
     defaultConfig {
-        applicationId "com.wordswithrealfriendstemp"
+        applicationId "com.sethchun.friendswithwords"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode configuredVersionCode
@@ -225,6 +225,8 @@ tasks.register("prepareNdkLibcxx") {
 preBuild.dependsOn("prepareNdkLibcxx")
 
 dependencies {
+    implementation "com.google.android.gms:play-services-games-v2:+"
+
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 

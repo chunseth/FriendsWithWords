@@ -72,6 +72,8 @@ export const submitCompletedScore = async ({
   isDailySeed = false,
   scoreMode = LEADERBOARD_SCORE_MODE_SOLO,
   displayNameOverride = null,
+  completedAt = null,
+  boardTiles = null,
 }) => {
   if (!isBackendConfigured()) {
     return { ok: false, reason: "backend_not_configured" };
@@ -142,7 +144,11 @@ export const submitCompletedScore = async ({
       typeof finalScoreBreakdown.durationSeconds === "number"
         ? finalScoreBreakdown.durationSeconds
         : null,
-    completed_at: new Date().toISOString(),
+    board_tiles: boardTiles && typeof boardTiles === "object" ? boardTiles : null,
+    completed_at:
+      typeof completedAt === "string" && completedAt.length > 0
+        ? completedAt
+        : new Date().toISOString(),
   };
 
   const { data: existingScore, error: existingScoreError } = await supabase
@@ -205,7 +211,7 @@ export const fetchSeedLeaderboard = async (seed, limit = 25) => {
   const { data, error } = await supabase
     .from(SCORES_TABLE)
     .select(
-      "display_name, seed, final_score, points_earned, swap_penalties, turn_penalties, rack_penalty, scrabble_bonus, time_bonus, consistency_bonus, skill_bonus_total, duration_seconds, completed_at"
+      "display_name, seed, final_score, points_earned, swap_penalties, turn_penalties, rack_penalty, scrabble_bonus, time_bonus, consistency_bonus, skill_bonus_total, duration_seconds, board_tiles, completed_at"
     )
     .eq("seed", seed)
     .eq("score_mode", LEADERBOARD_SCORE_MODE_SOLO)
@@ -242,7 +248,7 @@ export const fetchSeedLeaderboardByMode = async (
   const { data, error } = await supabase
     .from(SCORES_TABLE)
     .select(
-      "display_name, seed, final_score, points_earned, swap_penalties, turn_penalties, rack_penalty, scrabble_bonus, time_bonus, consistency_bonus, skill_bonus_total, duration_seconds, completed_at"
+      "display_name, seed, final_score, points_earned, swap_penalties, turn_penalties, rack_penalty, scrabble_bonus, time_bonus, consistency_bonus, skill_bonus_total, duration_seconds, board_tiles, completed_at"
     )
     .eq("seed", seed)
     .eq("score_mode", normalizedScoreMode)
@@ -275,7 +281,7 @@ export const fetchGlobalLeaderboard = async (
   const { data, error } = await supabase
     .from(SCORES_TABLE)
     .select(
-      "player_id, display_name, seed, is_daily_seed, final_score, points_earned, swap_penalties, turn_penalties, rack_penalty, scrabble_bonus, time_bonus, consistency_bonus, skill_bonus_total, duration_seconds, completed_at"
+      "player_id, display_name, seed, is_daily_seed, final_score, points_earned, swap_penalties, turn_penalties, rack_penalty, scrabble_bonus, time_bonus, consistency_bonus, skill_bonus_total, duration_seconds, board_tiles, completed_at"
     )
     .eq("score_mode", normalizedScoreMode)
     .order("final_score", { ascending: false })

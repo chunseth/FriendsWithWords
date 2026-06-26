@@ -13,6 +13,7 @@ export const submitBoardVariantCompletedScore = async ({
   finalScore,
   finalScoreBreakdown,
   isDailySeed = true,
+  completedAt = null,
 }) => {
   if (!isBackendConfigured()) {
     return { ok: false, reason: "backend_not_configured" };
@@ -69,7 +70,10 @@ export const submitBoardVariantCompletedScore = async ({
       typeof finalScoreBreakdown.durationSeconds === "number"
         ? finalScoreBreakdown.durationSeconds
         : null,
-    completed_at: new Date().toISOString(),
+    completed_at:
+      typeof completedAt === "string" && completedAt.length > 0
+        ? completedAt
+        : new Date().toISOString(),
   };
 
   const { data: existingScore, error: existingScoreError } = await supabase

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Keyboard,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -43,6 +44,7 @@ const MainMenuScreen = ({
   const [isEditingName, setIsEditingName] = useState(false);
   const [draftName, setDraftName] = useState(playerName ?? "");
   const [nameError, setNameError] = useState(null);
+  const [isSavingName, setIsSavingName] = useState(false);
   const nameInputRef = useRef(null);
   const editStartMsRef = useRef(null);
   const firstChangeLoggedRef = useRef(false);
@@ -73,9 +75,6 @@ const MainMenuScreen = ({
     setIsEditingName(true);
     setDraftName(playerName ?? "");
     setNameError("Choose a username to continue.");
-    setTimeout(() => {
-      nameInputRef.current?.focus();
-    }, 0);
   }, [hasChosenUsername, playerName, usernamePromptToken]);
 
   useEffect(() => {
@@ -120,35 +119,62 @@ const MainMenuScreen = ({
   }, [isEditingName]);
 
   const commitName = async () => {
+    if (isSavingName) {
+      return false;
+    }
+
     const trimmedName = draftName.trim();
     const validationError = validatePlayerDisplayName(trimmedName);
     if (validationError) {
       setNameError(validationError);
-      return;
+      setIsEditingName(true);
+      return false;
     }
 
-    const saveResult = await onSavePlayerName(trimmedName);
-    if (!saveResult?.ok) {
-      setNameError(
-        saveResult?.errorMessage ?? "Could not save your username right now."
-      );
-      return;
+    setIsSavingName(true);
+    try {
+      const saveResult = await onSavePlayerName(trimmedName);
+      if (!saveResult?.ok) {
+        setNameError(
+          saveResult?.errorMessage ?? "Could not save your username right now."
+        );
+        setIsEditingName(true);
+        return false;
+      }
+    } finally {
+      setIsSavingName(false);
     }
 
     setNameError(null);
     setIsEditingName(false);
+    return true;
   };
 
-  const ensureUsernameThen = (action) => {
+  const ensureUsernameThen = async (action) => {
     if (hasChosenUsername) {
       action?.();
       return;
     }
+
+    const didSaveName = await commitName();
+    if (didSaveName) {
+      action?.();
+      return;
+    }
+
     setIsEditingName(true);
-    setNameError("Choose a username to continue.");
-    setTimeout(() => {
-      nameInputRef.current?.focus();
-    }, 0);
+    if (!nameError) {
+      setNameError("Choose a username to continue.");
+    }
+  };
+
+  const cancelNameEdit = () => {
+    if (!hasChosenUsername || isSavingName) {
+      return;
+    }
+    setDraftName(playerName ?? "");
+    setNameError(null);
+    setIsEditingName(false);
   };
 
   return (
@@ -239,8 +265,10 @@ const MainMenuScreen = ({
             logUsernameEditDebug("input blur", {
               sincePressMs:
                 editStartMs != null ? Math.round(nowMs() - editStartMs) : null,
-              });
-            setIsEditingName(false);
+            });
+            if (hasChosenUsername) {
+              setIsEditingName(false);
+            }
           }}
           onSubmitEditing={() => {
             void commitName();
@@ -255,6 +283,49 @@ const MainMenuScreen = ({
           <Text style={[styles.nameError, { color: theme.errorText }]}>
             {nameError}
           </Text>
+        ) : null}
+
+        {isEditingName ? (
+          <View style={styles.nameActions}>
+            <Pressable
+              style={[
+                styles.nameSaveButton,
+                {
+                  backgroundColor: theme.primaryButton,
+                  opacity: isSavingName ? 0.7 : 1,
+                },
+              ]}
+              onPress={() => {
+                void commitName();
+              }}
+            >
+              <Text style={styles.nameSaveButtonText}>
+                {isSavingName ? "Saving..." : "Save"}
+              </Text>
+            </Pressable>
+
+            {hasChosenUsername ? (
+              <Pressable
+                style={[
+                  styles.nameCancelButton,
+                  {
+                    borderColor: theme.border,
+                    opacity: isSavingName ? 0.7 : 1,
+                  },
+                ]}
+                onPress={cancelNameEdit}
+              >
+                <Text
+                  style={[
+                    styles.nameCancelButtonText,
+                    { color: theme.buttonText },
+                  ]}
+                >
+                  Cancel
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : null}
       </View>
 
@@ -417,6 +488,32 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: "700",
     maxWidth: 280,
+  },
+  nameActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 2,
+  },
+  nameSaveButton: {
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  nameSaveButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  nameCancelButton: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  nameCancelButtonText: {
+    fontSize: 15,
+    fontWeight: "800",
   },
   actions: {
     gap: 14,
