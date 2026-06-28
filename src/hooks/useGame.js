@@ -15,8 +15,11 @@ import {
   createMiniPremiumSquares,
 } from "../game/shared/premiumSquares";
 import {
+  buildRushScoreBreakdown,
   buildFinalScoreBreakdown,
+  buildSprintScoreBreakdown,
   scoreSubmittedWords,
+  SPRINT_TARGET_SCORE,
   TIME_BONUS_PROFILE_CLASSIC,
   TIME_BONUS_PROFILE_MINI,
 } from "../game/shared/scoring";
@@ -32,11 +35,19 @@ const PREVIEW_DICTIONARY = {
 
 const GAME_MODE_CLASSIC = "classic";
 const GAME_MODE_MINI = "mini";
+export const SPRINT_RUSH_MODE_NONE = "standard";
+export const SPRINT_RUSH_MODE_SPRINT = "sprint";
+export const SPRINT_RUSH_MODE_RUSH = "rush";
 const DEFAULT_CLASSIC_BOARD_VARIANT_ID = "classic-default";
 const DEFAULT_MINI_BOARD_VARIANT_ID = "mini-default";
 
 const normalizeGameMode = (mode) =>
   mode === GAME_MODE_MINI ? GAME_MODE_MINI : GAME_MODE_CLASSIC;
+
+const normalizeSprintRushMode = (mode) =>
+  mode === SPRINT_RUSH_MODE_SPRINT || mode === SPRINT_RUSH_MODE_RUSH
+    ? mode
+    : SPRINT_RUSH_MODE_NONE;
 
 const sanitizeBoardVariant = (value, fallbackMode = GAME_MODE_CLASSIC) => {
   if (!value || typeof value !== "object") {
@@ -104,6 +115,8 @@ export const useGame = () => {
   const [submitScorePreview, setSubmitScorePreview] = useState(null);
   const [submitScorePreviewIsValid, setSubmitScorePreviewIsValid] =
     useState(false);
+  const [sprintRushMode, setSprintRushMode] = useState(SPRINT_RUSH_MODE_NONE);
+  const [rushDurationSeconds, setRushDurationSeconds] = useState(null);
 
   const randomRef = useRef(null);
   const tileBagRef = useRef([]);
@@ -125,8 +138,129 @@ export const useGame = () => {
   );
   const timeBonusProfileRef = useRef(TIME_BONUS_PROFILE_CLASSIC);
   const gameStartedAtMsRef = useRef(null);
+  const gameEndedAtMsRef = useRef(null);
+  const rushActiveElapsedMsRef = useRef(0);
+  const rushRunningSinceMsRef = useRef(null);
+  const rushPausedRef = useRef(false);
+  const sprintRushModeRef = useRef(SPRINT_RUSH_MODE_NONE);
+  const rushDurationSecondsRef = useRef(null);
   const currentConsistencyStreakRef = useRef(0);
   const consistencyBonusTotalRef = useRef(0);
+
+  const getRushElapsedMs = useCallback((nowMs = Date.now()) => {
+    const baseElapsed = rushActiveElapsedMsRef.current;
+    const runningSince = rushRunningSinceMsRef.current;
+    if (
+      sprintRushModeRef.current !== SPRINT_RUSH_MODE_RUSH ||
+      rushPausedRef.current ||
+      typeof runningSince !== "number"
+    ) {
+      return baseElapsed;
+    }
+    return baseElapsed + Math.max(0, nowMs - runningSince);
+  }, []);
+
+  const syncRushElapsed = useCallback((nowMs = Date.now()) => {
+    const elapsedMs = getRushElapsedMs(nowMs);
+    rushActiveElapsedMsRef.current = elapsedMs;
+    rushRunningSinceMsRef.current =
+      sprintRushModeRef.current === SPRINT_RUSH_MODE_RUSH &&
+      !rushPausedRef.current &&
+      gameStartedAtMsRef.current != null
+        ? nowMs
+        : null;
+    return elapsedMs;
+  }, [getRushElapsedMs]);
+
+  const ensureGameClockStarted = useCallback(() => {
+    if (gameStartedAtMsRef.current != null) {
+      if (
+        sprintRushModeRef.current === SPRINT_RUSH_MODE_RUSH &&
+        !rushPausedRef.current &&
+        rushRunningSinceMsRef.current == null
+      ) {
+        rushRunningSinceMsRef.current = Date.now();
+      }
+      return;
+    }
+
+    const nowMs = Date.now();
+    gameStartedAtMsRef.current = nowMs;
+    if (sprintRushModeRef.current === SPRINT_RUSH_MODE_RUSH) {
+      rushActiveElapsedMsRef.current = 0;
+      rushRunningSinceMsRef.current = nowMs;
+      rushPausedRef.current = false;
+    }
+  }, []);
+
+  const buildModeScoreBreakdown = useCallback(
+    ({
+      durationMs = null,
+      mode = sprintRushModeRef.current,
+      rackTiles = tileRack,
+      nextWordPointsTotal = wordPointsTotal,
+      nextSwapPenaltyTotal = swapPenaltyTotal,
+      nextScrabbleBonusTotal = scrabbleBonusTotal,
+      nextTurnCount = turnCount,
+      nextWordHistory = wordHistory,
+    } = {}) => {
+      const options = {
+        wordPointsTotal: nextWordPointsTotal,
+        swapPenaltyTotal: nextSwapPenaltyTotal,
+        scrabbleBonusTotal: nextScrabbleBonusTotal,
+        turnCount: nextTurnCount,
+        rackTiles,
+        durationMs,
+        wordHistory: nextWordHistory,
+        comboBonusTotal: consistencyBonusTotalRef.current,
+        timeBonusProfile: timeBonusProfileRef.current,
+      };
+
+      if (mode === SPRINT_RUSH_MODE_SPRINT) {
+        return buildSprintScoreBreakdown(options);
+      }
+      if (mode === SPRINT_RUSH_MODE_RUSH) {
+        return buildRushScoreBreakdown(options);
+      }
+      return buildFinalScoreBreakdown(options);
+    },
+    [
+      scrabbleBonusTotal,
+      swapPenaltyTotal,
+      tileRack,
+      turnCount,
+      wordHistory,
+      wordPointsTotal,
+    ]
+  );
+
+  const finishSprintRushGame = useCallback(
+    ({ endedAtMs = Date.now(), rackTiles = tileRack, scoreOptions = {} } = {}) => {
+      if (gameOver) return false;
+      const durationMs =
+        sprintRushModeRef.current === SPRINT_RUSH_MODE_RUSH
+          ? getRushElapsedMs(endedAtMs)
+          : Math.max(
+              0,
+              endedAtMs - (gameStartedAtMsRef.current ?? endedAtMs)
+            );
+      gameEndedAtMsRef.current = endedAtMs;
+      if (sprintRushModeRef.current === SPRINT_RUSH_MODE_RUSH) {
+        rushActiveElapsedMsRef.current = durationMs;
+        rushRunningSinceMsRef.current = null;
+      }
+      const breakdown = buildModeScoreBreakdown({
+        durationMs,
+        rackTiles,
+        ...scoreOptions,
+      });
+      setFinalScoreBreakdown(breakdown);
+      setFinalScore(breakdown.finalScore);
+      setGameOver(true);
+      return true;
+    },
+    [buildModeScoreBreakdown, gameOver, getRushElapsedMs, tileRack]
+  );
 
   const drawTiles = useCallback((count) => {
     setTileRack((prev) => {
@@ -158,7 +292,11 @@ export const useGame = () => {
 
   const startNewGame = useCallback(
     (seed = null, options = {}) => {
-      const mode = normalizeGameMode(options.mode);
+      const nextSprintRushMode = normalizeSprintRushMode(options.sprintRushMode);
+      const mode =
+        nextSprintRushMode === SPRINT_RUSH_MODE_NONE
+          ? normalizeGameMode(options.mode)
+          : GAME_MODE_MINI;
       const inputVariant = sanitizeBoardVariant(options.boardVariant, mode);
       const resolvedBoardSize = inputVariant.boardSize;
       const resolvedPremiumSquares =
@@ -170,6 +308,12 @@ export const useGame = () => {
             : createClassicPremiumSquares();
 
       gameModeRef.current = mode;
+      sprintRushModeRef.current = nextSprintRushMode;
+      rushDurationSecondsRef.current =
+        nextSprintRushMode === SPRINT_RUSH_MODE_RUSH &&
+        typeof options.rushDurationSeconds === "number"
+          ? options.rushDurationSeconds
+          : null;
       boardSizeRef.current = resolvedBoardSize;
       premiumSquaresRef.current = resolvedPremiumSquares;
       boardVariantRef.current = {
@@ -201,11 +345,17 @@ export const useGame = () => {
       setFinalScoreBreakdown(null);
       setIsSwapMode(false);
       setSwapCount(0);
+      setSprintRushMode(nextSprintRushMode);
+      setRushDurationSeconds(rushDurationSecondsRef.current);
       pendingSwapRef.current = null;
       pendingSubmitRef.current = null;
       tilesUsedThisTurnRef.current = new Set();
       boardAtTurnStartRef.current = null;
       gameStartedAtMsRef.current = null;
+      gameEndedAtMsRef.current = null;
+      rushActiveElapsedMsRef.current = 0;
+      rushRunningSinceMsRef.current = null;
+      rushPausedRef.current = false;
       currentConsistencyStreakRef.current = 0;
       consistencyBonusTotalRef.current = 0;
 
@@ -263,11 +413,17 @@ export const useGame = () => {
     setFinalScoreBreakdown(null);
     setIsSwapMode(false);
     setSwapCount(0);
+    setSprintRushMode(sprintRushModeRef.current);
+    setRushDurationSeconds(rushDurationSecondsRef.current);
     pendingSwapRef.current = null;
     pendingSubmitRef.current = null;
     tilesUsedThisTurnRef.current = new Set();
     boardAtTurnStartRef.current = null;
     gameStartedAtMsRef.current = null;
+    gameEndedAtMsRef.current = null;
+    rushActiveElapsedMsRef.current = 0;
+    rushRunningSinceMsRef.current = null;
+    rushPausedRef.current = false;
     currentConsistencyStreakRef.current = 0;
     consistencyBonusTotalRef.current = 0;
 
@@ -295,6 +451,7 @@ export const useGame = () => {
 
   const selectTile = useCallback(
     (index) => {
+      if (gameOver) return;
       setSelectedTiles((prev) => {
         if (prev.includes(index)) return prev.filter((i) => i !== index);
         if (isSwapMode) {
@@ -304,7 +461,7 @@ export const useGame = () => {
         return [...prev, index];
       });
     },
-    [isSwapMode, tilesRemaining]
+    [gameOver, isSwapMode, tilesRemaining]
   );
 
   const isInBounds = useCallback((row, col) => {
@@ -323,6 +480,7 @@ export const useGame = () => {
     (tileIndex, row, col, chosenLetter = null) => {
       if (tileIndex === null || tileIndex < 0 || tileIndex >= tileRack.length)
         return;
+      if (gameOver) return;
       if (!isInBounds(row, col)) return;
       if (board[row][col] !== null) return;
       if (tilesUsedThisTurnRef.current.has(tileIndex)) {
@@ -337,9 +495,7 @@ export const useGame = () => {
       const isBlank =
         tile.value === 0 &&
         (tile.letter === BLANK_LETTER || tile.letter === "");
-      if (gameStartedAtMsRef.current == null) {
-        gameStartedAtMsRef.current = Date.now();
-      }
+      ensureGameClockStarted();
       if (isBlank) {
         if (
           !chosenLetter ||
@@ -376,7 +532,7 @@ export const useGame = () => {
 
       setSelectedCells((prev) => [...prev, { row, col }]);
     },
-    [board, isInBounds, tileRack]
+    [board, ensureGameClockStarted, gameOver, isInBounds, tileRack]
   );
 
   const isBlankRackTile = useCallback((tile) => {
@@ -602,6 +758,8 @@ export const useGame = () => {
   const commitPreparedSwap = useCallback((preparedSwap = null) => {
     const payload = preparedSwap ?? pendingSwapRef.current;
     if (!payload) return false;
+    const nextSwapPenaltyTotal = swapPenaltyTotal + payload.scorePenalty;
+    const nextTurnCount = turnCount + 1;
 
     tileBagRef.current = payload.nextBag;
     nextTileIdRef.current = payload.nextTileId;
@@ -616,10 +774,32 @@ export const useGame = () => {
     currentConsistencyStreakRef.current = 0;
     setIsSwapMode(false);
     setSelectedTiles([]);
+    if (sprintRushModeRef.current === SPRINT_RUSH_MODE_SPRINT) {
+      const nextBreakdown = buildModeScoreBreakdown({
+        rackTiles: payload.resultingRack,
+        nextSwapPenaltyTotal,
+        nextTurnCount,
+      });
+      if (nextBreakdown.finalScore >= SPRINT_TARGET_SCORE) {
+        finishSprintRushGame({
+          rackTiles: payload.resultingRack,
+          scoreOptions: {
+            nextSwapPenaltyTotal,
+            nextTurnCount,
+          },
+        });
+      }
+    }
     return true;
-  }, []);
+  }, [
+    buildModeScoreBreakdown,
+    finishSprintRushGame,
+    swapPenaltyTotal,
+    turnCount,
+  ]);
 
   const swapTiles = useCallback(() => {
+    if (gameOver) return;
     if (isSwapMode) {
       const payload = prepareSwapTiles();
       if (payload) commitPreparedSwap(payload);
@@ -628,7 +808,7 @@ export const useGame = () => {
     // Enter swap mode: clear board placement and allow selecting rack tiles
     clearSelection();
     setIsSwapMode(true);
-  }, [clearSelection, commitPreparedSwap, isSwapMode, prepareSwapTiles]);
+  }, [clearSelection, commitPreparedSwap, gameOver, isSwapMode, prepareSwapTiles]);
 
   const prepareSubmitWord = useCallback(() => {
     if (gameOver) return null;
@@ -674,6 +854,10 @@ export const useGame = () => {
     const completesGame =
       payload.nextTilesRemaining === 0 && payload.resultingRack.length === 0;
     let perTurnConsistencyBonus = 0;
+    const nextWordPointsTotal = wordPointsTotal + payload.baseWordScore;
+    const nextScrabbleBonusTotal = scrabbleBonusTotal + payload.scrabbleBonus;
+    const nextTurnCount = turnCount + 1;
+    const nextWordHistory = [...wordHistory, ...payload.newHistory];
 
     pendingSubmitRef.current = payload;
     setTotalScore((prev) => prev + payload.turnScore);
@@ -711,6 +895,26 @@ export const useGame = () => {
 
     boardAtTurnStartRef.current = payload.nextBoardAtTurnStart;
     premiumSquaresRef.current = payload.newPremiumSquares;
+    if (sprintRushModeRef.current === SPRINT_RUSH_MODE_SPRINT) {
+      const nextBreakdown = buildModeScoreBreakdown({
+        rackTiles: payload.remainingRack,
+        nextWordPointsTotal,
+        nextScrabbleBonusTotal,
+        nextTurnCount,
+        nextWordHistory,
+      });
+      if (nextBreakdown.finalScore >= SPRINT_TARGET_SCORE) {
+        finishSprintRushGame({
+          rackTiles: payload.remainingRack,
+          scoreOptions: {
+            nextWordPointsTotal,
+            nextScrabbleBonusTotal,
+            nextTurnCount,
+            nextWordHistory,
+          },
+        });
+      }
+    }
     if (!completesGame) {
       const scrabbleBonusMessage =
         payload.earnedScrabbleBonus && payload.scrabbleBonus > 0
@@ -730,7 +934,14 @@ export const useGame = () => {
       });
     }
     return true;
-  }, []);
+  }, [
+    buildModeScoreBreakdown,
+    finishSprintRushGame,
+    scrabbleBonusTotal,
+    turnCount,
+    wordHistory,
+    wordPointsTotal,
+  ]);
 
   const finalizePreparedSubmitRack = useCallback((preparedSubmit = null) => {
     const payload = preparedSubmit ?? pendingSubmitRef.current;
@@ -751,13 +962,47 @@ export const useGame = () => {
     finalizePreparedSubmitRack(payload);
   }, [commitPreparedSubmitWord, finalizePreparedSubmitRack, prepareSubmitWord]);
 
+  const pauseRushTimer = useCallback(() => {
+    if (
+      sprintRushModeRef.current !== SPRINT_RUSH_MODE_RUSH ||
+      gameOver ||
+      gameStartedAtMsRef.current == null
+    ) {
+      return false;
+    }
+    syncRushElapsed();
+    rushPausedRef.current = true;
+    rushRunningSinceMsRef.current = null;
+    return true;
+  }, [gameOver, syncRushElapsed]);
+
+  const resumeRushTimer = useCallback(() => {
+    if (
+      sprintRushModeRef.current !== SPRINT_RUSH_MODE_RUSH ||
+      gameOver ||
+      gameStartedAtMsRef.current == null ||
+      !rushPausedRef.current
+    ) {
+      return false;
+    }
+    rushPausedRef.current = false;
+    rushRunningSinceMsRef.current = Date.now();
+    return true;
+  }, [gameOver]);
+
+  const getRushElapsedSeconds = useCallback(() => {
+    return Math.floor(getRushElapsedMs() / 1000);
+  }, [getRushElapsedMs]);
+
   const finishGame = useCallback(() => {
     if (gameOver || tilesRemaining > 0) return; // Only when bag is empty and game not already over
     const durationMs =
-      gameStartedAtMsRef.current == null
+      sprintRushModeRef.current === SPRINT_RUSH_MODE_RUSH
+        ? getRushElapsedMs()
+        : gameStartedAtMsRef.current == null
         ? null
         : Math.max(0, Date.now() - gameStartedAtMsRef.current);
-    const breakdown = buildFinalScoreBreakdown({
+    const breakdown = buildModeScoreBreakdown({
       wordPointsTotal,
       swapPenaltyTotal,
       scrabbleBonusTotal,
@@ -772,7 +1017,9 @@ export const useGame = () => {
     setFinalScore(breakdown.finalScore);
     setGameOver(true);
   }, [
+    buildModeScoreBreakdown,
     gameOver,
+    getRushElapsedMs,
     scrabbleBonusTotal,
     swapPenaltyTotal,
     tileRack,
@@ -781,6 +1028,20 @@ export const useGame = () => {
     wordHistory,
     wordPointsTotal,
   ]);
+
+  const expireRushGame = useCallback(() => {
+    if (sprintRushModeRef.current !== SPRINT_RUSH_MODE_RUSH || gameOver) {
+      return false;
+    }
+    const durationSeconds = rushDurationSecondsRef.current;
+    if (typeof durationSeconds === "number") {
+      rushActiveElapsedMsRef.current = durationSeconds * 1000;
+      rushRunningSinceMsRef.current = null;
+    } else {
+      syncRushElapsed();
+    }
+    return finishSprintRushGame({ endedAtMs: Date.now() });
+  }, [finishSprintRushGame, gameOver, syncRushElapsed]);
 
   useEffect(() => {
     if (
@@ -902,6 +1163,8 @@ export const useGame = () => {
       finalScoreBreakdown,
       isSwapMode: false,
       swapCount,
+      sprintRushMode: sprintRushModeRef.current,
+      rushDurationSeconds: rushDurationSecondsRef.current,
       premiumSquares: premiumSquaresRef.current,
       boardSize: boardSizeRef.current,
       gameMode: gameModeRef.current,
@@ -912,6 +1175,9 @@ export const useGame = () => {
       boardAtTurnStart: boardAtTurnStartRef.current,
       randomState: randomRef.current?.getState?.() ?? null,
       gameStartedAtMs: gameStartedAtMsRef.current,
+      gameEndedAtMs: gameEndedAtMsRef.current,
+      rushActiveElapsedMs: getRushElapsedMs(),
+      rushPaused: rushPausedRef.current,
       currentConsistencyStreak: currentConsistencyStreakRef.current,
       consistencyBonusTotal: consistencyBonusTotalRef.current,
     };
@@ -921,6 +1187,7 @@ export const useGame = () => {
     finalScore,
     finalScoreBreakdown,
     gameOver,
+    getRushElapsedMs,
     isFirstTurn,
     isSwapMode,
     scrabbleBonusTotal,
@@ -985,6 +1252,30 @@ export const useGame = () => {
       typeof snapshot.gameStartedAtMs === "number"
         ? snapshot.gameStartedAtMs
         : null;
+    gameEndedAtMsRef.current =
+      typeof snapshot.gameEndedAtMs === "number" ? snapshot.gameEndedAtMs : null;
+    sprintRushModeRef.current = normalizeSprintRushMode(snapshot.sprintRushMode);
+    rushDurationSecondsRef.current =
+      typeof snapshot.rushDurationSeconds === "number"
+        ? snapshot.rushDurationSeconds
+        : null;
+    if (sprintRushModeRef.current === SPRINT_RUSH_MODE_RUSH) {
+      const hasStoredElapsed = typeof snapshot.rushActiveElapsedMs === "number";
+      rushActiveElapsedMsRef.current = hasStoredElapsed
+        ? Math.max(0, snapshot.rushActiveElapsedMs)
+        : typeof snapshot.gameStartedAtMs === "number"
+          ? Math.max(0, Date.now() - snapshot.gameStartedAtMs)
+          : 0;
+      rushPausedRef.current = snapshot.rushPaused === true;
+      rushRunningSinceMsRef.current =
+        gameStartedAtMsRef.current != null && !rushPausedRef.current
+          ? Date.now()
+          : null;
+    } else {
+      rushActiveElapsedMsRef.current = 0;
+      rushPausedRef.current = false;
+      rushRunningSinceMsRef.current = null;
+    }
     currentConsistencyStreakRef.current =
       typeof snapshot.currentConsistencyStreak === "number"
         ? snapshot.currentConsistencyStreak
@@ -1014,6 +1305,8 @@ export const useGame = () => {
     setFinalScoreBreakdown(snapshot.finalScoreBreakdown ?? null);
     setIsSwapMode(false);
     setSwapCount(snapshot.swapCount ?? 0);
+    setSprintRushMode(sprintRushModeRef.current);
+    setRushDurationSeconds(rushDurationSecondsRef.current);
     return true;
   }, []);
 
@@ -1038,6 +1331,11 @@ export const useGame = () => {
     finalScoreBreakdown,
     submitScorePreview,
     submitScorePreviewIsValid,
+    sprintRushMode,
+    rushDurationSeconds,
+    gameStartedAtMs: gameStartedAtMsRef.current,
+    rushActiveElapsedMs: getRushElapsedMs(),
+    rushPaused: rushPausedRef.current,
     isSwapMode,
     swapCount,
     premiumSquares: premiumSquaresRef.current,
@@ -1062,6 +1360,10 @@ export const useGame = () => {
     finalizePreparedSubmitRack,
     submitWord,
     finishGame,
+    expireRushGame,
+    pauseRushTimer,
+    resumeRushTimer,
+    getRushElapsedSeconds,
     setMessage,
     BOARD_SIZE: boardSizeRef.current,
     isBlankRackTile,

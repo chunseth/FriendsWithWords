@@ -27,7 +27,11 @@ import {
   SafeAreaView,
 } from "react-native-safe-area-context";
 import SFSymbolIcon from "./components/SFSymbolIcon";
-import { useGame } from "./hooks/useGame";
+import {
+  SPRINT_RUSH_MODE_RUSH,
+  SPRINT_RUSH_MODE_SPRINT,
+  useGame,
+} from "./hooks/useGame";
 import { dictionary } from "./utils/dictionary";
 import GameBoard from "./components/GameBoard";
 import GameBoardMini from "./components/GameBoardMini";
@@ -55,7 +59,9 @@ import SettingsModal from "./components/SettingsModal";
 import TutorialModal from "./components/TutorialModal";
 import { useTileDragDropController } from "./hooks/useTileDragDropController";
 import {
+  buildUpdatedRushScoreRecords,
   buildUpdatedScoreRecords,
+  buildUpdatedSprintScoreRecords,
   getDefaultScoreRecords,
   loadScoreRecords,
   saveScoreRecords,
@@ -74,6 +80,8 @@ import {
 import {
   PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT,
   PENDING_SCORE_SUBMISSION_KIND_LEADERBOARD,
+  PENDING_SCORE_SUBMISSION_KIND_RUSH,
+  PENDING_SCORE_SUBMISSION_KIND_SPRINT,
   buildPendingScoreSubmission,
   enqueuePendingScoreSubmission,
   loadPendingScoreSubmissions,
@@ -82,6 +90,7 @@ import {
 } from "./utils/pendingScoreSubmissionStorage";
 import {
   fetchGlobalLeaderboard,
+  fetchCurrentPlayerGlobalRank,
   fetchPlayerHighScorePosition,
   fetchPlayerScoreHistory,
   fetchSeedLeaderboardByMode,
@@ -90,6 +99,15 @@ import {
   LEADERBOARD_SCORE_MODE_SOLO,
   submitCompletedScore,
 } from "./services/leaderboardService";
+import {
+  fetchCurrentPlayerRushRank,
+  fetchCurrentPlayerSprintRank,
+  fetchRushLeaderboard,
+  fetchSprintLeaderboard,
+  submitRushScore,
+  submitSprintScore,
+} from "./services/sprintRushScoreService";
+import { SPRINT_TARGET_SCORE } from "./game/shared/scoring";
 import { saveRemotePlayerProfile } from "./services/profileService";
 import { deleteRemoteAccount } from "./services/accountDeletionService";
 import { isBackendConfigured } from "./config/backend";
@@ -142,6 +160,7 @@ import {
 } from "./services/pushNotificationService";
 import { fetchPlayableBoardVariants } from "./services/layoutLabLayoutService";
 import {
+  fetchCurrentPlayerBoardVariantRank,
   fetchBoardVariantGlobalHighScores,
   submitBoardVariantCompletedScore,
 } from "./services/boardVariantScoreService";
@@ -161,6 +180,7 @@ const SWAP_TILE_EXIT_LIFT = 40;
 const SWAP_TILE_LIFT_DURATION = 300;
 const SWAP_TILE_EXIT_DURATION = 160;
 const SWAP_TILE_ENTER_DURATION = 120;
+const RUSH_TILE_ENTER_DURATION = SWAP_TILE_ENTER_DURATION / 3;
 const SWAP_LAYOUT_DURATION = 180;
 const SWAP_STEP_DELAY = 70;
 const SWAP_MULTIPLIER_POP_DURATION = 300;
@@ -181,6 +201,11 @@ const GAME_TYPE_STANDARD = "standard";
 const GAME_TYPE_SEEDED_INPUT = "seeded_input";
 const GAME_TYPE_CUSTOM_BOARD = "custom_board";
 const GAME_TYPE_TUTORIAL = TUTORIAL_GAME_TYPE;
+const GAME_TYPE_SPRINT = "sprint";
+const GAME_TYPE_RUSH = "rush";
+const RUSH_DURATION_5_MINUTES = 300;
+const RUSH_DURATION_10_MINUTES = 600;
+const RUSH_WARNING_THRESHOLDS_SECONDS = [120, 30, 10];
 const CUSTOM_BOARD_DAILY_SEED_PREFIX = "variant-daily";
 const EXCLUDED_BOARD_VARIANT_IDS = new Set([
   "874345bf-ada5-497c-8591-d4ff5ad45ea2",
@@ -458,6 +483,7 @@ function App() {
   const isPadLandscape = Platform.isPad && windowWidth > windowHeight;
 
   const [dictionaryLoaded, setDictionaryLoaded] = useState(false);
+  const [dictionaryLoadProgress, setDictionaryLoadProgress] = useState(0);
   const [playMenuVisible, setPlayMenuVisible] = useState(false);
   const [playSubMenuVisible, setPlaySubMenuVisible] = useState(false);
   const [customBoardMenuVisible, setCustomBoardMenuVisible] = useState(false);
@@ -536,6 +562,16 @@ function App() {
   const [globalLeaderboardMode, setGlobalLeaderboardMode] = useState(
     GLOBAL_LEADERBOARD_MODE_CLASSIC
   );
+  const [sprintLeaderboardEntries, setSprintLeaderboardEntries] = useState([]);
+  const [sprintLeaderboardLoading, setSprintLeaderboardLoading] =
+    useState(false);
+  const [sprintLeaderboardError, setSprintLeaderboardError] = useState(null);
+  const [rushLeaderboardEntries, setRushLeaderboardEntries] = useState([]);
+  const [rushLeaderboardLoading, setRushLeaderboardLoading] = useState(false);
+  const [rushLeaderboardError, setRushLeaderboardError] = useState(null);
+  const [rushLeaderboardDuration, setRushLeaderboardDuration] = useState(
+    RUSH_DURATION_5_MINUTES
+  );
   const [multiplayerLeaderboardEntries, setMultiplayerLeaderboardEntries] =
     useState([]);
   const [multiplayerLeaderboardLoading, setMultiplayerLeaderboardLoading] =
@@ -573,6 +609,13 @@ function App() {
   const [pendingScrabbleBanner, setPendingScrabbleBanner] = useState(null);
   const [gameInfoFlavor, setGameInfoFlavor] = useState(null);
   const [pendingGameInfoFlavor, setPendingGameInfoFlavor] = useState(null);
+  const [rushRemainingSeconds, setRushRemainingSeconds] = useState(null);
+  const [rushWarningBanner, setRushWarningBanner] = useState(null);
+  const [endGameGlobalRankStatus, setEndGameGlobalRankStatus] = useState("idle");
+  const [endGameGlobalRank, setEndGameGlobalRank] = useState(null);
+  const [endGameGlobalRankError, setEndGameGlobalRankError] = useState(null);
+  const [lastCompletedGameDescriptor, setLastCompletedGameDescriptor] =
+    useState(null);
   const [miniDeferredScoreDisplay, setMiniDeferredScoreDisplay] = useState(null);
   const game = useGame();
   const spinValue = useRef(new Animated.Value(0)).current;
@@ -605,6 +648,9 @@ function App() {
   const isBackgroundMusicPlayingRef = useRef(false);
   const musicEnabledRef = useRef(true);
   const pendingScoreSubmissionFlushRef = useRef(false);
+  const rushWarningKeyRef = useRef(null);
+  const rushWarningsShownRef = useRef(new Set());
+  const rushWarningTimeoutRef = useRef(null);
   const rackSourceTiles = swapDisplayRack ?? game.tileRack;
   const pauseBackgroundMusic = useCallback(() => {
     const backgroundMusic = backgroundMusicRef.current;
@@ -710,9 +756,49 @@ function App() {
       miniDeferredStepMsRef.current
     );
   }, [clearMiniScoreAnimation]);
+
+  const saveActiveGameSnapshot = useCallback(() => {
+    if (!gameStarted || tutorialModeActive || game.gameOver) {
+      return null;
+    }
+    if (activeGameType === GAME_TYPE_RUSH) {
+      game.pauseRushTimer();
+    }
+    const snapshot = game.getStableSnapshot();
+    if (!snapshot) {
+      return null;
+    }
+    const payload = {
+      snapshot,
+      activeDailySeed,
+      activeGameMode,
+      activeGameType,
+      activeBoardVariant,
+      savedAt: Date.now(),
+    };
+    setSavedGamePayload(payload);
+    saveGameSnapshotPayload(payload);
+    return payload;
+  }, [
+    activeBoardVariant,
+    activeDailySeed,
+    activeGameMode,
+    activeGameType,
+    game,
+    game.gameOver,
+    gameStarted,
+    tutorialModeActive,
+  ]);
   const currentDailyHighScore = scoreRecords.dailySeedScores[dailySeed] ?? null;
   const currentMiniDailyHighScore =
     scoreRecords.miniDailySeedScores[dailySeed] ?? null;
+  const currentSprintBest = scoreRecords.sprintBest
+    ? `${scoreRecords.sprintBest.turnCount}t`
+    : null;
+  const currentRushBest =
+    game.rushDurationSeconds != null
+      ? scoreRecords.rushHighScores?.[String(game.rushDurationSeconds)] ?? null
+      : null;
   const dailySeeds = Array.from({ length: 7 }, (_, index) => {
     const date = new Date();
     date.setDate(date.getDate() - index);
@@ -733,6 +819,70 @@ function App() {
       ),
     [game.board]
   );
+
+  useEffect(() => {
+    if (
+      activeGameType !== GAME_TYPE_RUSH ||
+      game.gameOver ||
+      typeof game.rushDurationSeconds !== "number"
+    ) {
+      return undefined;
+    }
+
+    if (typeof game.gameStartedAtMs !== "number") {
+      setRushRemainingSeconds(game.rushDurationSeconds);
+      return undefined;
+    }
+
+    const updateRemaining = () => {
+      const elapsedSeconds = game.getRushElapsedSeconds();
+      const nextRemaining = Math.max(0, game.rushDurationSeconds - elapsedSeconds);
+      setRushRemainingSeconds(nextRemaining);
+      const warningKey = `${game.currentSeed ?? "rush"}:${
+        game.gameStartedAtMs ?? "pending"
+      }:${game.rushDurationSeconds}`;
+      if (rushWarningKeyRef.current !== warningKey) {
+        rushWarningKeyRef.current = warningKey;
+        rushWarningsShownRef.current = new Set();
+      }
+      const threshold = RUSH_WARNING_THRESHOLDS_SECONDS
+        .filter((value) => nextRemaining <= value)
+        .at(-1);
+      if (
+        typeof threshold === "number" &&
+        !rushWarningsShownRef.current.has(threshold)
+      ) {
+        rushWarningsShownRef.current.add(threshold);
+        setRushWarningBanner(
+          threshold >= 60
+            ? "2 minutes remaining"
+            : `${threshold} seconds remaining`
+        );
+        if (rushWarningTimeoutRef.current) {
+          clearTimeout(rushWarningTimeoutRef.current);
+        }
+        rushWarningTimeoutRef.current = setTimeout(() => {
+          rushWarningTimeoutRef.current = null;
+          setRushWarningBanner(null);
+        }, 1600);
+      }
+      if (nextRemaining <= 0) {
+        game.expireRushGame();
+      }
+    };
+
+    updateRemaining();
+    const intervalId = setInterval(updateRemaining, 250);
+    return () => clearInterval(intervalId);
+  }, [
+    activeGameType,
+    game.currentSeed,
+    game.gameOver,
+    game.gameStartedAtMs,
+    game.getRushElapsedSeconds,
+    game.rushDurationSeconds,
+    game.expireRushGame,
+  ]);
 
   const showMultiplayerBanner = useCallback((nextMessage) => {
     if (!multiplayerNotificationsEnabled) {
@@ -1685,6 +1835,10 @@ function App() {
 
   const animateRackInsertSequence = useCallback(
     async (tilesToInsert) => {
+      const tileEnterDuration =
+        activeGameType === GAME_TYPE_RUSH
+          ? RUSH_TILE_ENTER_DURATION
+          : SWAP_TILE_ENTER_DURATION;
       for (const tile of tilesToInsert) {
         const animationState = ensureRackTileAnimationState(tile.id);
         animationState.translateY.setValue(-SWAP_TILE_LIFT);
@@ -1712,12 +1866,12 @@ function App() {
         await runParallel([
           Animated.timing(animationState.translateY, {
             toValue: 0,
-            duration: SWAP_TILE_ENTER_DURATION,
+            duration: tileEnterDuration,
             useNativeDriver: true,
           }),
           Animated.timing(animationState.opacity, {
             toValue: 1,
-            duration: SWAP_TILE_ENTER_DURATION,
+            duration: tileEnterDuration,
             useNativeDriver: true,
           }),
         ]);
@@ -1726,6 +1880,7 @@ function App() {
       }
     },
     [
+      activeGameType,
       clearRackTileAnimationState,
       ensureRackTileAnimationState,
       runParallel,
@@ -2028,11 +2183,20 @@ function App() {
       })
     ).start();
 
+    let mounted = true;
     const loadDictionary = async () => {
-      await dictionary.load();
+      await dictionary.load((progress) => {
+        if (!mounted) return;
+        setDictionaryLoadProgress(Math.max(0, Math.min(1, progress)));
+      });
+      if (!mounted) return;
+      setDictionaryLoadProgress(1);
       setDictionaryLoaded(true);
     };
     loadDictionary();
+    return () => {
+      mounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2334,6 +2498,58 @@ function App() {
     [dailyLeaderboardMode, selectedDailyLeaderboardSeed]
   );
 
+  const loadSprintLeaderboard = useCallback(async () => {
+    if (!isBackendConfigured()) {
+      setSprintLeaderboardEntries([]);
+      setSprintLeaderboardError(null);
+      setSprintLeaderboardLoading(false);
+      return;
+    }
+
+    setSprintLeaderboardLoading(true);
+    setSprintLeaderboardError(null);
+    const result = await fetchSprintLeaderboard();
+    if (!result.ok) {
+      setSprintLeaderboardEntries([]);
+      setSprintLeaderboardError(
+        result.reason === "backend_not_configured"
+          ? null
+          : "Unable to load sprint leaderboard"
+      );
+      setSprintLeaderboardLoading(false);
+      return;
+    }
+
+    setSprintLeaderboardEntries(result.leaderboard);
+    setSprintLeaderboardLoading(false);
+  }, []);
+
+  const loadRushLeaderboard = useCallback(async (durationSeconds = rushLeaderboardDuration) => {
+    if (!isBackendConfigured()) {
+      setRushLeaderboardEntries([]);
+      setRushLeaderboardError(null);
+      setRushLeaderboardLoading(false);
+      return;
+    }
+
+    setRushLeaderboardLoading(true);
+    setRushLeaderboardError(null);
+    const result = await fetchRushLeaderboard(durationSeconds);
+    if (!result.ok) {
+      setRushLeaderboardEntries([]);
+      setRushLeaderboardError(
+        result.reason === "backend_not_configured"
+          ? null
+          : "Unable to load rush leaderboard"
+      );
+      setRushLeaderboardLoading(false);
+      return;
+    }
+
+    setRushLeaderboardEntries(result.leaderboard);
+    setRushLeaderboardLoading(false);
+  }, [rushLeaderboardDuration]);
+
   const loadCustomBoardVariants = useCallback(async () => {
     if (!isBackendConfigured()) {
       setBoardVariantsByMode({ classic: [], mini: [] });
@@ -2458,6 +2674,10 @@ function App() {
       const result =
         kind === PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT
           ? await submitBoardVariantCompletedScore(payload)
+          : kind === PENDING_SCORE_SUBMISSION_KIND_SPRINT
+            ? await submitSprintScore(payload)
+            : kind === PENDING_SCORE_SUBMISSION_KIND_RUSH
+              ? await submitRushScore(payload)
           : await submitCompletedScore(payload);
 
       if (result.ok) {
@@ -2467,6 +2687,10 @@ function App() {
             payload.scoreMode ?? LEADERBOARD_SCORE_MODE_SOLO,
             payload.seed
           );
+        } else if (kind === PENDING_SCORE_SUBMISSION_KIND_SPRINT) {
+          loadSprintLeaderboard();
+        } else if (kind === PENDING_SCORE_SUBMISSION_KIND_RUSH) {
+          loadRushLeaderboard(payload.durationSeconds);
         }
         return result;
       }
@@ -2485,7 +2709,7 @@ function App() {
 
       return result;
     },
-    [refreshLeaderboardsAfterScoreSubmission]
+    [loadRushLeaderboard, loadSprintLeaderboard, refreshLeaderboardsAfterScoreSubmission]
   );
 
   const retryPendingScoreSubmissions = useCallback(async () => {
@@ -2558,6 +2782,71 @@ function App() {
     ]
   );
 
+  const submitLatestSpecialScore = useCallback(
+    async (kind, payload) => {
+      const queuedPayload = {
+        ...payload,
+        completedAt: payload.completedAt ?? new Date().toISOString(),
+      };
+
+      if (!isBackendConfigured()) {
+        return kind === PENDING_SCORE_SUBMISSION_KIND_SPRINT
+          ? submitSprintScore(queuedPayload)
+          : submitRushScore(queuedPayload);
+      }
+
+      await enqueuePendingScoreSubmission(kind, queuedPayload);
+      const pendingSubmission = buildPendingScoreSubmission(
+        kind,
+        queuedPayload,
+        queuedPayload.completedAt
+      );
+      const result = await submitPendingScoreSubmission(pendingSubmission, {
+        showError: true,
+      });
+
+      if (result.ok) {
+        retryPendingScoreSubmissions();
+      }
+
+      return result;
+    },
+    [retryPendingScoreSubmissions, submitPendingScoreSubmission]
+  );
+
+  const fetchEndGameGlobalRank = useCallback(async (descriptor) => {
+    if (!descriptor || !isBackendConfigured()) {
+      return;
+    }
+
+    setEndGameGlobalRankStatus("loading");
+    setEndGameGlobalRank(null);
+    setEndGameGlobalRankError(null);
+
+    let result;
+    if (descriptor.type === GAME_TYPE_SPRINT) {
+      result = await fetchCurrentPlayerSprintRank();
+    } else if (descriptor.type === GAME_TYPE_RUSH) {
+      result = await fetchCurrentPlayerRushRank(descriptor.durationSeconds);
+    } else if (descriptor.type === GAME_TYPE_CUSTOM_BOARD) {
+      result = await fetchCurrentPlayerBoardVariantRank({
+        boardVariantId: descriptor.boardVariantId,
+        modeId: descriptor.modeId,
+      });
+    } else {
+      result = await fetchCurrentPlayerGlobalRank(descriptor.scoreMode);
+    }
+
+    if (result?.ok && typeof result.rank === "number") {
+      setEndGameGlobalRank(result.rank);
+      setEndGameGlobalRankStatus("success");
+      return;
+    }
+
+    setEndGameGlobalRankStatus("error");
+    setEndGameGlobalRankError("Unable to load global rank");
+  }, []);
+
   useEffect(() => {
     if (gameStarted || homeScreen !== "leaderboard") {
       return;
@@ -2568,6 +2857,8 @@ function App() {
         ? LEADERBOARD_SCORE_MODE_MINI
         : LEADERBOARD_SCORE_MODE_SOLO
     );
+    loadSprintLeaderboard();
+    loadRushLeaderboard(rushLeaderboardDuration);
     loadMultiplayerLeaderboard();
     loadDailyLeaderboard();
   }, [
@@ -2577,6 +2868,9 @@ function App() {
     loadDailyLeaderboard,
     loadGlobalLeaderboard,
     loadMultiplayerLeaderboard,
+    loadRushLeaderboard,
+    loadSprintLeaderboard,
+    rushLeaderboardDuration,
   ]);
 
   useEffect(() => {
@@ -2596,6 +2890,35 @@ function App() {
       appStateSubscription.remove();
     };
   }, [retryPendingScoreSubmissions, startupTasksReady]);
+
+  useEffect(() => {
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        if (
+          gameStarted &&
+          activeGameType === GAME_TYPE_RUSH &&
+          !game.gameOver
+        ) {
+          game.resumeRushTimer();
+        }
+        return;
+      }
+
+      if (state === "background" || state === "inactive") {
+        saveActiveGameSnapshot();
+      }
+    });
+
+    return () => {
+      appStateSubscription.remove();
+    };
+  }, [
+    activeGameType,
+    game,
+    game.gameOver,
+    gameStarted,
+    saveActiveGameSnapshot,
+  ]);
 
   useEffect(() => {
     if (!leaderboardSelectedDailySeed) {
@@ -2704,6 +3027,123 @@ function App() {
       activeGameType === GAME_TYPE_CUSTOM_BOARD &&
       typeof activeBoardVariant?.id === "string";
     const isMiniMode = activeGameMode === GAME_MODE_DAILY_MINI;
+    const isSprintGame = activeGameType === GAME_TYPE_SPRINT;
+    const isRushGame = activeGameType === GAME_TYPE_RUSH;
+
+    if ((isSprintGame || isRushGame) && !leaderboardConsentLoaded) {
+      return;
+    }
+
+    if (isSprintGame || isRushGame) {
+      const durationSeconds =
+        typeof game.finalScoreBreakdown.durationSeconds === "number"
+          ? game.finalScoreBreakdown.durationSeconds
+          : 0;
+      const sprintBestCandidate =
+        isSprintGame && typeof game.turnCount === "number"
+          ? {
+              finalScore: game.finalScore,
+              turnCount: game.turnCount,
+              durationSeconds,
+            }
+          : null;
+      const isNewHighScore = isSprintGame
+        ? !scoreRecords.sprintBest ||
+          sprintBestCandidate.turnCount < scoreRecords.sprintBest.turnCount ||
+          (sprintBestCandidate.turnCount === scoreRecords.sprintBest.turnCount &&
+            sprintBestCandidate.durationSeconds <
+              scoreRecords.sprintBest.durationSeconds)
+        : (scoreRecords.rushHighScores?.[String(game.rushDurationSeconds)] ??
+            null) == null ||
+          game.finalScore >
+            scoreRecords.rushHighScores[String(game.rushDurationSeconds)];
+
+      setEndGameSummary({
+        ...game.finalScoreBreakdown,
+        turnCount: game.turnCount,
+        isNewHighScore,
+      });
+      setEndGameGlobalRankStatus("idle");
+      setEndGameGlobalRank(null);
+      setEndGameGlobalRankError(null);
+      setLastCompletedGameDescriptor({
+        type: isSprintGame ? GAME_TYPE_SPRINT : GAME_TYPE_RUSH,
+        durationSeconds: isRushGame ? game.rushDurationSeconds : durationSeconds,
+      });
+
+      const nextRecords = isSprintGame
+        ? buildUpdatedSprintScoreRecords(scoreRecords, sprintBestCandidate)
+        : buildUpdatedRushScoreRecords(scoreRecords, {
+            finalScore: game.finalScore,
+            durationSeconds: game.rushDurationSeconds,
+          });
+      setScoreRecords(nextRecords);
+      saveScoreRecords(nextRecords);
+
+      const nextStats = buildUpdatedStats(playerStats, {
+        finalScore: game.finalScore,
+        wordCount: game.wordCount,
+      });
+      setPlayerStats(nextStats);
+      saveStats(nextStats);
+
+      const backendSubmitKey = `${persistedGameKey}:${
+        isSprintGame ? "sprint" : "rush"
+      }-backend`;
+      if (backendSubmitRef.current === backendSubmitKey) {
+        return;
+      }
+      backendSubmitRef.current = backendSubmitKey;
+
+      const submission = isSprintGame
+        ? {
+            seed: game.currentSeed,
+            finalScore: game.finalScore,
+            finalScoreBreakdown: game.finalScoreBreakdown,
+            turnCount: game.turnCount,
+            durationSeconds,
+            completedAt: new Date().toISOString(),
+          }
+        : {
+            seed: game.currentSeed,
+            durationSeconds: game.rushDurationSeconds,
+            finalScore: game.finalScore,
+            finalScoreBreakdown: game.finalScoreBreakdown,
+            completedAt: new Date().toISOString(),
+          };
+      const submissionKind = isSprintGame
+        ? PENDING_SCORE_SUBMISSION_KIND_SPRINT
+        : PENDING_SCORE_SUBMISSION_KIND_RUSH;
+
+      if (leaderboardConsentStatus === LEADERBOARD_CONSENT_GRANTED) {
+        const rankDescriptor = {
+          type: isSprintGame ? GAME_TYPE_SPRINT : GAME_TYPE_RUSH,
+          durationSeconds: game.rushDurationSeconds,
+        };
+        if (isNewHighScore) {
+          setEndGameGlobalRankStatus("loading");
+        }
+        submitLatestSpecialScore(submissionKind, submission).then((result) => {
+          if (isNewHighScore && result?.ok) {
+            fetchEndGameGlobalRank(rankDescriptor);
+          } else if (isNewHighScore) {
+            setEndGameGlobalRankStatus("error");
+            setEndGameGlobalRankError("Unable to load global rank");
+          }
+        });
+        return;
+      }
+
+      if (leaderboardConsentStatus == null) {
+        setPendingLeaderboardSubmission({
+          kind: submissionKind,
+          payload: submission,
+        });
+        setLeaderboardConsentModalSource("gameOver");
+        setLeaderboardConsentModalVisible(true);
+      }
+      return;
+    }
 
     if (isCustomBoardGame) {
       const boardMode = isMiniMode ? "mini" : "classic";
@@ -2715,6 +3155,15 @@ function App() {
       setEndGameSummary({
         ...game.finalScoreBreakdown,
         isNewHighScore,
+      });
+      setEndGameGlobalRankStatus("idle");
+      setEndGameGlobalRank(null);
+      setEndGameGlobalRankError(null);
+      setLastCompletedGameDescriptor({
+        type: GAME_TYPE_CUSTOM_BOARD,
+        boardVariant: activeBoardVariant,
+        boardVariantId: activeBoardVariant.id,
+        modeId: boardMode,
       });
 
       const backendSubmitKey = `${persistedGameKey}:board-variant-backend`;
@@ -2752,7 +3201,19 @@ function App() {
         .then((result) => {
           if (!result.ok && result.reason !== "backend_not_configured") {
             console.warn("Failed to submit board variant score", result);
+            if (isNewHighScore) {
+              setEndGameGlobalRankStatus("error");
+              setEndGameGlobalRankError("Unable to load global rank");
+            }
             return;
+          }
+
+          if (isNewHighScore && result.ok) {
+            fetchEndGameGlobalRank({
+              type: GAME_TYPE_CUSTOM_BOARD,
+              boardVariantId: activeBoardVariant.id,
+              modeId: boardMode,
+            });
           }
 
           setBoardVariantHighScoresByMode((prev) => {
@@ -2773,7 +3234,14 @@ function App() {
         })
         .catch((error) => {
           console.warn("Failed to queue board variant score", error);
+          if (isNewHighScore) {
+            setEndGameGlobalRankStatus("error");
+            setEndGameGlobalRankError("Unable to load global rank");
+          }
         });
+      if (isNewHighScore) {
+        setEndGameGlobalRankStatus("loading");
+      }
       return;
     }
 
@@ -2789,6 +3257,16 @@ function App() {
     setEndGameSummary({
       ...game.finalScoreBreakdown,
       isNewHighScore,
+    });
+    setEndGameGlobalRankStatus("idle");
+    setEndGameGlobalRank(null);
+    setEndGameGlobalRankError(null);
+    setLastCompletedGameDescriptor({
+      type: GAME_TYPE_STANDARD,
+      mode: isMiniMode ? GAME_MODE_DAILY_MINI : GAME_MODE_CLASSIC,
+      scoreMode: isMiniMode
+        ? LEADERBOARD_SCORE_MODE_MINI
+        : LEADERBOARD_SCORE_MODE_SOLO,
     });
 
     const nextRecords = buildUpdatedScoreRecords(
@@ -2837,7 +3315,21 @@ function App() {
     }
 
     if (leaderboardConsentStatus === LEADERBOARD_CONSENT_GRANTED) {
-      submitLatestCompletedScore(submission);
+      const rankDescriptor = {
+        type: GAME_TYPE_STANDARD,
+        scoreMode: submission.scoreMode,
+      };
+      if (isNewHighScore) {
+        setEndGameGlobalRankStatus("loading");
+      }
+      submitLatestCompletedScore(submission).then((result) => {
+        if (isNewHighScore && result?.ok) {
+          fetchEndGameGlobalRank(rankDescriptor);
+        } else if (isNewHighScore) {
+          setEndGameGlobalRankStatus("error");
+          setEndGameGlobalRankError("Unable to load global rank");
+        }
+      });
       return;
     }
 
@@ -2858,12 +3350,15 @@ function App() {
     game.finalScoreBreakdown,
     game.gameOver,
     game.currentSeed,
+    game.rushDurationSeconds,
+    game.turnCount,
     game.wordCount,
     leaderboardConsentLoaded,
     leaderboardConsentStatus,
     playerStats,
     scoreRecords,
     submitLatestCompletedScore,
+    submitLatestSpecialScore,
     submitPendingScoreSubmission,
     tutorialModeActive,
   ]);
@@ -2910,9 +3405,34 @@ function App() {
     if (pendingLeaderboardSubmission) {
       const pendingSubmission = pendingLeaderboardSubmission;
       setPendingLeaderboardSubmission(null);
-      submitLatestCompletedScore(pendingSubmission);
+      if (endGameSummary?.isNewHighScore) {
+        setEndGameGlobalRankStatus("loading");
+      }
+      const handleSubmissionResult = (result) => {
+        if (endGameSummary?.isNewHighScore && result?.ok) {
+          fetchEndGameGlobalRank(lastCompletedGameDescriptor);
+        } else if (endGameSummary?.isNewHighScore) {
+          setEndGameGlobalRankStatus("error");
+          setEndGameGlobalRankError("Unable to load global rank");
+        }
+      };
+      if (pendingSubmission.kind) {
+        submitLatestSpecialScore(
+          pendingSubmission.kind,
+          pendingSubmission.payload
+        ).then(handleSubmissionResult);
+      } else {
+        submitLatestCompletedScore(pendingSubmission).then(handleSubmissionResult);
+      }
     }
-  }, [pendingLeaderboardSubmission, submitLatestCompletedScore]);
+  }, [
+    endGameSummary,
+    fetchEndGameGlobalRank,
+    lastCompletedGameDescriptor,
+    pendingLeaderboardSubmission,
+    submitLatestCompletedScore,
+    submitLatestSpecialScore,
+  ]);
 
   const handleDenyLeaderboardSharing = useCallback(async () => {
     const nextStatus = await saveLeaderboardConsentStatus(
@@ -3196,6 +3716,9 @@ function App() {
       if (dailySeedRefreshTimeoutRef.current != null) {
         clearTimeout(dailySeedRefreshTimeoutRef.current);
       }
+      if (rushWarningTimeoutRef.current != null) {
+        clearTimeout(rushWarningTimeoutRef.current);
+      }
     };
   }, [resetController]);
 
@@ -3214,12 +3737,25 @@ function App() {
       const isCustomBoardGame = options.gameType === GAME_TYPE_CUSTOM_BOARD;
       const isSeededInputGame = options.gameType === GAME_TYPE_SEEDED_INPUT;
       const isTutorialGame = options.gameType === GAME_TYPE_TUTORIAL;
+      const isSprintGame = options.gameType === GAME_TYPE_SPRINT;
+      const isRushGame = options.gameType === GAME_TYPE_RUSH;
       if (!isTutorialGame) {
         setSavedGamePayload(null);
         clearGameSnapshotPayload();
       }
       game.startNewGame(seed, {
-        mode: nextMode === GAME_MODE_DAILY_MINI ? "mini" : "classic",
+        mode:
+          nextMode === GAME_MODE_DAILY_MINI || isSprintGame || isRushGame
+            ? "mini"
+            : "classic",
+        sprintRushMode: isSprintGame
+          ? SPRINT_RUSH_MODE_SPRINT
+          : isRushGame
+            ? SPRINT_RUSH_MODE_RUSH
+            : undefined,
+        rushDurationSeconds: isRushGame
+          ? options.rushDurationSeconds
+          : undefined,
         boardVariant:
           boardVariant && typeof boardVariant === "object"
             ? {
@@ -3239,11 +3775,19 @@ function App() {
             ? GAME_TYPE_SEEDED_INPUT
             : isTutorialGame
               ? GAME_TYPE_TUTORIAL
-              : GAME_TYPE_STANDARD
+              : isSprintGame
+                ? GAME_TYPE_SPRINT
+                : isRushGame
+                  ? GAME_TYPE_RUSH
+                  : GAME_TYPE_STANDARD
       );
       setActiveBoardVariant(boardVariant);
       setActiveDailySeed(options.isDaily ? seed : null);
       setEndGameSummary(null);
+      setEndGameGlobalRankStatus("idle");
+      setEndGameGlobalRank(null);
+      setEndGameGlobalRankError(null);
+      setLastCompletedGameDescriptor(null);
       setGameInfoFlavor(null);
       setPendingGameInfoFlavor(null);
       clearMiniScoreAnimation();
@@ -3252,6 +3796,14 @@ function App() {
       pendingDeferredScoreAnimationStartRef.current = false;
       setMiniDeferredScoreDisplay(null);
       setPendingLeaderboardSubmission(null);
+      setRushRemainingSeconds(
+        isRushGame && typeof options.rushDurationSeconds === "number"
+          ? options.rushDurationSeconds
+          : null
+      );
+      setRushWarningBanner(null);
+      rushWarningKeyRef.current = null;
+      rushWarningsShownRef.current = new Set();
       setLeaderboardConsentModalVisible(false);
       setSettingsModalVisible(false);
       setDeleteAccountModalVisible(false);
@@ -3333,6 +3885,26 @@ function App() {
     });
   }, [startGameWithSeed]);
 
+  const handleSprintGameStart = useCallback(() => {
+    startGameWithSeed(null, {
+      isDaily: false,
+      mode: GAME_MODE_DAILY_MINI,
+      gameType: GAME_TYPE_SPRINT,
+    });
+  }, [startGameWithSeed]);
+
+  const handleRushGameStart = useCallback(
+    (rushDurationSeconds) => {
+      startGameWithSeed(null, {
+        isDaily: false,
+        mode: GAME_MODE_DAILY_MINI,
+        gameType: GAME_TYPE_RUSH,
+        rushDurationSeconds,
+      });
+    },
+    [startGameWithSeed]
+  );
+
   const handlePlayCustomBoardVariant = useCallback(
     (variant) => {
       if (!variant || !variant.id) {
@@ -3354,6 +3926,47 @@ function App() {
     },
     [startGameWithSeed]
   );
+
+  const handlePlayAgain = useCallback(() => {
+    const descriptor = lastCompletedGameDescriptor;
+    if (!descriptor) {
+      handleRandomGameStart();
+      return;
+    }
+
+    if (descriptor.type === GAME_TYPE_RUSH) {
+      handleRushGameStart(
+        typeof descriptor.durationSeconds === "number"
+          ? descriptor.durationSeconds
+          : RUSH_DURATION_5_MINUTES
+      );
+      return;
+    }
+
+    if (descriptor.type === GAME_TYPE_SPRINT) {
+      handleSprintGameStart();
+      return;
+    }
+
+    if (descriptor.type === GAME_TYPE_CUSTOM_BOARD && descriptor.boardVariant) {
+      handlePlayCustomBoardVariant(descriptor.boardVariant);
+      return;
+    }
+
+    if (descriptor.mode === GAME_MODE_DAILY_MINI) {
+      handleRandomMiniGameStart();
+      return;
+    }
+
+    handleRandomGameStart();
+  }, [
+    handlePlayCustomBoardVariant,
+    handleRandomGameStart,
+    handleRandomMiniGameStart,
+    handleRushGameStart,
+    handleSprintGameStart,
+    lastCompletedGameDescriptor,
+  ]);
 
   const handleReturnToMainMenu = useCallback(() => {
     if (tutorialModeActive) {
@@ -3419,6 +4032,10 @@ function App() {
           : GAME_MODE_CLASSIC)
     );
     setEndGameSummary(null);
+    setEndGameGlobalRankStatus("idle");
+    setEndGameGlobalRank(null);
+    setEndGameGlobalRankError(null);
+    setLastCompletedGameDescriptor(null);
     setGameInfoFlavor(null);
     setPendingGameInfoFlavor(null);
     setPendingBlankPlacement(null);
@@ -3434,6 +4051,9 @@ function App() {
     setGameStarted(true);
     setPlayMenuVisible(false);
     setInGameMenuVisible(false);
+    setRushWarningBanner(null);
+    rushWarningKeyRef.current = null;
+    rushWarningsShownRef.current = new Set();
   }, [game, savedGamePayload]);
 
   const handleCloseMessage = useCallback(() => {
@@ -3518,6 +4138,11 @@ function App() {
     : "rgba(102, 126, 234, 0.3)";
   const loadingSpinnerHeadColor = darkModeEnabled ? "#94a3b8" : "#667eea";
   const loadingTextColor = darkModeEnabled ? "#cbd5e1" : "#667eea";
+  const loadingProgressTrackColor = darkModeEnabled
+    ? "rgba(148, 163, 184, 0.22)"
+    : "rgba(102, 126, 234, 0.18)";
+  const loadingProgressFillColor = darkModeEnabled ? "#38bdf8" : "#667eea";
+  const dictionaryLoadPercent = Math.round(dictionaryLoadProgress * 100);
 
   if (!dictionaryLoaded) {
     return (
@@ -3545,15 +4170,33 @@ function App() {
                 },
               ]}
             />
-            <Text
-              style={[
-                styles.loadingText,
-                isPadLandscape ? styles.loadingTextLandscape : null,
-                { color: loadingTextColor },
-              ]}
-            >
-              Loading dictionary...
-            </Text>
+            <View style={styles.loadingStatus}>
+              <Text
+                style={[
+                  styles.loadingText,
+                  isPadLandscape ? styles.loadingTextLandscape : null,
+                  { color: loadingTextColor },
+                ]}
+              >
+                Loading dictionary {dictionaryLoadPercent}%
+              </Text>
+              <View
+                style={[
+                  styles.loadingProgressTrack,
+                  { backgroundColor: loadingProgressTrackColor },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.loadingProgressFill,
+                    {
+                      backgroundColor: loadingProgressFillColor,
+                      width: `${dictionaryLoadPercent}%`,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
           </View>
         </SafeAreaView>
       </SafeAreaProvider>
@@ -3619,10 +4262,20 @@ function App() {
                 turnCount={game.turnCount}
                 tilesRemaining={game.tilesRemaining}
                 overallHighScore={
-                  activeGameMode === GAME_MODE_DAILY_MINI
+                  activeGameType === GAME_TYPE_SPRINT
+                    ? currentSprintBest
+                    : activeGameType === GAME_TYPE_RUSH
+                      ? currentRushBest
+                      : activeGameMode === GAME_MODE_DAILY_MINI
                     ? scoreRecords.miniOverallHighScore
                     : scoreRecords.overallHighScore
                 }
+                sprintRushMode={game.sprintRushMode}
+                sprintTargetScore={SPRINT_TARGET_SCORE}
+                currentScore={displayedScore}
+                rushRemainingSeconds={rushRemainingSeconds}
+                rushDurationSeconds={game.rushDurationSeconds}
+                gameOver={game.gameOver}
                 turnFlavor={gameInfoFlavor}
                 pendingTurnFlavor={pendingGameInfoFlavor}
                 isDarkMode={darkModeEnabled}
@@ -3736,6 +4389,13 @@ function App() {
                   <Text style={styles.scrabbleBannerScore}>{scrabbleBannerPoints}</Text>
                 </Animated.View>
               )}
+              {rushWarningBanner ? (
+                <View pointerEvents="none" style={styles.rushWarningBanner}>
+                  <Text style={styles.rushWarningBannerText}>
+                    {rushWarningBanner}
+                  </Text>
+                </View>
+              ) : null}
             </View>
 
             <View style={styles.bottomSection}>
@@ -3954,6 +4614,13 @@ function App() {
                 globalLeaderboardLoading={leaderboardLoading}
                 globalLeaderboardError={leaderboardError}
                 globalMode={globalLeaderboardMode}
+                sprintLeaderboardEntries={sprintLeaderboardEntries}
+                sprintLeaderboardLoading={sprintLeaderboardLoading}
+                sprintLeaderboardError={sprintLeaderboardError}
+                rushLeaderboardEntries={rushLeaderboardEntries}
+                rushLeaderboardLoading={rushLeaderboardLoading}
+                rushLeaderboardError={rushLeaderboardError}
+                rushDurationSeconds={rushLeaderboardDuration}
                 multiplayerLeaderboardEntries={multiplayerLeaderboardEntries}
                 multiplayerLeaderboardLoading={multiplayerLeaderboardLoading}
                 multiplayerLeaderboardError={multiplayerLeaderboardError}
@@ -3993,6 +4660,10 @@ function App() {
                       : LEADERBOARD_SCORE_MODE_SOLO
                   );
                 }}
+                onRushDurationChange={(durationSeconds) => {
+                  setRushLeaderboardDuration(durationSeconds);
+                  loadRushLeaderboard(durationSeconds);
+                }}
                 onBack={handleBackToMainMenu}
                 onRefresh={() => {
                   loadGlobalLeaderboard(
@@ -4000,6 +4671,8 @@ function App() {
                       ? LEADERBOARD_SCORE_MODE_MINI
                       : LEADERBOARD_SCORE_MODE_SOLO
                   );
+                  loadSprintLeaderboard();
+                  loadRushLeaderboard(rushLeaderboardDuration);
                   loadMultiplayerLeaderboard();
                   loadDailyLeaderboard(
                     selectedDailyLeaderboardSeed ?? dailySeed,
@@ -4102,6 +4775,13 @@ function App() {
             setInGameMenuVisible(false);
             setPlayMenuVisible(true);
           }}
+          showRushQuickStart={
+            gameStarted &&
+            activeGameType === GAME_TYPE_RUSH &&
+            !game.gameOver
+          }
+          onNewRush5={() => handleRushGameStart(RUSH_DURATION_5_MINUTES)}
+          onNewRush10={() => handleRushGameStart(RUSH_DURATION_10_MINUTES)}
           onReturnToMainMenu={handleReturnToMainMenu}
         />
         <PlayGameMenu
@@ -4131,6 +4811,10 @@ function App() {
           }}
           onNewGameRandom={() => requestGameReplacement(handleRandomGameStart)}
           onNewMiniRandom={() => requestGameReplacement(handleRandomMiniGameStart)}
+          onNewSprint={() => requestGameReplacement(handleSprintGameStart)}
+          onNewRush={(durationSeconds) =>
+            requestGameReplacement(() => handleRushGameStart(durationSeconds))
+          }
           onNewGameWithSeed={(seed) =>
             requestGameReplacement(() =>
               startGameWithSeed(seed, {
@@ -4191,6 +4875,11 @@ function App() {
           visible={endGameSummary != null}
           summary={endGameSummary}
           onClose={() => setEndGameSummary(null)}
+          onPlayAgain={lastCompletedGameDescriptor ? handlePlayAgain : null}
+          playAgainLabel="Play Again"
+          globalRankStatus={endGameGlobalRankStatus}
+          globalRank={endGameGlobalRank}
+          globalRankError={endGameGlobalRankError}
         />
         <LeaderboardConsentModal
           visible={leaderboardConsentModalVisible}
@@ -4350,11 +5039,25 @@ const styles = StyleSheet.create({
     marginBottom: 0,
     marginRight: 16,
   },
+  loadingStatus: {
+    alignItems: "center",
+  },
   loadingText: {
     fontSize: 16,
   },
   loadingTextLandscape: {
     fontSize: 20,
+  },
+  loadingProgressTrack: {
+    width: 220,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 14,
+    overflow: "hidden",
+  },
+  loadingProgressFill: {
+    height: "100%",
+    borderRadius: 4,
   },
   gameContainer: {
     flex: 1,
@@ -4452,6 +5155,22 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0, 0, 0, 0.18)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
+  },
+  rushWarningBanner: {
+    position: "absolute",
+    top: 16,
+    alignSelf: "center",
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: "rgba(47, 111, 79, 0.94)",
+    zIndex: 2100,
+  },
+  rushWarningBannerText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "900",
+    textAlign: "center",
   },
   /** Bottom strip: tiles + controls */
   bottomSection: {

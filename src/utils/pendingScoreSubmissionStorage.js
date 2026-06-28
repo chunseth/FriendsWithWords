@@ -5,10 +5,14 @@ const MAX_PENDING_SUBMISSIONS = 50;
 
 export const PENDING_SCORE_SUBMISSION_KIND_LEADERBOARD = "leaderboard";
 export const PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT = "boardVariant";
+export const PENDING_SCORE_SUBMISSION_KIND_SPRINT = "sprint";
+export const PENDING_SCORE_SUBMISSION_KIND_RUSH = "rush";
 
 const normalizeKind = (kind) =>
-  kind === PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT
-    ? PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT
+  kind === PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT ||
+  kind === PENDING_SCORE_SUBMISSION_KIND_SPRINT ||
+  kind === PENDING_SCORE_SUBMISSION_KIND_RUSH
+    ? kind
     : PENDING_SCORE_SUBMISSION_KIND_LEADERBOARD;
 
 const buildPayloadKey = (kind, payload) => {
@@ -20,6 +24,25 @@ const buildPayloadKey = (kind, payload) => {
       payload?.boardVariantId ?? "",
       payload?.modeId ?? "classic",
       payload?.seed ?? "",
+      payload?.finalScore ?? "",
+    ].join(":");
+  }
+
+  if (normalizedKind === PENDING_SCORE_SUBMISSION_KIND_SPRINT) {
+    return [
+      normalizedKind,
+      payload?.seed ?? "",
+      payload?.turnCount ?? "",
+      payload?.durationSeconds ?? "",
+      payload?.finalScore ?? "",
+    ].join(":");
+  }
+
+  if (normalizedKind === PENDING_SCORE_SUBMISSION_KIND_RUSH) {
+    return [
+      normalizedKind,
+      payload?.seed ?? "",
+      payload?.durationSeconds ?? "",
       payload?.finalScore ?? "",
     ].join(":");
   }
@@ -56,6 +79,21 @@ const sanitizeSubmission = (value) => {
     kind === PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT &&
     (typeof payload.boardVariantId !== "string" ||
       payload.boardVariantId.trim().length === 0)
+  ) {
+    return null;
+  }
+
+  if (
+    kind === PENDING_SCORE_SUBMISSION_KIND_SPRINT &&
+    (typeof payload.turnCount !== "number" ||
+      typeof payload.durationSeconds !== "number")
+  ) {
+    return null;
+  }
+
+  if (
+    kind === PENDING_SCORE_SUBMISSION_KIND_RUSH &&
+    typeof payload.durationSeconds !== "number"
   ) {
     return null;
   }

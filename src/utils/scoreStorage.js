@@ -7,7 +7,25 @@ const createDefaultScoreRecords = () => ({
   dailySeedScores: {},
   miniOverallHighScore: null,
   miniDailySeedScores: {},
+  sprintBest: null,
+  rushHighScores: {},
 });
+
+const sanitizeSprintBest = (value) => {
+  if (!value || typeof value !== "object") return null;
+  if (
+    typeof value.turnCount !== "number" ||
+    typeof value.durationSeconds !== "number" ||
+    typeof value.finalScore !== "number"
+  ) {
+    return null;
+  }
+  return {
+    turnCount: value.turnCount,
+    durationSeconds: value.durationSeconds,
+    finalScore: value.finalScore,
+  };
+};
 
 const sanitizeScoreRecords = (value) => {
   if (!value || typeof value !== "object") {
@@ -38,12 +56,23 @@ const sanitizeScoreRecords = (value) => {
           )
         )
       : {};
+  const rushHighScores =
+    value.rushHighScores && typeof value.rushHighScores === "object"
+      ? Object.fromEntries(
+          Object.entries(value.rushHighScores).filter(
+            ([duration, score]) =>
+              typeof duration === "string" && typeof score === "number"
+          )
+        )
+      : {};
 
   return {
     overallHighScore,
     dailySeedScores,
     miniOverallHighScore,
     miniDailySeedScores,
+    sprintBest: sanitizeSprintBest(value.sprintBest),
+    rushHighScores,
   };
 };
 
@@ -119,6 +148,52 @@ export const buildUpdatedScoreRecords = (
   }
 
   return nextRecords;
+};
+
+export const buildUpdatedSprintScoreRecords = (
+  existingRecords,
+  { finalScore, turnCount, durationSeconds } = {}
+) => {
+  const records = sanitizeScoreRecords(existingRecords);
+  const candidate =
+    typeof finalScore === "number" &&
+    typeof turnCount === "number" &&
+    typeof durationSeconds === "number"
+      ? { finalScore, turnCount, durationSeconds }
+      : null;
+  if (!candidate) return records;
+
+  const existing = records.sprintBest;
+  const shouldReplace =
+    !existing ||
+    candidate.turnCount < existing.turnCount ||
+    (candidate.turnCount === existing.turnCount &&
+      candidate.durationSeconds < existing.durationSeconds);
+
+  return {
+    ...records,
+    sprintBest: shouldReplace ? candidate : existing,
+  };
+};
+
+export const buildUpdatedRushScoreRecords = (
+  existingRecords,
+  { finalScore, durationSeconds } = {}
+) => {
+  const records = sanitizeScoreRecords(existingRecords);
+  if (typeof finalScore !== "number" || typeof durationSeconds !== "number") {
+    return records;
+  }
+
+  const key = String(durationSeconds);
+  const existing = records.rushHighScores[key];
+  return {
+    ...records,
+    rushHighScores: {
+      ...records.rushHighScores,
+      [key]: typeof existing === "number" ? Math.max(existing, finalScore) : finalScore,
+    },
+  };
 };
 
 export const getSavedDailySeeds = (records) => {

@@ -16,18 +16,35 @@ const PlaySubMenu = ({
   onBack,
   onNewGameRandom,
   onNewMiniRandom,
+  onNewSprint,
+  onNewRush,
   onNewGameWithSeed,
   onOpenCustomBoards,
 }) => {
   const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
+  const [activePanel, setActivePanel] = useState("modes");
   const [seedInput, setSeedInput] = useState("");
   const trimmedSeed = useMemo(() => seedInput.trim(), [seedInput]);
   const canPlaySeededRun = trimmedSeed.length > 0;
+
+  const closeMenu = () => {
+    setActivePanel("modes");
+    onClose?.();
+  };
+
+  const goBack = () => {
+    if (activePanel === "standard") {
+      setActivePanel("modes");
+      return;
+    }
+    onBack?.();
+  };
 
   const handlePlaySeededRun = () => {
     if (!canPlaySeededRun) return;
     onNewGameWithSeed?.(trimmedSeed);
     setSeedInput("");
+    setActivePanel("modes");
   };
 
   return (
@@ -35,9 +52,9 @@ const PlaySubMenu = ({
       visible={visible}
       transparent
       animationType="fade"
-      onRequestClose={onClose}
+      onRequestClose={closeMenu}
     >
-      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
+      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeMenu}>
         <View
           style={[
             styles.modal,
@@ -51,109 +68,175 @@ const PlaySubMenu = ({
           <Text style={[styles.eyebrow, { color: theme.eyebrow }]}>
             Friends With Words
           </Text>
-          <Text style={[styles.title, { color: theme.title }]}>More Modes</Text>
+          <Text style={[styles.title, { color: theme.title }]}>
+            {activePanel === "standard" ? "New Game" : "More Modes"}
+          </Text>
 
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={onNewGameRandom}
-          >
-            <View style={styles.buttonRow}>
-              <Text style={styles.primaryButtonText}>New Game</Text>
-              <Text style={styles.primaryButtonScore}>Random seed</Text>
-            </View>
-          </TouchableOpacity>
+          {activePanel === "standard" ? (
+            <>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={onNewGameRandom}
+              >
+                <View style={styles.buttonRow}>
+                  <Text style={styles.primaryButtonText}>New Classic</Text>
+                  <Text style={styles.primaryButtonScore}>Random seed</Text>
+                </View>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.secondaryButton,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.surfaceBorder,
-              },
-              styles.dailyMiniHighlight,
-            ]}
-            onPress={onNewMiniRandom}
-          >
-            <View style={styles.buttonRow}>
-              <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-                New Mini
-              </Text>
-              <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
-                Random seed
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          <View
-            style={[
-              styles.seedCard,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.surfaceBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-              Seeded Classic
-            </Text>
-            <View style={styles.seedRow}>
-              <TextInput
-                style={[
-                  styles.seedInput,
-                  {
-                    borderColor: theme.inputBorder,
-                    color: theme.title,
-                    backgroundColor: theme.inputBackground,
-                  },
-                ]}
-                value={seedInput}
-                onChangeText={setSeedInput}
-                placeholder="000000"
-                placeholderTextColor={theme.inputPlaceholder}
-                keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="go"
-                onSubmitEditing={handlePlaySeededRun}
-              />
               <TouchableOpacity
                 style={[
-                  styles.playButton,
-                  !canPlaySeededRun ? styles.playButtonDisabled : null,
+                  styles.secondaryButton,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                  styles.dailyMiniHighlight,
                 ]}
-                onPress={handlePlaySeededRun}
-                disabled={!canPlaySeededRun}
+                onPress={onNewMiniRandom}
               >
-                <Text style={styles.playButtonText}>Play</Text>
+                <View style={styles.buttonRow}>
+                  <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                    New Mini
+                  </Text>
+                  <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
+                    Random seed
+                  </Text>
+                </View>
               </TouchableOpacity>
-            </View>
-          </View>
 
-          <TouchableOpacity
-            style={[
-              styles.secondaryButton,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.surfaceBorder,
-              },
-            ]}
-            onPress={onOpenCustomBoards}
-          >
-            <View style={styles.buttonRow}>
-              <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-                Custom Boards
-              </Text>
-              <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
-                Browse boards
-              </Text>
-            </View>
-          </TouchableOpacity>
+              <View
+                style={[
+                  styles.seedCard,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                  Seeded Classic
+                </Text>
+                <View style={styles.seedRow}>
+                  <TextInput
+                    style={[
+                      styles.seedInput,
+                      {
+                        borderColor: theme.inputBorder,
+                        color: theme.title,
+                        backgroundColor: theme.inputBackground,
+                      },
+                    ]}
+                    value={seedInput}
+                    onChangeText={setSeedInput}
+                    placeholder="000000"
+                    placeholderTextColor={theme.inputPlaceholder}
+                    keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="go"
+                    onSubmitEditing={handlePlaySeededRun}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.playButton,
+                      !canPlaySeededRun ? styles.playButtonDisabled : null,
+                    ]}
+                    onPress={handlePlaySeededRun}
+                    disabled={!canPlaySeededRun}
+                  >
+                    <Text style={styles.playButtonText}>Play</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={() => setActivePanel("standard")}
+              >
+                <View style={styles.buttonRow}>
+                  <Text style={styles.primaryButtonText}>New Game</Text>
+                  <Text style={styles.primaryButtonScore}>Seeded Games</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.secondaryButton,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                ]}
+                onPress={onOpenCustomBoards}
+              >
+                <View style={styles.buttonRow}>
+                  <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                    Custom Boards
+                  </Text>
+                  <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
+                    Browse boards
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.secondaryButton,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                ]}
+                onPress={onNewSprint}
+              >
+                <View style={styles.buttonRow}>
+                  <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                    Sprint Mode
+                  </Text>
+                  <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
+                    200 points
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <View
+                style={[
+                  styles.seedCard,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                  Rush Mode
+                </Text>
+                <View style={styles.rushRow}>
+                  <TouchableOpacity
+                    style={[styles.playButton, styles.rushButton]}
+                    onPress={() => onNewRush?.(300)}
+                  >
+                    <Text style={styles.playButtonText}>5 min</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.playButton, styles.rushButton]}
+                    onPress={() => onNewRush?.(600)}
+                  >
+                    <Text style={styles.playButtonText}>10 min</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </>
+          )}
 
           <View style={styles.footerRow}>
-            <TouchableOpacity style={styles.footerButton} onPress={onBack}>
+            <TouchableOpacity style={styles.footerButton} onPress={goBack}>
               <Text style={[styles.footerButtonText, { color: theme.footerText }]}>Back</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.footerButton} onPress={onClose}>
+            <TouchableOpacity style={styles.footerButton} onPress={closeMenu}>
               <Text style={[styles.footerButtonText, { color: theme.footerText }]}>Close</Text>
             </TouchableOpacity>
           </View>
@@ -281,6 +364,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
+  rushRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
   seedInput: {
     flex: 1,
     height: 42,
@@ -300,6 +387,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 14,
+  },
+  rushButton: {
+    flex: 1,
   },
   playButtonDisabled: {
     opacity: 0.5,

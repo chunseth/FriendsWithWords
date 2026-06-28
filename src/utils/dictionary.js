@@ -1,6 +1,13 @@
 import dictionaryWords from "../data/dictionaryWords.json";
 import scrabbleLoanwords from "../data/scrabbleLoanwords";
 
+const LOAD_CHUNK_SIZE = 5000;
+
+const yieldToEventLoop = () =>
+  new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+
 // Dictionary loader and validator
 const VALID_TWO_LETTER_WORDS = new Set([
   "aa",
@@ -2578,20 +2585,34 @@ class Dictionary {
     this.loaded = false;
   }
 
-  async load() {
-    if (this.loaded) return;
+  async load(onProgress) {
+    const reportProgress =
+      typeof onProgress === "function" ? onProgress : () => {};
 
-    dictionaryWords.forEach((word) => {
+    if (this.loaded) {
+      reportProgress(1);
+      return;
+    }
+
+    reportProgress(0);
+
+    for (let index = 0; index < dictionaryWords.length; index += 1) {
+      const word = dictionaryWords[index];
       if (word.length === 2 && !VALID_TWO_LETTER_WORDS.has(word)) {
-        return;
+        continue;
       }
 
       if (word.length <= 3 && INVALID_SHORT_WORDS.has(word)) {
-        return;
+        continue;
       }
 
       this.words.add(word);
-    });
+
+      if (index > 0 && index % LOAD_CHUNK_SIZE === 0) {
+        reportProgress(index / dictionaryWords.length);
+        await yieldToEventLoop();
+      }
+    }
 
     VALID_TWO_LETTER_WORDS.forEach((word) => {
       this.words.add(word);
@@ -2626,6 +2647,7 @@ class Dictionary {
     });
 
     this.loaded = true;
+    reportProgress(1);
     console.log(`Dictionary loaded: ${this.words.size} words`);
   }
 

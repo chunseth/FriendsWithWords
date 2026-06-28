@@ -6,6 +6,25 @@ const BOARD_VARIANT_SCORES_TABLE = "board_variant_scores";
 
 const normalizeModeId = (modeId) => (modeId === "mini" ? "mini" : "classic");
 
+const dedupeBestScoresByPlayer = (entries = [], limit = 5000) => {
+  const uniqueEntries = [];
+  const seenPlayerIds = new Set();
+
+  for (const entry of entries) {
+    const playerId = entry?.player_id;
+    if (!playerId || seenPlayerIds.has(playerId)) {
+      continue;
+    }
+    seenPlayerIds.add(playerId);
+    uniqueEntries.push(entry);
+    if (uniqueEntries.length >= limit) {
+      break;
+    }
+  }
+
+  return uniqueEntries;
+};
+
 export const submitBoardVariantCompletedScore = async ({
   boardVariantId,
   modeId = "classic",
@@ -166,4 +185,61 @@ export const fetchBoardVariantGlobalHighScores = async ({
   }
 
   return { ok: true, scoresByVariant };
+};
+
+export const fetchCurrentPlayerBoardVariantRank = async ({
+  boardVariantId,
+  modeId = "classic",
+} = {}) => {
+  if (!isBackendConfigured()) {
+    return { ok: false, reason: "backend_not_configured", rank: null };
+  }
+
+  if (!boardVariantId || typeof boardVariantId !== "string") {
+    return { ok: false, reason: "invalid_payload", rank: null };
+  }
+
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { ok: false, reason: "backend_not_configured", rank: null };
+  }
+
+  const sessionResult = await ensureSupabaseSession();
+  if (!sessionResult.ok) {
+    return {
+      ok: false,
+      reason: sessionResult.reason ?? "auth_failed",
+      error: sessionResult.error ?? null,
+      rank: null,
+    };
+  }
+
+  const authUserId = sessionResult.session?.user?.id;
+  if (!authUserId) {
+    return { ok: false, reason: "auth_failed", rank: null };
+  }
+
+  const { data, error } = await supabase
+    .from(BOARD_VARIANT_SCORES_TABLE)
+    .select("player_id, final_score, completed_at")
+    .eq("board_variant_id", boardVariantId)
+    .eq("mode_id", normalizeModeId(modeId))
+    .order("final_score", { ascending: false })
+    .order("completed_at", { ascending: true })
+    .limit(5000);
+
+  if (error) {
+    return { ok: false, reason: "fetch_failed", error, rank: null };
+  }
+
+  const rankedPlayers = dedupeBestScoresByPlayer(data ?? []);
+  const foundIndex = rankedPlayers.findIndex(
+    (entry) => entry?.player_id === authUserId
+  );
+
+  return {
+    ok: foundIndex >= 0,
+    reason: foundIndex >= 0 ? "rank_found" : "rank_not_found",
+    rank: foundIndex >= 0 ? foundIndex + 1 : null,
+  };
 };

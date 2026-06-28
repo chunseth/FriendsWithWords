@@ -12,6 +12,7 @@ jest.mock("../../utils/playerProfile", () => ({
 }));
 
 import {
+  fetchCurrentPlayerGlobalRank,
   fetchPlayerScoreHistory,
   fetchGlobalLeaderboard,
   fetchPlayerHighScorePosition,
@@ -274,6 +275,57 @@ describe("fetchPlayerHighScorePosition", () => {
     const result = await fetchPlayerHighScorePosition("ignored-player-id");
 
     expect(result).toEqual({ ok: true, position: 2 });
+  });
+});
+
+describe("fetchCurrentPlayerGlobalRank", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("computes global rank from each player's best score", async () => {
+    const data = [
+      {
+        player_id: "player-2",
+        final_score: 240,
+        completed_at: "2026-03-01T08:00:00.000Z",
+      },
+      {
+        player_id: "player-2",
+        final_score: 230,
+        completed_at: "2026-02-28T08:00:00.000Z",
+      },
+      {
+        player_id: "player-1",
+        final_score: 220,
+        completed_at: "2026-03-02T08:00:00.000Z",
+      },
+    ];
+    const queryBuilder = {
+      select: jest.fn(),
+      eq: jest.fn(),
+      order: jest.fn(),
+      limit: jest.fn(),
+    };
+    queryBuilder.select.mockReturnValue(queryBuilder);
+    queryBuilder.eq.mockReturnValue(queryBuilder);
+    queryBuilder.order.mockReturnValue(queryBuilder);
+    queryBuilder.limit.mockResolvedValue({ data, error: null });
+
+    getSupabaseClient.mockReturnValue({
+      from: jest.fn().mockReturnValue(queryBuilder),
+    });
+    ensureSupabaseSession.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "player-1" } },
+    });
+
+    const result = await fetchCurrentPlayerGlobalRank();
+
+    expect(result).toMatchObject({ ok: true, rank: 2 });
+    expect(queryBuilder.order).toHaveBeenNthCalledWith(1, "final_score", {
+      ascending: false,
+    });
   });
 });
 

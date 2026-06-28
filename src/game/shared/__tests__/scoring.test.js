@@ -1,7 +1,11 @@
 import {
   buildFinalScoreBreakdown,
+  buildRushScoreBreakdown,
+  buildSprintScoreBreakdown,
   calculateConsistencyBonusTotal,
   calculateTimeBonus,
+  isBetterRushResult,
+  isBetterSprintResult,
   scoreSubmittedWords,
   TIME_BONUS_PROFILE_MINI,
 } from "../scoring";
@@ -91,6 +95,71 @@ describe("buildFinalScoreBreakdown", () => {
     expect(breakdown.consistencyBonusTotal).toBe(6);
     expect(breakdown.skillBonusTotal).toBe(71);
     expect(breakdown.finalScore).toBe(170);
+  });
+
+  it("builds sprint scores without turn or rack penalties", () => {
+    const breakdown = buildSprintScoreBreakdown({
+      wordPointsTotal: 90,
+      swapPenaltyTotal: 5,
+      scrabbleBonusTotal: 20,
+      turnCount: 6,
+      rackTiles: [{ value: 9 }],
+      durationMs: 5 * 60 * 1000,
+      wordHistory: [],
+      comboBonusTotal: 0,
+      timeBonusProfile: TIME_BONUS_PROFILE_MINI,
+    });
+
+    expect(breakdown.turnPenalties).toBe(0);
+    expect(breakdown.rackPenalty).toBe(0);
+    expect(breakdown.timeBonus).toBe(0);
+    expect(breakdown.finalScore).toBe(105);
+  });
+
+  it("builds rush scores with turn and swap penalties but no rack penalty", () => {
+    const breakdown = buildRushScoreBreakdown({
+      wordPointsTotal: 100,
+      swapPenaltyTotal: 6,
+      scrabbleBonusTotal: 0,
+      turnCount: 4,
+      rackTiles: [{ value: 10 }],
+      durationMs: 5 * 60 * 1000,
+      wordHistory: [],
+      comboBonusTotal: 0,
+      timeBonusProfile: TIME_BONUS_PROFILE_MINI,
+    });
+
+    expect(breakdown.turnPenalties).toBe(8);
+    expect(breakdown.swapPenalties).toBe(6);
+    expect(breakdown.rackPenalty).toBe(0);
+    expect(breakdown.timeBonus).toBe(0);
+    expect(breakdown.finalScore).toBe(86);
+  });
+});
+
+describe("sprint and rush result comparisons", () => {
+  it("ranks sprint by fewer turns before faster duration", () => {
+    expect(
+      isBetterSprintResult(
+        { turnCount: 4, durationSeconds: 240 },
+        { turn_count: 5, duration_seconds: 100 }
+      )
+    ).toBe(true);
+    expect(
+      isBetterSprintResult(
+        { turnCount: 5, durationSeconds: 90 },
+        { turn_count: 5, duration_seconds: 100 }
+      )
+    ).toBe(true);
+  });
+
+  it("ranks rush by higher score", () => {
+    expect(isBetterRushResult({ finalScore: 80 }, { final_score: 79 })).toBe(
+      true
+    );
+    expect(isBetterRushResult({ finalScore: 80 }, { final_score: 80 })).toBe(
+      false
+    );
   });
 });
 

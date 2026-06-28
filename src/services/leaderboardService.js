@@ -360,6 +360,58 @@ export const fetchPlayerHighScorePosition = async (
   return { ok: true, position: foundIndex + 1 };
 };
 
+export const fetchCurrentPlayerGlobalRank = async (
+  scoreMode = LEADERBOARD_SCORE_MODE_SOLO
+) => {
+  if (!isBackendConfigured()) {
+    return { ok: false, reason: "backend_not_configured", rank: null };
+  }
+
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { ok: false, reason: "backend_not_configured", rank: null };
+  }
+
+  const sessionResult = await ensureSupabaseSession();
+  if (!sessionResult.ok) {
+    return {
+      ok: false,
+      reason: sessionResult.reason ?? "auth_failed",
+      error: sessionResult.error ?? null,
+      rank: null,
+    };
+  }
+
+  const authUserId = sessionResult.session?.user?.id;
+  if (!authUserId) {
+    return { ok: false, reason: "auth_failed", rank: null };
+  }
+
+  const normalizedScoreMode = normalizeScoreMode(scoreMode);
+  const { data, error } = await supabase
+    .from(SCORES_TABLE)
+    .select("player_id, final_score, completed_at")
+    .eq("score_mode", normalizedScoreMode)
+    .order("final_score", { ascending: false })
+    .order("completed_at", { ascending: true })
+    .limit(5000);
+
+  if (error) {
+    return { ok: false, reason: "fetch_failed", error, rank: null };
+  }
+
+  const rankedPlayers = dedupeBestScoresByPlayer(data ?? []);
+  const foundIndex = rankedPlayers.findIndex(
+    (entry) => entry?.player_id === authUserId
+  );
+
+  return {
+    ok: foundIndex >= 0,
+    reason: foundIndex >= 0 ? "rank_found" : "rank_not_found",
+    rank: foundIndex >= 0 ? foundIndex + 1 : null,
+  };
+};
+
 export const fetchPlayerScoreHistory = async ({ playerId, limit = 2000 } = {}) => {
   if (!isBackendConfigured()) {
     return { ok: false, reason: "backend_not_configured", scores: [] };

@@ -25,6 +25,13 @@ const LeaderboardScreen = ({
   globalLeaderboardLoading,
   globalLeaderboardError,
   globalMode = "classic",
+  sprintLeaderboardEntries = [],
+  sprintLeaderboardLoading = false,
+  sprintLeaderboardError = null,
+  rushLeaderboardEntries = [],
+  rushLeaderboardLoading = false,
+  rushLeaderboardError = null,
+  rushDurationSeconds = 300,
   multiplayerLeaderboardEntries,
   multiplayerLeaderboardLoading,
   multiplayerLeaderboardError,
@@ -39,6 +46,7 @@ const LeaderboardScreen = ({
   onPreviousDailySeed,
   onNextDailySeed,
   onGlobalModeChange,
+  onRushDurationChange,
   onDailyModeChange,
   isDarkMode = false,
   onBack,
@@ -61,6 +69,13 @@ const LeaderboardScreen = ({
     detailsEntry?.sectionLabel === "High Scores" &&
     globalMode === "classic" &&
     isValidCompletedBoardTilesPayload(detailsBoardPayload);
+
+  const getEntryScoreDisplay = (entry, sectionLabel) => {
+    if (sectionLabel === "Sprint Mode") {
+      return `${entry.turn_count ?? "-"} turns`;
+    }
+    return entry.final_score ?? entry.sprint_score ?? "-";
+  };
 
   const formatDailySeed = (seed) => {
     if (!seed || seed.length !== 8) {
@@ -278,6 +293,60 @@ const LeaderboardScreen = ({
           </Text>
         </TouchableOpacity>
       </View>
+      <View style={styles.pageTabsSecondary}>
+        <TouchableOpacity
+          style={[
+            styles.pageTab,
+            {
+              backgroundColor: theme.tabBackground,
+              borderColor: theme.tabBorder,
+            },
+            activePage === "rush" && styles.pageTabActive,
+            activePage === "rush" && {
+              backgroundColor: theme.tabActiveBackground,
+              borderColor: theme.tabActiveBorder,
+            },
+          ]}
+          onPress={() => setActivePage("rush")}
+        >
+          <Text
+            style={[
+              styles.pageTabText,
+              { color: theme.tabText },
+              activePage === "rush" && styles.pageTabTextActive,
+              activePage === "rush" && { color: theme.tabTextActive },
+            ]}
+          >
+            Rush Mode
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.pageTab,
+            {
+              backgroundColor: theme.tabBackground,
+              borderColor: theme.tabBorder,
+            },
+            activePage === "sprint" && styles.pageTabActive,
+            activePage === "sprint" && {
+              backgroundColor: theme.tabActiveBackground,
+              borderColor: theme.tabActiveBorder,
+            },
+          ]}
+          onPress={() => setActivePage("sprint")}
+        >
+          <Text
+            style={[
+              styles.pageTabText,
+              { color: theme.tabText },
+              activePage === "sprint" && styles.pageTabTextActive,
+              activePage === "sprint" && { color: theme.tabTextActive },
+            ]}
+          >
+            Sprint Mode
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       <ScrollView
         style={styles.list}
@@ -393,7 +462,174 @@ const LeaderboardScreen = ({
                           </Text>
                         </View>
                         <Text style={[styles.score, { color: theme.score }]}>
-                          {entry.final_score}
+                          {getEntryScoreDisplay(entry, "High Scores")}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        ) : activePage === "sprint" ? (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: theme.sectionTitle }]}>
+              Sprint Mode
+            </Text>
+            <Text style={[styles.sectionSubtitle, { color: theme.sectionSubtitle }]}>
+              Fewest turns to reach 200 points.
+            </Text>
+
+            {!backendConfigured ? (
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                Add Supabase env values to load sprint leaderboard scores.
+              </Text>
+            ) : sprintLeaderboardLoading ? (
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                Loading sprint leaderboard...
+              </Text>
+            ) : sprintLeaderboardError ? (
+              <Text style={styles.errorText}>{sprintLeaderboardError}</Text>
+            ) : sprintLeaderboardEntries.length === 0 ? (
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                No sprint scores have been submitted yet.
+              </Text>
+            ) : (
+              sprintLeaderboardEntries.map((entry, index) => {
+                const entryKey = `${entry.display_name}-${entry.completed_at}-${index}`;
+
+                return (
+                  <View key={entryKey} style={styles.rowWrapper}>
+                    <TouchableOpacity
+                      style={styles.rowTouchable}
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        openEntryDetails(entry, index + 1, "Sprint Mode")
+                      }
+                    >
+                      <View
+                        style={[
+                          styles.row,
+                          {
+                            backgroundColor: theme.rowBackground,
+                            borderColor: theme.rowBorder,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.rank, { color: theme.rank }]}>
+                          {index + 1}
+                        </Text>
+                        <View style={styles.meta}>
+                          <Text style={[styles.name, { color: theme.name }]}>
+                            {entry.display_name}
+                          </Text>
+                          <Text style={[styles.date, { color: theme.date }]}>
+                            {entry.completed_at
+                              ? new Date(entry.completed_at).toLocaleDateString()
+                              : ""}
+                          </Text>
+                        </View>
+                        <Text style={[styles.score, { color: theme.score }]}>
+                          {getEntryScoreDisplay(entry, "Sprint Mode")}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        ) : activePage === "rush" ? (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: theme.sectionTitle }]}>
+              Rush Mode
+            </Text>
+            <Text style={[styles.sectionSubtitle, { color: theme.sectionSubtitle }]}>
+              Highest scores in {rushDurationSeconds / 60} minutes.
+            </Text>
+            <View style={styles.dailyModeTabs}>
+              {[300, 600].map((duration) => (
+                <TouchableOpacity
+                  key={duration}
+                  style={[
+                    styles.dailyModeTab,
+                    {
+                      backgroundColor: theme.tabBackground,
+                      borderColor: theme.tabBorder,
+                    },
+                    rushDurationSeconds === duration && {
+                      backgroundColor: theme.tabActiveBackground,
+                      borderColor: theme.tabActiveBorder,
+                    },
+                  ]}
+                  onPress={() => onRushDurationChange?.(duration)}
+                >
+                  <Text
+                    style={[
+                      styles.dailyModeTabText,
+                      { color: theme.tabText },
+                      rushDurationSeconds === duration && {
+                        color: theme.tabTextActive,
+                      },
+                    ]}
+                  >
+                    {duration / 60} min
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {!backendConfigured ? (
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                Add Supabase env values to load rush leaderboard scores.
+              </Text>
+            ) : rushLeaderboardLoading ? (
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                Loading rush leaderboard...
+              </Text>
+            ) : rushLeaderboardError ? (
+              <Text style={styles.errorText}>{rushLeaderboardError}</Text>
+            ) : rushLeaderboardEntries.length === 0 ? (
+              <Text style={[styles.stateText, { color: theme.stateText }]}>
+                No rush scores have been submitted yet.
+              </Text>
+            ) : (
+              rushLeaderboardEntries.map((entry, index) => {
+                const entryKey = `${entry.display_name}-${entry.completed_at}-${index}`;
+
+                return (
+                  <View key={entryKey} style={styles.rowWrapper}>
+                    <TouchableOpacity
+                      style={styles.rowTouchable}
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        openEntryDetails(entry, index + 1, "Rush Mode")
+                      }
+                    >
+                      <View
+                        style={[
+                          styles.row,
+                          {
+                            backgroundColor: theme.rowBackground,
+                            borderColor: theme.rowBorder,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.rank, { color: theme.rank }]}>
+                          {index + 1}
+                        </Text>
+                        <View style={styles.meta}>
+                          <Text style={[styles.name, { color: theme.name }]}>
+                            {entry.display_name}
+                          </Text>
+                          <Text style={[styles.date, { color: theme.date }]}>
+                            {entry.completed_at
+                              ? new Date(entry.completed_at).toLocaleDateString()
+                              : ""}
+                          </Text>
+                        </View>
+                        <Text style={[styles.score, { color: theme.score }]}>
+                          {getEntryScoreDisplay(entry, "Rush Mode")}
                         </Text>
                       </View>
                     </TouchableOpacity>
@@ -689,7 +925,9 @@ const LeaderboardScreen = ({
               </View>
             <View style={styles.detailsRow}>
               <Text style={[styles.detailsScore, { color: theme.detailsScore }]}>
-                {detailsEntry.entry.final_score}
+                {detailsEntry.entry.final_score ??
+                  detailsEntry.entry.sprint_score ??
+                  "-"}
               </Text>
               {typeof getEntryDurationSeconds(detailsEntry.entry) === "number" &&
                 getEntryDurationSeconds(detailsEntry.entry) > 0 && (
@@ -727,6 +965,8 @@ const LeaderboardScreen = ({
               <Text style={[styles.detailsValue, { color: theme.detailsValue }]}>
                 {typeof detailsEntry.entry.turn_penalties === "number"
                   ? detailsEntry.entry.turn_penalties / 2
+                  : typeof detailsEntry.entry.turn_count === "number"
+                    ? detailsEntry.entry.turn_count
                   : "-"}
               </Text>
             </View>
@@ -1094,6 +1334,11 @@ const styles = StyleSheet.create({
   },
   pageTabs: {
     marginTop: 18,
+    flexDirection: "row",
+    gap: 10,
+  },
+  pageTabsSecondary: {
+    marginTop: 8,
     flexDirection: "row",
     gap: 10,
   },

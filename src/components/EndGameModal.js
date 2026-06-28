@@ -15,7 +15,16 @@ const LINE_ADVANCE_DELAY = 180;
 const FINAL_SCORE_REVEAL_DELAY = 180;
 const PULSE_DURATION = 230;
 const TITLE_START_DELAY = 180;
-const EndGameModal = ({ visible, summary, onClose }) => {
+const EndGameModal = ({
+  visible,
+  summary,
+  onClose,
+  onPlayAgain,
+  playAgainLabel = "Play Again",
+  globalRankStatus = "idle",
+  globalRank = null,
+  globalRankError = null,
+}) => {
   const [typedRows, setTypedRows] = useState([]);
   const [typedFinalScoreLabel, setTypedFinalScoreLabel] = useState("");
   const [showFinalScoreValue, setShowFinalScoreValue] = useState(false);
@@ -37,31 +46,49 @@ const EndGameModal = ({ visible, summary, onClose }) => {
           text: `${summary.pointsEarned}`,
         },
       },
-      {
+    ];
+
+    if ((summary.swapPenalties ?? 0) > 0) {
+      nextRows.push({
         operator: "-",
         label: "Swap penalties",
         value: {
           type: "static",
           text: `- ${summary.swapPenalties}`,
         },
-      },
-      {
+      });
+    }
+
+    if ((summary.turnPenalties ?? 0) > 0) {
+      nextRows.push({
         operator: "-",
         label: "Turns played",
         value: {
           type: "static",
           text: `- ${summary.turnPenalties / 2} x 2.0`,
         },
-      },
-      {
+      });
+    } else if (typeof summary.turnCount === "number") {
+      nextRows.push({
+        operator: "",
+        label: "Turns played",
+        value: {
+          type: "static",
+          text: `${summary.turnCount}`,
+        },
+      });
+    }
+
+    if ((summary.rackPenalty ?? 0) > 0) {
+      nextRows.push({
         operator: "-",
         label: "Rack penalty",
         value: {
           type: "static",
           text: `- ${summary.rackPenalty}`,
         },
-      },
-    ];
+      });
+    }
 
     if (summary.scrabbleBonus > 0) {
       nextRows.push({
@@ -283,29 +310,51 @@ const EndGameModal = ({ visible, summary, onClose }) => {
         )}
 
         {showHighScoreText && (
-          <Text style={styles.highScoreText}>New high score!</Text>
+          <View style={styles.highScoreBlock}>
+            <Text style={styles.highScoreText}>New high score!</Text>
+            {globalRankStatus === "loading" ? (
+              <Text style={styles.rankText}>Checking global rank...</Text>
+            ) : globalRankStatus === "success" && typeof globalRank === "number" ? (
+              <Text style={styles.rankText}>Global rank #{globalRank}</Text>
+            ) : globalRankStatus === "error" ? (
+              <Text style={styles.rankErrorText}>
+                {globalRankError ?? "Unable to load global rank"}
+              </Text>
+            ) : null}
+          </View>
         )}
 
         {showMinimizeButton && (
-          <TouchableOpacity
-            style={styles.minimizeButton}
-            onPress={onClose}
-            accessibilityLabel="Minimize final score"
-            activeOpacity={0.8}
-            hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
-          >
-            {Platform.OS === "ios" ? (
-              <SFSymbolIcon
-                name="xmark.circle"
-                size={28}
-                color="#7f8c8d"
-                weight="regular"
-                scale="medium"
-              />
-            ) : (
-              <Text style={styles.minimizeFallback}>X</Text>
-            )}
-          </TouchableOpacity>
+          <>
+            {onPlayAgain ? (
+              <TouchableOpacity
+                style={styles.playAgainButton}
+                onPress={onPlayAgain}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.playAgainButtonText}>{playAgainLabel}</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={styles.minimizeButton}
+              onPress={onClose}
+              accessibilityLabel="Minimize final score"
+              activeOpacity={0.8}
+              hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
+            >
+              {Platform.OS === "ios" ? (
+                <SFSymbolIcon
+                  name="xmark.circle"
+                  size={28}
+                  color="#7f8c8d"
+                  weight="regular"
+                  scale="medium"
+                />
+              ) : (
+                <Text style={styles.minimizeFallback}>X</Text>
+              )}
+            </TouchableOpacity>
+          </>
         )}
       </View>
     </View>
@@ -400,11 +449,40 @@ const styles = StyleSheet.create({
     color: "#2c3e50",
   },
   highScoreText: {
-    marginTop: 14,
     textAlign: "center",
     fontSize: 18,
     fontWeight: "800",
     color: "#d97706",
+  },
+  highScoreBlock: {
+    marginTop: 14,
+    alignItems: "center",
+    gap: 4,
+  },
+  rankText: {
+    textAlign: "center",
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#2f6f4f",
+  },
+  rankErrorText: {
+    textAlign: "center",
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#9a6b2f",
+  },
+  playAgainButton: {
+    marginTop: 18,
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 18,
+    backgroundColor: "#2f6f4f",
+    alignItems: "center",
+  },
+  playAgainButtonText: {
+    color: "#fff",
+    fontSize: 17,
+    fontWeight: "900",
   },
   minimizeButton: {
     position: "absolute",

@@ -11,6 +11,9 @@ const InGameMenu = ({
   onToggleMusic,
   onClose,
   onOpenPlayMenu,
+  showRushQuickStart = false,
+  onNewRush5,
+  onNewRush10,
   onReturnToMultiplayerMenu,
   onReturnToMainMenu,
   onArchiveGame,
@@ -53,6 +56,36 @@ const InGameMenu = ({
                   : "Play Menu"}
               </Text>
             </TouchableOpacity>
+          ) : null}
+
+          {showRushQuickStart ? (
+            <View
+              style={[
+                styles.rushModeCard,
+                {
+                  backgroundColor: theme.surface,
+                  borderColor: theme.surfaceBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                Rush Mode
+              </Text>
+              <View style={styles.rushRow}>
+                <TouchableOpacity
+                  style={[styles.playButton, styles.rushButton]}
+                  onPress={onNewRush5}
+                >
+                  <Text style={styles.playButtonText}>5 min</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.playButton, styles.rushButton]}
+                  onPress={onNewRush10}
+                >
+                  <Text style={styles.playButtonText}>10 min</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           ) : null}
 
           <TouchableOpacity
@@ -212,6 +245,36 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 16,
+  },
+  rushModeCard: {
+    marginTop: 12,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    gap: 10,
+  },
+  rushRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  playButton: {
+    height: 42,
+    minWidth: 80,
+    borderRadius: 12,
+    backgroundColor: "#c77a2a",
+    borderColor: "#9a5a1a",
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  rushButton: {
+    flex: 1,
+  },
+  playButtonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "800",
   },
   primaryButtonText: {
     color: "#fff",

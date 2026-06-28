@@ -1,6 +1,6 @@
 {
   "name": "words-with-real-friends",
-  "version": "2",
+  "version": "2.1",
   "main": "index.js",
   "scripts": {
     "android": "react-native run-android",
@@ -21,7 +21,7 @@
     "dev:board-player:android:oneshot": "node scripts/run-board-player.js android",
     "check:android-prereqs": "node scripts/check-android-prereqs.js",
     "lint": "eslint .",
-    "postinstall": "node scripts/patch-gesture-handler.js && node scripts/patch-reanimated.js"
+    "postinstall": "node scripts/patch-gesture-handler.js && node scripts/patch-reanimated.js && node scripts/patch-metro-xcode-release-watch.js"
   },
   "dependencies": {
     "@notifee/react-native": "^9.1.8",

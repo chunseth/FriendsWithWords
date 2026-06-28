@@ -7,9 +7,23 @@ const GameInfo = ({
   tilesRemaining,
   overallHighScore,
   pendingTurnFlavor,
+  sprintRushMode = "standard",
+  sprintTargetScore = 200,
+  currentScore = 0,
+  rushRemainingSeconds = null,
+  rushDurationSeconds = null,
+  gameOver = false,
   isDarkMode = false,
 }) => {
   const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
+
+  const formatClock = (seconds) => {
+    if (typeof seconds !== "number") return "--:--";
+    const clamped = Math.max(0, seconds);
+    const minutes = Math.floor(clamped / 60);
+    const remainder = clamped % 60;
+    return `${minutes}:${String(remainder).padStart(2, "0")}`;
+  };
 
   const renderMetricValue = (label, total, flavorValue) => {
     const pendingValue =
@@ -48,6 +62,52 @@ const GameInfo = ({
     );
   };
 
+  if (sprintRushMode === "sprint") {
+    return (
+      <View style={styles.container}>
+        <View style={styles.row}>
+          <Metric label="Mode" value="Sprint" theme={theme} />
+          <Metric
+            label="Target"
+            value={`${Math.max(0, currentScore)}/${sprintTargetScore}`}
+            theme={theme}
+          />
+          <Metric
+            label="Turn"
+            value={gameOver ? turnCount : turnCount + 1}
+            theme={theme}
+          />
+          <Metric label="Best" value={overallHighScore ?? "-"} theme={theme} />
+        </View>
+      </View>
+    );
+  }
+
+  if (sprintRushMode === "rush") {
+    return (
+      <View style={styles.container}>
+        <View style={styles.row}>
+          <Metric
+            label="Rush"
+            value={formatClock(rushRemainingSeconds)}
+            theme={theme}
+          />
+          <Metric
+            label="Limit"
+            value={
+              typeof rushDurationSeconds === "number"
+                ? `${rushDurationSeconds / 60}m`
+                : "-"
+            }
+            theme={theme}
+          />
+          <Metric label="Turn" value={turnCount} theme={theme} />
+          {renderTilesValue()}
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.row}>
@@ -68,6 +128,21 @@ const GameInfo = ({
     </View>
   );
 };
+
+const Metric = ({ label, value, theme }) => (
+  <View style={[styles.infoItem, { backgroundColor: theme.infoBackground }]}>
+    <Text style={[styles.label, { color: theme.label }]}>{label}</Text>
+    <View style={styles.valueContainer}>
+      <Text
+        style={[styles.value, { color: theme.valueColor }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
+        {value}
+      </Text>
+    </View>
+  </View>
+);
 
 const LIGHT_THEME = {
   infoBackground: "#ffffff",

@@ -27,16 +27,25 @@ describe("dictionary validation", () => {
   it("accepts Scrabble-valid borrowed words missing from the base list", () => {
     [
       "banhmi",
+      "beorn",
       "chutzpah",
+      "clept",
+      "doth",
       "emoji",
       "hijab",
       "jalapeno",
       "kimchi",
+      "mickle",
       "naan",
+      "nerdy",
       "qapiks",
       "sashimi",
       "sheqel",
       "tandoori",
+      "wey",
+      "wis",
+      "wynn",
+      "yclept",
       "yarmulke",
     ].forEach((word) => {
       expect(dictionary.isValid(word)).toBe(true);

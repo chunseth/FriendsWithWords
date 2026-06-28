@@ -172,10 +172,17 @@ export const buildFinalScoreBreakdown = ({
   wordHistory = [],
   comboBonusTotal = null,
   timeBonusProfile = TIME_BONUS_PROFILE_CLASSIC,
+  includeTurnPenalty = true,
+  includeRackPenalty = true,
+  includeTimeBonus = true,
 }) => {
-  const turnPenalties = turnCount * 2;
-  const rackPenalty = rackTiles.reduce((sum, tile) => sum + (tile?.value ?? 0), 0);
-  const timeBonus = calculateTimeBonus(durationMs, timeBonusProfile);
+  const turnPenalties = includeTurnPenalty ? turnCount * 2 : 0;
+  const rackPenalty = includeRackPenalty
+    ? rackTiles.reduce((sum, tile) => sum + (tile?.value ?? 0), 0)
+    : 0;
+  const timeBonus = includeTimeBonus
+    ? calculateTimeBonus(durationMs, timeBonusProfile)
+    : 0;
   const consistencyBonusTotal =
     typeof comboBonusTotal === "number"
       ? comboBonusTotal
@@ -206,4 +213,49 @@ export const buildFinalScoreBreakdown = ({
     skillBonusTotal,
     finalScore,
   };
+};
+
+export const SPRINT_TARGET_SCORE = 200;
+
+export const buildSprintScoreBreakdown = (options) =>
+  buildFinalScoreBreakdown({
+    ...options,
+    includeTurnPenalty: false,
+    includeRackPenalty: false,
+    includeTimeBonus: false,
+  });
+
+export const buildRushScoreBreakdown = (options) =>
+  buildFinalScoreBreakdown({
+    ...options,
+    includeTurnPenalty: true,
+    includeRackPenalty: false,
+    includeTimeBonus: false,
+  });
+
+export const compareSprintResults = (left, right) => {
+  const leftTurns = left?.turnCount ?? left?.turn_count;
+  const rightTurns = right?.turnCount ?? right?.turn_count;
+  if (leftTurns !== rightTurns) {
+    return leftTurns < rightTurns ? -1 : 1;
+  }
+
+  const leftDuration = left?.durationSeconds ?? left?.duration_seconds;
+  const rightDuration = right?.durationSeconds ?? right?.duration_seconds;
+  if (leftDuration !== rightDuration) {
+    return leftDuration < rightDuration ? -1 : 1;
+  }
+
+  return 0;
+};
+
+export const isBetterSprintResult = (candidate, existing) => {
+  if (!existing) return true;
+  return compareSprintResults(candidate, existing) < 0;
+};
+
+export const isBetterRushResult = (candidate, existing) => {
+  if (!existing) return true;
+  return (candidate?.finalScore ?? candidate?.final_score ?? -Infinity) >
+    (existing?.finalScore ?? existing?.final_score ?? -Infinity);
 };
