@@ -53,6 +53,29 @@ Then fill values in:
 - `.env` for app runtime (`SUPABASE_URL`, `SUPABASE_ANON_KEY`)
 - `supabase/functions/.env` for edge functions (service role key, FCM/APNs, rollout flags)
 
+### Broadcast a Push Notification
+
+Deploy `broadcast-push` and apply `supabase/migrate_broadcast_push_recipients.sql`.
+Call it with the service role key only. It defaults to `dry_run: true`.
+
+```bash
+curl "$SUPABASE_URL/functions/v1/broadcast-push" \
+  -H "Content-Type: application/json" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -d '{
+    "title": "Words With Real Friends",
+    "body": "Your message here.",
+    "data": { "route": "multiplayer-menu" },
+    "limit": 100,
+    "offset": 0,
+    "dry_run": true
+  }'
+```
+
+Set `"dry_run": false` to send. If the response includes `next_offset`, call again
+with that offset to continue the broadcast.
+
 ### 1. Install Dependencies
 
 ```bash

@@ -1,6 +1,10 @@
 import React from "react";
 import renderer, { act } from "react-test-renderer";
-import { useGame } from "../useGame";
+import {
+  SPRINT_RUSH_MODE_RUSH,
+  SPRINT_RUSH_MODE_SPRINT,
+  useGame,
+} from "../useGame";
 
 const mockIsValid = jest.fn(() => false);
 
@@ -86,5 +90,51 @@ describe("useGame skill-state snapshot fields", () => {
     expect(resumedSnapshot.gameStartedAtMs).toBe(snapshot.gameStartedAtMs);
     expect(resumedSnapshot.currentConsistencyStreak).toBe(0);
     expect(resumedSnapshot.consistencyBonusTotal).toBe(0);
+  });
+
+  it("allows rush games to use the classic board and full tile bag", () => {
+    let game;
+    renderer.create(<HookHarness onValue={(next) => (game = next)} />);
+
+    act(() => {
+      game.startNewGame("classic-rush-seed", {
+        mode: "classic",
+        sprintRushMode: SPRINT_RUSH_MODE_RUSH,
+        rushDurationSeconds: 600,
+      });
+    });
+
+    expect(game.BOARD_SIZE).toBe(15);
+    expect(game.board).toHaveLength(15);
+    expect(game.board[0]).toHaveLength(15);
+    expect(game.tilesRemaining).toBe(93);
+    expect(game.boardVariant.mode).toBe("classic");
+
+    act(() => {
+      game.startNewGame("mini-rush-seed", {
+        mode: "mini",
+        sprintRushMode: SPRINT_RUSH_MODE_RUSH,
+        rushDurationSeconds: 300,
+      });
+    });
+
+    expect(game.BOARD_SIZE).toBe(11);
+    expect(game.tilesRemaining).toBe(41);
+    expect(game.boardVariant.mode).toBe("mini");
+  });
+
+  it("keeps sprint on the mini board", () => {
+    let game;
+    renderer.create(<HookHarness onValue={(next) => (game = next)} />);
+
+    act(() => {
+      game.startNewGame("classic-sprint-seed", {
+        mode: "classic",
+        sprintRushMode: SPRINT_RUSH_MODE_SPRINT,
+      });
+    });
+
+    expect(game.BOARD_SIZE).toBe(11);
+    expect(game.boardVariant.mode).toBe("mini");
   });
 });

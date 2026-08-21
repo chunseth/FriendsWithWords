@@ -294,9 +294,9 @@ export const useGame = () => {
     (seed = null, options = {}) => {
       const nextSprintRushMode = normalizeSprintRushMode(options.sprintRushMode);
       const mode =
-        nextSprintRushMode === SPRINT_RUSH_MODE_NONE
-          ? normalizeGameMode(options.mode)
-          : GAME_MODE_MINI;
+        nextSprintRushMode === SPRINT_RUSH_MODE_SPRINT
+          ? GAME_MODE_MINI
+          : normalizeGameMode(options.mode);
       const inputVariant = sanitizeBoardVariant(options.boardVariant, mode);
       const resolvedBoardSize = inputVariant.boardSize;
       const resolvedPremiumSquares =

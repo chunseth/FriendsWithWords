@@ -1,4 +1,5 @@
 import dictionaryWords from "../../data/dictionaryWords.json";
+import { INVALID_DICTIONARY_WORDS } from "../../data/invalidDictionaryWords";
 import scrabbleLoanwords from "../../data/scrabbleLoanwords";
 
 const TWO_LETTER_WORDS = new Set([
@@ -37,6 +38,7 @@ export const buildLexicon = (rawWords = []) => {
     const word = normalizeWord(entry);
     if (!word || word.length < 2) return;
     if (!/^[a-z]+$/.test(word)) return;
+    if (INVALID_DICTIONARY_WORDS.has(word)) return;
     if (word.length === 2 && !TWO_LETTER_WORDS.has(word)) return;
     if (word.length <= 3 && INVALID_SHORT_WORDS.has(word)) return;
     words.add(word);

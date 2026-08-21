@@ -125,7 +125,7 @@ function enforceDirectionLockedZoom(nextZoom, currentZoom, direction) {
     return nextZoom;
 }
 
-const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, optimisticPlacement, dragSourceCell, settlingBoardTile = null, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false, allowEmptyCellPress = false, submitScorePreview = null, submitScorePreviewIsValid = false, submitScorePreviewCell = null, isDarkMode = false }) => {
+const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SIZE, boardLayoutRef, boardCaptureRef = null, optimisticPlacement, dragSourceCell, settlingBoardTile = null, onBoardTilePickup, onBoardDragUpdate, onBoardTileDrop, getDraggableTileCell, onBoardTap, disableOverlayInteractions = false, allowEmptyCellPress = false, submitScorePreview = null, submitScorePreviewIsValid = false, submitScorePreviewCell = null, isDarkMode = false }) => {
     const boardViewRef = useRef(null);
     const zoomWrapperRef = useRef(null);
     const [zoom, setZoom] = useState(1);
@@ -640,9 +640,18 @@ const GameBoard = ({ board, selectedCells, premiumSquares, onCellClick, BOARD_SI
         if (!submitScorePreviewCell) return null;
         return `${submitScorePreviewCell.row},${submitScorePreviewCell.col}`;
     }, [submitScorePreviewCell]);
+    const setBoardRefs = useCallback((node) => {
+        boardViewRef.current = node;
+        if (!boardCaptureRef) return;
+        if (typeof boardCaptureRef === 'function') {
+            boardCaptureRef(node);
+        } else {
+            boardCaptureRef.current = node;
+        }
+    }, [boardCaptureRef]);
     return (
         <View
-            ref={boardViewRef}
+            ref={setBoardRefs}
             style={[
                 styles.board,
                 isDarkMode ? styles.boardDark : null,

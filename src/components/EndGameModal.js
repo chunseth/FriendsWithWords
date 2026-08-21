@@ -20,6 +20,8 @@ const EndGameModal = ({
   summary,
   onClose,
   onPlayAgain,
+  onShareScore,
+  shareInProgress = false,
   playAgainLabel = "Play Again",
   globalRankStatus = "idle",
   globalRank = null,
@@ -326,6 +328,32 @@ const EndGameModal = ({
 
         {showMinimizeButton && (
           <>
+            {onShareScore ? (
+              <TouchableOpacity
+                style={[
+                  styles.shareButton,
+                  shareInProgress ? styles.shareButtonDisabled : null,
+                ]}
+                onPress={shareInProgress ? undefined : onShareScore}
+                disabled={shareInProgress}
+                accessibilityLabel="Share final score"
+                activeOpacity={0.85}
+              >
+                {Platform.OS === "ios" ? (
+                  <SFSymbolIcon
+                    name="square.and.arrow.up"
+                    size={20}
+                    color="#fff"
+                    weight="semibold"
+                    scale="medium"
+                    style={styles.shareIcon}
+                  />
+                ) : null}
+                <Text style={styles.shareButtonText}>
+                  {shareInProgress ? "Sharing..." : "Share"}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             {onPlayAgain ? (
               <TouchableOpacity
                 style={styles.playAgainButton}
@@ -471,8 +499,31 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#9a6b2f",
   },
-  playAgainButton: {
+  shareButton: {
     marginTop: 18,
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 18,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  shareButtonDisabled: {
+    opacity: 0.65,
+  },
+  shareIcon: {
+    width: 22,
+    height: 22,
+  },
+  shareButtonText: {
+    color: "#fff",
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  playAgainButton: {
+    marginTop: 10,
     borderRadius: 14,
     paddingVertical: 13,
     paddingHorizontal: 18,

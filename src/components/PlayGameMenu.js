@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Modal,
   StyleSheet,
@@ -21,9 +21,23 @@ const PlayGameMenu = ({
   onMoreOptions,
 }) => {
   const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
+  const [activePanel, setActivePanel] = useState("main");
+
   const handleBackdropPress = () => {
+    setActivePanel("main");
     onClose?.();
   };
+
+  const closeMenu = () => {
+    setActivePanel("main");
+    onClose?.();
+  };
+
+  useEffect(() => {
+    if (!visible) {
+      setActivePanel("main");
+    }
+  }, [visible]);
 
   return (
     <Modal
@@ -32,11 +46,7 @@ const PlayGameMenu = ({
       animationType="fade"
       onRequestClose={handleBackdropPress}
     >
-      <TouchableOpacity
-        style={styles.backdrop}
-        activeOpacity={1}
-        onPress={handleBackdropPress}
-      >
+      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={handleBackdropPress}>
         <View
           style={[
             styles.modal,
@@ -50,84 +60,118 @@ const PlayGameMenu = ({
           <Text style={[styles.eyebrow, { color: theme.eyebrow }]}>
             Friends With Words
           </Text>
-          <Text style={[styles.title, { color: theme.title }]}>Play Game</Text>
+          <Text style={[styles.title, { color: theme.title }]}>
+            {activePanel === "daily" ? "Daily Games" : "Play Game"}
+          </Text>
 
-          <TouchableOpacity style={styles.primaryButton} onPress={onDailyGame}>
-            <View style={styles.buttonRow}>
-              <Text style={styles.primaryButtonText}>Daily Game</Text>
-              {dailyHighScore != null ? (
-                <Text style={styles.primaryButtonScore}>{dailyHighScore}</Text>
-              ) : null}
-            </View>
-          </TouchableOpacity>
+          {activePanel === "daily" ? (
+            <>
+              <TouchableOpacity style={styles.primaryButton} onPress={onDailyGame}>
+                <View style={styles.buttonRow}>
+                  <Text style={styles.primaryButtonText}>Daily Classic</Text>
+                  {dailyHighScore != null ? (
+                    <Text style={styles.primaryButtonScore}>{dailyHighScore}</Text>
+                  ) : null}
+                </View>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.secondaryButton,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.surfaceBorder,
-              },
-              styles.dailyMiniHighlight,
-            ]}
-            onPress={onDailyMiniGame}
-          >
-            <View style={styles.buttonRow}>
-              <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-                Daily Mini
-              </Text>
-              {dailyMiniHighScore != null ? (
-                <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
-                  {dailyMiniHighScore}
-                </Text>
-              ) : null}
-            </View>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.secondaryButton,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                  styles.orangeBorderButton,
+                ]}
+                onPress={onDailyMiniGame}
+              >
+                <View style={styles.buttonRow}>
+                  <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                    Daily Mini
+                  </Text>
+                  {dailyMiniHighScore != null ? (
+                    <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
+                      {dailyMiniHighScore}
+                    </Text>
+                  ) : null}
+                </View>
+              </TouchableOpacity>
 
-          {hasSavedGame ? (
-            <TouchableOpacity
-              style={[
-                styles.secondaryButton,
-                {
-                  backgroundColor: theme.surface,
-                  borderColor: theme.surfaceBorder,
-                },
-              ]}
-              onPress={onResumeSavedGame}
-            >
-              <View style={styles.buttonRow}>
-                <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-                  Resume Game
-                </Text>
-                <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
-                  {savedGameSeed ? `Seed ${savedGameSeed}` : "Saved board"}
-                </Text>
+              <View style={styles.footerRow}>
+                <TouchableOpacity
+                  style={styles.footerButton}
+                  onPress={() => setActivePanel("main")}
+                >
+                  <Text style={[styles.footerButtonText, { color: theme.closeText }]}>
+                    Back
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.footerButton} onPress={closeMenu}>
+                  <Text style={[styles.footerButtonText, { color: theme.closeText }]}>
+                    Close
+                  </Text>
+                </TouchableOpacity>
               </View>
-            </TouchableOpacity>
-          ) : null}
+            </>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={() => setActivePanel("daily")}
+              >
+                <View style={styles.buttonRow}>
+                  <Text style={styles.primaryButtonText}>Daily Games</Text>
+                </View>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.secondaryButton,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.surfaceBorder,
-              },
-            ]}
-            onPress={onMoreOptions}
-          >
-            <View style={styles.buttonRow}>
-              <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
-                More Modes
-              </Text>
-            </View>
-          </TouchableOpacity>
+              {hasSavedGame ? (
+                <TouchableOpacity
+                  style={[
+                    styles.secondaryButton,
+                    {
+                      backgroundColor: theme.surface,
+                      borderColor: theme.surfaceBorder,
+                    },
+                  ]}
+                  onPress={onResumeSavedGame}
+                >
+                  <View style={styles.buttonRow}>
+                    <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                      Resume Game
+                    </Text>
+                    <Text style={[styles.secondaryButtonMeta, { color: theme.meta }]}>
+                      {savedGameSeed ? `Seed ${savedGameSeed}` : "Saved board"}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ) : null}
 
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Text style={[styles.closeButtonText, { color: theme.closeText }]}>
-              Cancel
-            </Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.secondaryButton,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                  styles.orangeBorderButton,
+                ]}
+                onPress={onMoreOptions}
+              >
+                <View style={styles.buttonRow}>
+                  <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                    Other Modes
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.closeButton} onPress={closeMenu}>
+                <Text style={[styles.closeButtonText, { color: theme.closeText }]}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </TouchableOpacity>
     </Modal>
@@ -213,7 +257,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 6,
   },
-  dailyMiniHighlight: {
+  orangeBorderButton: {
     borderColor: "#c77a2a",
     borderWidth: 1.5,
   },
@@ -237,6 +281,19 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   closeButtonText: {
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  footerRow: {
+    marginTop: 4,
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  footerButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  footerButtonText: {
     fontSize: 16,
     fontWeight: "800",
   },

@@ -19,13 +19,17 @@ const PlaySubMenu = ({
   onNewSprint,
   onNewRush,
   onNewGameWithSeed,
+  onNewMiniWithSeed,
   onOpenCustomBoards,
 }) => {
   const theme = isDarkMode ? DARK_THEME : LIGHT_THEME;
   const [activePanel, setActivePanel] = useState("modes");
   const [seedInput, setSeedInput] = useState("");
+  const [miniSeedInput, setMiniSeedInput] = useState("");
   const trimmedSeed = useMemo(() => seedInput.trim(), [seedInput]);
+  const trimmedMiniSeed = useMemo(() => miniSeedInput.trim(), [miniSeedInput]);
   const canPlaySeededRun = trimmedSeed.length > 0;
+  const canPlaySeededMiniRun = trimmedMiniSeed.length > 0;
 
   const closeMenu = () => {
     setActivePanel("modes");
@@ -44,6 +48,13 @@ const PlaySubMenu = ({
     if (!canPlaySeededRun) return;
     onNewGameWithSeed?.(trimmedSeed);
     setSeedInput("");
+    setActivePanel("modes");
+  };
+
+  const handlePlaySeededMiniRun = () => {
+    if (!canPlaySeededMiniRun) return;
+    onNewMiniWithSeed?.(trimmedMiniSeed);
+    setMiniSeedInput("");
     setActivePanel("modes");
   };
 
@@ -144,6 +155,51 @@ const PlaySubMenu = ({
                     ]}
                     onPress={handlePlaySeededRun}
                     disabled={!canPlaySeededRun}
+                  >
+                    <Text style={styles.playButtonText}>Play</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View
+                style={[
+                  styles.seedCard,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.surfaceBorder,
+                  },
+                ]}
+              >
+                <Text style={[styles.secondaryButtonText, { color: theme.title }]}>
+                  Seeded Mini
+                </Text>
+                <View style={styles.seedRow}>
+                  <TextInput
+                    style={[
+                      styles.seedInput,
+                      {
+                        borderColor: theme.inputBorder,
+                        color: theme.title,
+                        backgroundColor: theme.inputBackground,
+                      },
+                    ]}
+                    value={miniSeedInput}
+                    onChangeText={setMiniSeedInput}
+                    placeholder="000000"
+                    placeholderTextColor={theme.inputPlaceholder}
+                    keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="go"
+                    onSubmitEditing={handlePlaySeededMiniRun}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.playButton,
+                      !canPlaySeededMiniRun ? styles.playButtonDisabled : null,
+                    ]}
+                    onPress={handlePlaySeededMiniRun}
+                    disabled={!canPlaySeededMiniRun}
                   >
                     <Text style={styles.playButtonText}>Play</Text>
                   </TouchableOpacity>

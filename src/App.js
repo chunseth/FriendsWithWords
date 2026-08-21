@@ -15,12 +15,14 @@ import {
   Animated,
   Easing,
   Platform,
+  Share,
   UIManager,
   LayoutAnimation,
   InteractionManager,
   useWindowDimensions,
 } from "react-native";
 import Sound from "react-native-sound";
+import { captureRef } from "react-native-view-shot";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
   SafeAreaProvider,
@@ -91,14 +93,13 @@ import {
 import {
   fetchGlobalLeaderboard,
   fetchCurrentPlayerGlobalRank,
-  fetchPlayerHighScorePosition,
-  fetchPlayerScoreHistory,
   fetchSeedLeaderboardByMode,
   LEADERBOARD_SCORE_MODE_MINI,
   LEADERBOARD_SCORE_MODE_MULTIPLAYER,
   LEADERBOARD_SCORE_MODE_SOLO,
   submitCompletedScore,
 } from "./services/leaderboardService";
+import { fetchPlayerStatsViewModel } from "./services/playerStatsService";
 import {
   fetchCurrentPlayerRushRank,
   fetchCurrentPlayerSprintRank,
@@ -584,16 +585,10 @@ function App() {
   const [dailyLeaderboardMode, setDailyLeaderboardMode] = useState(
     DAILY_LEADERBOARD_MODE_FULL
   );
-  const [leaderboardPosition, setLeaderboardPosition] = useState(null);
-  const [leaderboardPositionLoading, setLeaderboardPositionLoading] =
-    useState(false);
-  const [leaderboardPositionError, setLeaderboardPositionError] =
-    useState(null);
-  const [submittedScoreHistory, setSubmittedScoreHistory] = useState([]);
-  const [submittedScoreHistoryLoading, setSubmittedScoreHistoryLoading] =
-    useState(false);
-  const [submittedScoreHistoryError, setSubmittedScoreHistoryError] =
-    useState(null);
+  const [playerStatsViewModel, setPlayerStatsViewModel] = useState({
+    status: "loading",
+    source: "database",
+  });
   const [leaderboardSelectedDailySeed, setLeaderboardSelectedDailySeed] =
     useState(null);
   const [shuffleTrigger, setShuffleTrigger] = useState(0);
@@ -614,6 +609,7 @@ function App() {
   const [endGameGlobalRankStatus, setEndGameGlobalRankStatus] = useState("idle");
   const [endGameGlobalRank, setEndGameGlobalRank] = useState(null);
   const [endGameGlobalRankError, setEndGameGlobalRankError] = useState(null);
+  const [endGameShareInProgress, setEndGameShareInProgress] = useState(false);
   const [lastCompletedGameDescriptor, setLastCompletedGameDescriptor] =
     useState(null);
   const [miniDeferredScoreDisplay, setMiniDeferredScoreDisplay] = useState(null);
@@ -627,6 +623,7 @@ function App() {
   const backendSubmitRef = useRef(null);
   const pendingGameReplacementActionRef = useRef(null);
   const boardLayoutRef = useRef(null);
+  const boardCaptureRef = useRef(null);
   const safeAreaRef = useRef(null);
   const rackTileAnimationsRef = useRef({});
   const bannerTimeoutRef = useRef(null);
@@ -2341,61 +2338,17 @@ function App() {
     loadCustomBoardVariants();
   }, [customBoardMenuVisible, loadCustomBoardVariants]);
 
-  const loadLeaderboardPosition = useCallback(async () => {
-    if (!isBackendConfigured() || !playerProfile?.playerId) {
-      setLeaderboardPosition(null);
-      setLeaderboardPositionError(null);
-      setLeaderboardPositionLoading(false);
-      return;
-    }
+  const loadPlayerStatsViewModel = useCallback(async () => {
+    setPlayerStatsViewModel((currentViewModel) => ({
+      ...currentViewModel,
+      status: "loading",
+    }));
 
-    setLeaderboardPositionLoading(true);
-    setLeaderboardPositionError(null);
-
-    const result = await fetchPlayerHighScorePosition(playerProfile.playerId);
-    if (!result.ok) {
-      setLeaderboardPosition(null);
-      setLeaderboardPositionError(
-        result.reason === "backend_not_configured"
-          ? null
-          : "Unable to load leaderboard rank"
-      );
-      setLeaderboardPositionLoading(false);
-      return;
-    }
-
-    setLeaderboardPosition(result.position);
-    setLeaderboardPositionLoading(false);
-  }, [playerProfile]);
-
-  const loadSubmittedScoreHistory = useCallback(async () => {
-    if (!isBackendConfigured()) {
-      setSubmittedScoreHistory([]);
-      setSubmittedScoreHistoryError(null);
-      setSubmittedScoreHistoryLoading(false);
-      return;
-    }
-
-    setSubmittedScoreHistoryLoading(true);
-    setSubmittedScoreHistoryError(null);
-
-    const result = await fetchPlayerScoreHistory({
-      playerId: playerProfile?.playerId,
+    const nextViewModel = await fetchPlayerStatsViewModel({
+      localStats: playerStats,
     });
-    if (!result.ok) {
-      setSubmittedScoreHistory([]);
-      setSubmittedScoreHistoryError(
-        result.reason === "backend_not_configured"
-          ? null
-          : "Unable to load score history"
-      );
-      setSubmittedScoreHistoryLoading(false);
-      return;
-    }
-
-    setSubmittedScoreHistory(result.scores);
-    setSubmittedScoreHistoryLoading(false);
-  }, [playerProfile?.playerId]);
+    setPlayerStatsViewModel(nextViewModel);
+  }, [playerStats]);
 
   const loadGlobalLeaderboard = useCallback(
     async (scoreMode = LEADERBOARD_SCORE_MODE_SOLO) => {
@@ -2634,10 +2587,7 @@ function App() {
             : LEADERBOARD_SCORE_MODE_SOLO
         );
       }
-      if (scoreMode === LEADERBOARD_SCORE_MODE_SOLO) {
-        loadLeaderboardPosition();
-      }
-      loadSubmittedScoreHistory();
+      loadPlayerStatsViewModel();
       if (
         (scoreMode === LEADERBOARD_SCORE_MODE_SOLO ||
           scoreMode === LEADERBOARD_SCORE_MODE_MINI) &&
@@ -2655,9 +2605,8 @@ function App() {
       activeDailySeed,
       loadDailyLeaderboard,
       loadGlobalLeaderboard,
-      loadSubmittedScoreHistory,
+      loadPlayerStatsViewModel,
       loadMultiplayerLeaderboard,
-      loadLeaderboardPosition,
       selectedDailyLeaderboardSeed,
     ]
   );
@@ -2689,8 +2638,12 @@ function App() {
           );
         } else if (kind === PENDING_SCORE_SUBMISSION_KIND_SPRINT) {
           loadSprintLeaderboard();
+          loadPlayerStatsViewModel();
         } else if (kind === PENDING_SCORE_SUBMISSION_KIND_RUSH) {
           loadRushLeaderboard(payload.durationSeconds);
+          loadPlayerStatsViewModel();
+        } else if (kind === PENDING_SCORE_SUBMISSION_KIND_BOARD_VARIANT) {
+          loadPlayerStatsViewModel();
         }
         return result;
       }
@@ -2709,7 +2662,12 @@ function App() {
 
       return result;
     },
-    [loadRushLeaderboard, loadSprintLeaderboard, refreshLeaderboardsAfterScoreSubmission]
+    [
+      loadPlayerStatsViewModel,
+      loadRushLeaderboard,
+      loadSprintLeaderboard,
+      refreshLeaderboardsAfterScoreSubmission,
+    ]
   );
 
   const retryPendingScoreSubmissions = useCallback(async () => {
@@ -2931,9 +2889,8 @@ function App() {
       return;
     }
 
-    loadLeaderboardPosition();
-    loadSubmittedScoreHistory();
-  }, [gameStarted, homeScreen, loadLeaderboardPosition, loadSubmittedScoreHistory]);
+    loadPlayerStatsViewModel();
+  }, [gameStarted, homeScreen, loadPlayerStatsViewModel]);
 
   useEffect(() => {
     if (!gameStarted || tutorialModeActive || game.gameOver) {
@@ -3444,6 +3401,67 @@ function App() {
     setSettingsModalVisible(false);
   }, []);
 
+  const buildEndGameShareMessage = useCallback((summary) => {
+    const modeLabel =
+      activeGameType === GAME_TYPE_SPRINT
+        ? "Sprint"
+        : activeGameType === GAME_TYPE_RUSH
+          ? "Rush"
+          : activeGameMode === GAME_MODE_DAILY_MINI
+            ? "Daily Mini"
+            : activeGameType === GAME_TYPE_CUSTOM_BOARD
+              ? activeBoardVariant?.name ?? "Custom Board"
+              : "Classic";
+    const highScoreLine = summary.isNewHighScore
+      ? "\nNew high score!"
+      : "";
+
+    return `I scored ${summary.finalScore} in Words With Real Friends ${modeLabel}.${highScoreLine}`;
+  }, [activeBoardVariant, activeGameMode, activeGameType]);
+
+  const handleShareEndGame = useCallback(async () => {
+    if (!endGameSummary || endGameShareInProgress) return;
+
+    setEndGameShareInProgress(true);
+    const message = buildEndGameShareMessage(endGameSummary);
+
+    try {
+      let boardImageUri = null;
+      if (boardCaptureRef.current) {
+        boardImageUri = await captureRef(boardCaptureRef.current, {
+          format: "png",
+          quality: 1,
+          result: "tmpfile",
+        });
+      }
+
+      await Share.share(
+        boardImageUri
+          ? {
+              message,
+              url: boardImageUri,
+              title: "Words With Real Friends final board",
+            }
+          : {
+              message,
+              title: "Words With Real Friends score",
+            }
+      );
+    } catch (error) {
+      console.warn("Unable to share final board image", error);
+      await Share.share({
+        message,
+        title: "Words With Real Friends score",
+      });
+    } finally {
+      setEndGameShareInProgress(false);
+    }
+  }, [
+    buildEndGameShareMessage,
+    endGameShareInProgress,
+    endGameSummary,
+  ]);
+
   const handleDeleteAccount = useCallback(async () => {
     setDeleteAccountLoading(true);
 
@@ -3745,7 +3763,7 @@ function App() {
       }
       game.startNewGame(seed, {
         mode:
-          nextMode === GAME_MODE_DAILY_MINI || isSprintGame || isRushGame
+          nextMode === GAME_MODE_DAILY_MINI || isSprintGame
             ? "mini"
             : "classic",
         sprintRushMode: isSprintGame
@@ -3895,9 +3913,10 @@ function App() {
 
   const handleRushGameStart = useCallback(
     (rushDurationSeconds) => {
+      const isClassicRush = rushDurationSeconds === RUSH_DURATION_10_MINUTES;
       startGameWithSeed(null, {
         isDaily: false,
-        mode: GAME_MODE_DAILY_MINI,
+        mode: isClassicRush ? GAME_MODE_CLASSIC : GAME_MODE_DAILY_MINI,
         gameType: GAME_TYPE_RUSH,
         rushDurationSeconds,
       });
@@ -4309,6 +4328,7 @@ function App() {
                   premiumSquares={game.premiumSquares}
                   onCellClick={game.handleCellClick}
                   boardLayoutRef={boardLayoutRef}
+                  boardCaptureRef={boardCaptureRef}
                   optimisticPlacement={optimisticPlacement}
                   dragSourceCell={
                     draggingTile?.from === "board"
@@ -4347,6 +4367,7 @@ function App() {
                   onCellClick={game.handleCellClick}
                   BOARD_SIZE={game.BOARD_SIZE}
                   boardLayoutRef={boardLayoutRef}
+                  boardCaptureRef={boardCaptureRef}
                   optimisticPlacement={optimisticPlacement}
                   dragSourceCell={
                     draggingTile?.from === "board"
@@ -4683,16 +4704,10 @@ function App() {
               />
             ) : homeScreen === "stats" ? (
               <StatsScreen
-                stats={playerStats}
-                scoreHistory={submittedScoreHistory}
-                scoreHistoryLoading={submittedScoreHistoryLoading}
-                scoreHistoryError={submittedScoreHistoryError}
-                leaderboardPosition={leaderboardPosition}
-                leaderboardPositionLoading={leaderboardPositionLoading}
-                leaderboardPositionError={leaderboardPositionError}
-                backendConfigured={isBackendConfigured()}
+                statsViewModel={playerStatsViewModel}
                 isDarkMode={darkModeEnabled}
                 onBack={handleBackToMainMenu}
+                onRefresh={loadPlayerStatsViewModel}
               />
             ) : homeScreen === "multiplayer-menu" ? (
               <MultiplayerMenuScreen
@@ -4824,6 +4839,15 @@ function App() {
               })
             )
           }
+          onNewMiniWithSeed={(seed) =>
+            requestGameReplacement(() =>
+              startGameWithSeed(seed, {
+                isDaily: false,
+                mode: GAME_MODE_DAILY_MINI,
+                gameType: GAME_TYPE_SEEDED_INPUT,
+              })
+            )
+          }
           onOpenCustomBoards={() => {
             setPlaySubMenuVisible(false);
             setCustomBoardMenuVisible(true);
@@ -4876,6 +4900,8 @@ function App() {
           summary={endGameSummary}
           onClose={() => setEndGameSummary(null)}
           onPlayAgain={lastCompletedGameDescriptor ? handlePlayAgain : null}
+          onShareScore={handleShareEndGame}
+          shareInProgress={endGameShareInProgress}
           playAgainLabel="Play Again"
           globalRankStatus={endGameGlobalRankStatus}
           globalRank={endGameGlobalRank}
