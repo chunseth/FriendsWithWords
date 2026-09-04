@@ -78,6 +78,16 @@ const TutorialModal = ({
           },
         ]}
       >
+        <TouchableOpacity
+          style={styles.skipButton}
+          onPress={onSkip}
+          accessibilityRole="button"
+          accessibilityLabel={completed ? "Close tutorial" : "Skip tutorial"}
+        >
+          <Text style={[styles.skipButtonText, { color: theme.secondaryText }]}>
+            {completed ? "Done" : "Skip Tutorial"}
+          </Text>
+        </TouchableOpacity>
         <Text style={[styles.eyebrow, { color: theme.eyebrow }]}>
           {completed
             ? "Tutorial finished"
@@ -107,22 +117,6 @@ const TutorialModal = ({
         ) : null}
 
         <View style={styles.actions}>
-          <TouchableOpacity
-            style={[
-              styles.secondaryButton,
-              {
-                backgroundColor: theme.secondaryBackground,
-                borderColor: theme.secondaryBorder,
-              },
-            ]}
-            onPress={onSkip}
-          >
-            <Text
-              style={[styles.secondaryButtonText, { color: theme.secondaryText }]}
-            >
-              {completed ? "Done" : "Skip"}
-            </Text>
-          </TouchableOpacity>
           {!completed ? (
             <TouchableOpacity style={styles.primaryButton} onPress={onHide}>
               <Text style={styles.primaryButtonText}>OK</Text>
@@ -180,6 +174,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.18,
     shadowRadius: 14,
     elevation: 10,
+  },
+  skipButton: {
+    position: "absolute",
+    top: 8,
+    right: 10,
+    paddingVertical: 3,
+    paddingHorizontal: 4,
+    zIndex: 1,
+  },
+  skipButtonText: {
+    fontSize: 11,
+    fontWeight: "800",
   },
   eyebrow: {
     fontSize: 11,

@@ -186,6 +186,9 @@ dictionaryWords.forEach((word) => {
   words.add(word);
 });
 
+words.add("pricy");
+words.add("pricey");
+
 VALID_TWO_LETTER_WORDS.forEach((word) => {
   words.add(word);
 });
@@ -268,6 +271,19 @@ const isLikelyInflectedForm = (word) => {
     return hasKnownBaseForm([`${word.slice(0, -3)}y`]);
   }
 
+  if (word.endsWith("iest") && word.length > 5) {
+    return hasKnownBaseForm([`${word.slice(0, -4)}y`]);
+  }
+
+  if (word.endsWith("est") && word.length > 5) {
+    const base = word.slice(0, -3);
+    return hasKnownBaseForm([
+      base,
+      `${base}e`,
+      removeDoubledTrailingConsonant(base),
+    ]);
+  }
+
   if (word.endsWith("er") && word.length > 4) {
     const base = word.slice(0, -2);
     return hasKnownBaseForm([
@@ -322,6 +338,9 @@ const examples = [
   { word: "broken", expected: true, note: "verb + -en" },
   { word: "runner", expected: true, note: "agent noun + doubled consonant" },
   { word: "carrier", expected: true, note: "y -> ier" },
+  { word: "happiest", expected: true, note: "y -> iest" },
+  { word: "largest", expected: true, note: "silent-e drop + -est" },
+  { word: "biggest", expected: true, note: "double consonant + -est" },
   { word: "outeating", expected: true, note: "compound verb + -ing" },
   { word: "outeaten", expected: true, note: "compound verb + -en" },
   { word: "outeater", expected: true, note: "compound verb + -er" },

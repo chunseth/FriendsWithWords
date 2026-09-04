@@ -1659,6 +1659,7 @@ function App() {
     handleBoardTap,
   } = useTileDragDropController({
     containerRef: safeAreaRef,
+    rackPointerCorrectionEnabled: !tutorialModeActive,
     boardLayoutRef,
     rackTiles: rackSourceTiles,
     isRackTileUsed,
@@ -1678,6 +1679,15 @@ function App() {
     onBoardCellTap: game.handleCellClick,
     onBlankPlacementRequested: handleBlankPlacementRequest,
   });
+
+  // Tutorial UI is mounted as an overlay and can cause the root to be laid out
+  // again. Keep the drag controller's screen-to-overlay origin synchronized
+  // with that transition before the first tutorial gesture.
+  useEffect(() => {
+    if (gameStarted) {
+      refreshContainerWindowPosition();
+    }
+  }, [gameStarted, tutorialModeActive, refreshContainerWindowPosition]);
 
   const ensureRackTileAnimationState = useCallback(
     (tileId, scoreText = null) => {
@@ -2146,6 +2156,26 @@ function App() {
     swapAnimating,
     triggerScrabbleBanner,
     waitForNextFrame,
+    tutorialCompleted,
+    tutorialModeActive,
+    tutorialStepIndex,
+  ]);
+
+  const handleTutorialInstructionDismiss = useCallback(() => {
+    const preparedSubmit = game.prepareSubmitWord();
+    const tutorialStep = TUTORIAL_STEPS[tutorialStepIndex];
+    const hasCorrectTutorialWord =
+      tutorialModeActive &&
+      !tutorialCompleted &&
+      !!preparedSubmit &&
+      validateTutorialMove(tutorialStep, preparedSubmit).ok;
+
+    if (hasCorrectTutorialWord) {
+      handleSubmitButtonPress();
+    }
+  }, [
+    game,
+    handleSubmitButtonPress,
     tutorialCompleted,
     tutorialModeActive,
     tutorialStepIndex,
@@ -4939,7 +4969,7 @@ function App() {
           feedback={tutorialFeedback}
           completed={tutorialCompleted}
           collapsed={tutorialOverlayCollapsed}
-          onHide={() => setTutorialOverlayCollapsed(true)}
+          onHide={handleTutorialInstructionDismiss}
           onShow={() => setTutorialOverlayCollapsed(false)}
           onSkip={markTutorialSeenAndExit}
         />

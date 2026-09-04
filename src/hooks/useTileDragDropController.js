@@ -31,6 +31,7 @@ export const useTileDragDropController = ({
   boardSize,
   rackDropExpansionTop = 270,
   rackDropExpansionBottom = 100,
+  rackPointerCorrectionEnabled = true,
   canInteract = true,
   isBoardTileDraggable,
   isBlankRackTile,
@@ -1216,6 +1217,10 @@ export const useTileDragDropController = ({
   const handleRackDragStart = useCallback(
     (index, tile, x, y, touchOffsetX, touchOffsetY) => {
       if (!canInteract) return;
+      // Gestures use screen coordinates, while the drag overlay is positioned
+      // inside the safe-area root. Re-measure at pickup so a layout transition
+      // (especially entering the tutorial) cannot leave a stale Y origin.
+      refreshContainerWindowPosition();
       const now = getNow();
       const activeSettle = rackSettleActiveRef.current;
       rackDragMetricsRef.current = {
@@ -1281,7 +1286,7 @@ export const useTileDragDropController = ({
         sourceTarget &&
         typeof sourceTarget.x === "number" &&
         typeof sourceTarget.y === "number";
-      if (hasTouchOffsets && hasSourceTarget) {
+      if (rackPointerCorrectionEnabled && hasTouchOffsets && hasSourceTarget) {
         const { x: containerScreenX, y: containerScreenY } =
           containerWindowRef.current;
         const expectedX =
@@ -1303,8 +1308,8 @@ export const useTileDragDropController = ({
         rackPointerCorrectionRef.current = { x: 0, y: 0 };
       }
       const correctedStart = {
-        x: (x ?? 0) + rackPointerCorrectionRef.current.x,
-        y: (y ?? 0) + rackPointerCorrectionRef.current.y,
+        x: (x ?? 0) + (rackPointerCorrectionEnabled ? rackPointerCorrectionRef.current.x : 0),
+        y: (y ?? 0) + (rackPointerCorrectionEnabled ? rackPointerCorrectionRef.current.y : 0),
       };
       setDragPositionFromScreen(correctedStart.x, correctedStart.y);
       hoverIndexRef.current = tile.visibleIndex;
@@ -1338,9 +1343,11 @@ export const useTileDragDropController = ({
       logRackDrag,
       rackDraggingVisibleIndexValue,
       rackHoverIndexValue,
+      rackPointerCorrectionEnabled,
       setDragPositionFromScreen,
       settlePosition,
       settleScale,
+      refreshContainerWindowPosition,
       updateDraggingTile,
       updateSettlingTile,
       visibleRackTiles.length,
@@ -1360,8 +1367,12 @@ export const useTileDragDropController = ({
           metrics.maxUpdateGapMs = gap;
         }
       }
-      const correctedX = x + rackPointerCorrectionRef.current.x;
-      const correctedY = y + rackPointerCorrectionRef.current.y;
+      const correctedX = rackPointerCorrectionEnabled
+        ? x + rackPointerCorrectionRef.current.x
+        : x;
+      const correctedY = rackPointerCorrectionEnabled
+        ? y + rackPointerCorrectionRef.current.y
+        : y;
       setDragPositionFromScreen(correctedX, correctedY);
       const nextIndex = computeRackIndex(
         correctedX,
@@ -1436,11 +1447,11 @@ export const useTileDragDropController = ({
         const draggedFromRack = draggingTileRef.current?.from === "rack";
         const correctedScreenX =
           draggedFromRack
-            ? screenX + rackPointerCorrectionRef.current.x
+            ? screenX + (rackPointerCorrectionEnabled ? rackPointerCorrectionRef.current.x : 0)
             : screenX;
         const correctedScreenY =
           draggedFromRack
-            ? screenY + rackPointerCorrectionRef.current.y
+            ? screenY + (rackPointerCorrectionEnabled ? rackPointerCorrectionRef.current.y : 0)
             : screenY;
         const releasePosition = getDragPositionFromScreen(
           correctedScreenX,
@@ -1591,6 +1602,7 @@ export const useTileDragDropController = ({
       onBlankPlacementRequested,
       onPlaceRackTile,
       onReorderRack,
+      rackPointerCorrectionEnabled,
       setDragPositionFromScreen,
       withFreshBoardGridBounds,
       visibleRackTiles.length,
